@@ -1,0 +1,575 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>游戏</title>
+    <style>
+        html,
+        body {
+            margin: 0;
+            height: 100%;
+            background: #000;
+            color: #e2e8f0;
+            font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+        }
+        body {
+            overflow: hidden;
+        }
+        /* #status 作为不透明全屏层盖住引擎容器；等 start() 成功后再隐藏。
+           不能反过来用 display:none 藏 #ejs：EmulatorJS 构造时会重写容器内联样式
+           （写入 --ejs-* 变量），会把我们设的 display:block 抹掉，导致引擎界面永远隐藏。 */
+        #status {
+            position: fixed;
+            inset: 0;
+            z-index: 5;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+            text-align: center;
+            font-size: 15px;
+            background: #000;
+        }
+        #status.error {
+            color: #fca5a5;
+        }
+        #ejs {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        /* 右上角那个三横线“菜单栏开关”是引擎的 .ejs_virtualGamepad_open（即
+           menu-bar-button），在触屏/设置了“可见”时会常驻挡画面，直接隐藏。 */
+        .ejs_virtualGamepad_open {
+            display: none !important;
+        }
+        /* 接管底部控制条的显隐（引擎默认的自动收起时机太拖）：只用一个开关类控制，
+           用 !important 盖住引擎自己加的显隐样式。默认隐藏，由 JS 按“底部悬停/点按切换”显示。 */
+        #ejs .ejs_menu_bar {
+            transition: transform 0.16s ease, opacity 0.16s ease !important;
+        }
+        #ejs .ejs_menu_bar.x-ctrl-hide {
+            opacity: 0 !important;
+            transform: translateY(120%) !important;
+            pointer-events: none !important;
+        }
+        #ejs .ejs_menu_bar.x-ctrl-show {
+            opacity: 1 !important;
+            transform: none !important;
+            pointer-events: auto !important;
+        }
+        #ejs .ejs_small_screen .ejs_menu_bar.x-ctrl-show {
+            transform: translate(-50%, 0) !important;
+        }
+        #ejs .ejs_small_screen .ejs_menu_bar.x-ctrl-hide {
+            transform: translate(-50%, 130%) !important;
+        }
+    </style>
+</head>
+<body>
+    <div id="status">正在准备模拟器…</div>
+    <div id="ejs"></div>
+
+    <script>
+        // EmulatorJS 官方要求 SPA 内用 iframe 隔离运行，本页即为那个独立播放文档：
+        // 把 query 参数翻译成 EJS_* 全局并挂 loader.js，并在引擎就绪后暴露 __ejsRpc，
+        // 供父页面做“整体即时存档”的捕捉/放回（云存档的基础原语）与画面截图。
+        // 引擎在 loader 尾部会把实例暴露到 window.EJS_emulator（含 elements/storage/gameManager），
+        // 同源 iframe 内可直接使用，无需猜测 DOM 选择器。
+
+        (() => {
+            const params = new URLSearchParams(location.search);
+            const id = params.get("id");
+            const core = params.get("core");
+            const name = params.get("name") || "";
+            const version = params.get("v") || "";
+            // 显示比例（父页面「窗口」选择器里选的那一列）：wide = 4:3，其余 = 像素完美 PP
+            const wide = params.get("ratio") === "wide";
+
+            const statusEl = document.getElementById("status");
+
+            function showError(message) {
+                statusEl.style.display = ""; // 若已被 start() 隐藏，则重新显示错误层
+                statusEl.className = "error";
+                statusEl.textContent = message;
+            }
+
+            if (!id || !core) {
+                showError("缺少游戏参数，请从游戏中心进入。");
+                return;
+            }
+
+            // ---------- 存档 RPC：父页面经 iframe.contentWindow.__ejsRpc 调用 ----------
+            window.__ejsReady = false;
+
+            function wait(ms) {
+                return new Promise((resolve) => window.setTimeout(resolve, ms));
+            }
+
+            function bytesToBase64(bytes) {
+                const chunk = 0x8000;
+                let binary = "";
+                for (let i = 0; i < bytes.length; i += chunk) {
+                    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+                }
+                return btoa(binary);
+            }
+
+            function base64ToUint8(base64) {
+                const binary = atob(base64);
+                const bytes = new Uint8Array(binary.length);
+                for (let i = 0; i < binary.length; i += 1) {
+                    bytes[i] = binary.charCodeAt(i);
+                }
+                return bytes;
+            }
+
+            // 还原引擎存储里的值到字节：存储的是 Uint8Array，个别内核可能是 {data} 包装
+            function normalizeBytes(value) {
+                if (!value) return null;
+                if (value instanceof Uint8Array) return value;
+                if (value instanceof ArrayBuffer) return new Uint8Array(value);
+                if (value.data instanceof Uint8Array) return value.data;
+                if (value.data instanceof ArrayBuffer) return new Uint8Array(value.data);
+                if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+                return null;
+            }
+
+            // 引擎“浏览器即时存档”的单键：与引擎内部 Save State 的写入键一致
+            function stateKey() {
+                const inst = window.EJS_emulator;
+                if (!inst || typeof inst.getBaseFileName !== "function") return null;
+                return inst.getBaseFileName() + ".state";
+            }
+
+            /**
+             * 把引擎画布的原生像素拷进一张新画布并编码为 PNG。引擎画布可能是 WebGL 的
+             * （绘制缓冲在合成后即失效），所以和引擎自带的截图实现一样放进 requestAnimationFrame：
+             * 同一帧里引擎先渲染、我们再拷，拿到的才是当前这帧而不是空白。
+             */
+            function captureCanvas(source) {
+                return new Promise((resolve) => {
+                    requestAnimationFrame(() => {
+                        try {
+                            const out = document.createElement("canvas");
+                            out.width = source.width;
+                            out.height = source.height;
+                            const ctx = out.getContext("2d", { alpha: false });
+                            ctx.imageSmoothingEnabled = false;
+                            ctx.drawImage(source, 0, 0);
+                            out.toBlob(resolve, "image/png");
+                        } catch {
+                            resolve(null);
+                        }
+                    });
+                });
+            }
+
+            /**
+             * 引擎自带截图（内核侧读帧缓冲）：{ bytes, width, height }，不可用则 null。
+             * 拿到的是 PNG 字节，尺寸从 IHDR 里读，免得再猜一遍。
+             */
+            async function captureCoreFrame(inst) {
+                const manager = inst.gameManager;
+                if (!manager || typeof manager.screenshot !== "function") {
+                    return null;
+                }
+                try {
+                    const bytes = new Uint8Array(await manager.screenshot());
+                    const size = pngSize(bytes);
+                    if (!bytes.length || !size) {
+                        return null;
+                    }
+                    return { bytes, width: size.width, height: size.height };
+                } catch {
+                    return null;
+                }
+            }
+
+            /** 拷画布（显示尺寸）：{ bytes, width, height }，不可用则 null */
+            async function captureCanvasFrame(inst) {
+                const canvas = inst.canvas;
+                if (!canvas || !canvas.width || !canvas.height) {
+                    return null;
+                }
+                const blob = await captureCanvas(canvas);
+                if (!blob) {
+                    return null;
+                }
+                return {
+                    bytes: new Uint8Array(await blob.arrayBuffer()),
+                    width: canvas.width,
+                    height: canvas.height,
+                };
+            }
+
+            /** 从 PNG 字节读 IHDR 里的宽高；不是 PNG 就返回 null（当作这条路不可用） */
+            /** { bytes, width, height } → __ejsRpc.screenshot 的返回结构 */
+            function toShot(frame) {
+                return {
+                    ok: true,
+                    base64: bytesToBase64(frame.bytes),
+                    width: frame.width,
+                    height: frame.height,
+                };
+            }
+
+            function pngSize(bytes) {
+                const signature = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+                if (bytes.length < 24 || signature.some((byte, i) => bytes[i] !== byte)) {
+                    return null;
+                }
+                const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+                return { width: view.getUint32(16), height: view.getUint32(20) };
+            }
+
+            /** 整幅全黑？（抽样判定）用来识别某条截图路踩空了——比如 WebGL 绘制缓冲已被清掉 */
+            async function isBlankFrame(frame) {
+                try {
+                    const bitmap = await createImageBitmap(new Blob([frame.bytes], { type: "image/png" }));
+                    const canvas = document.createElement("canvas");
+                    canvas.width = bitmap.width;
+                    canvas.height = bitmap.height;
+                    const ctx = canvas.getContext("2d", { alpha: false });
+                    ctx.drawImage(bitmap, 0, 0);
+                    bitmap.close?.();
+                    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    for (let i = 0; i < data.length; i += 4 * 7) {
+                        if (data[i] > 8 || data[i + 1] > 8 || data[i + 2] > 8) {
+                            return false;
+                        }
+                    }
+                    return true;
+                } catch {
+                    return false; // 判不出来就当它不黑，免得把好图丢掉
+                }
+            }
+
+            window.__ejsRpc = {
+                get ready() {
+                    return window.__ejsReady === true && Boolean(window.EJS_emulator);
+                },
+
+                /**
+                 * 引擎当前的画面几何：帧缓冲分辨率 + 内核上报的显示宽高比。父页面按 aspect
+                 * 定舞台长宽比——引擎是**按 aspect 等比摆放画面**的，画布填不满的地方就是黑边，
+                 * 而 aspect 不等于帧缓冲宽高比：FC 在这里被设成像素完美（PP），256 × 224 的帧缓冲
+                 * 按 8:7 摆放；换成 8:7 PAR / 4:3 这类按像素宽高比校正的取值，同一个帧缓冲摆出来
+                 * 的比例就不同（stageAspect 会跟着引擎上报的值变）。
+                 */
+                get videoInfo() {
+                    const inst = window.EJS_emulator;
+                    const manager = inst && inst.gameManager;
+                    if (!inst || !inst.started || !manager) {
+                        return null;
+                    }
+                    const positive = (value) =>
+                        typeof value === "number" && isFinite(value) && value > 0 ? value : null;
+                    try {
+                        return {
+                            width: positive(manager.getVideoDimensions("width")),
+                            height: positive(manager.getVideoDimensions("height")),
+                            aspect: positive(manager.getVideoDimensions("aspect")),
+                        };
+                    } catch {
+                        return null;
+                    }
+                },
+
+                /** 捕捉“当前进度”：触发引擎把状态写入浏览器档，读回字节 → base64 */
+                async capture() {
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再备份存档。" };
+                    }
+                    const btn = inst.elements?.bottomBar?.saveState?.[0];
+                    if (!btn) {
+                        return { ok: false, message: "当前内核不支持即时存档。" };
+                    }
+                    btn.click(); // save-state-location=browser → 引擎写入浏览器档
+                    // 等待引擎异步落库（写 IndexedDB），不足则轮询重试
+                    const key = stateKey();
+                    if (!key) {
+                        return { ok: false, message: "无法定位引擎存档键。" };
+                    }
+                    let stored = null;
+                    for (let i = 0; i < 8; i += 1) {
+                        await wait(120);
+                        try {
+                            stored = await inst.storage.states.get(key);
+                        } catch {
+                            stored = null;
+                        }
+                        if (stored) break;
+                    }
+                    const bytes = normalizeBytes(stored);
+                    if (!bytes || !bytes.length) {
+                        return { ok: false, message: "存档写入失败，请重试。" };
+                    }
+                    return {
+                        ok: true,
+                        base64: bytesToBase64(bytes),
+                        size: bytes.length,
+                        createdAt: Date.now(),
+                    };
+                },
+
+                /** 放回/载入：把整包存档字节写入引擎浏览器档并触发读档 */
+                async load(base64) {
+                    if (!base64) {
+                        return { ok: false, message: "存档内容为空。" };
+                    }
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再载入存档。" };
+                    }
+                    const key = stateKey();
+                    if (!key) {
+                        return { ok: false, message: "无法定位引擎存档键。" };
+                    }
+                    try {
+                        await inst.storage.states.put(key, base64ToUint8(base64));
+                    } catch {
+                        return { ok: false, message: "写入引擎存档失败。" };
+                    }
+                    const btn = inst.elements?.bottomBar?.loadState?.[0];
+                    if (btn) {
+                        btn.click();
+                    } else if (inst.gameManager && typeof inst.gameManager.loadState === "function") {
+                        inst.gameManager.loadState(base64ToUint8(base64));
+                    } else {
+                        return { ok: false, message: "当前内核不支持载入即时存档。" };
+                    }
+                    return { ok: true };
+                },
+
+                /**
+                 * 切显示比例模式（FC 用）：父页面「窗口」选择器里点另一列时调用，mode 是父页面的
+                 * 模式名（pp / wide），这里翻译成 fceumm 的内核选项：
+                 *   pp   → fceumm_aspect = PP、上下过扫描各裁 8 行（帧缓冲 256×224，显示 8:7）；
+                 *   wide → fceumm_aspect = 4:3、不裁过扫描（帧缓冲 256×240，显示 4:3，铺满电视屏）。
+                 * 引擎只在启动时读一次设置文件，所以运行中改只能这样直接改内核变量（与引擎设置
+                 * 菜单里改选项走的是同一条路）；fceumm 会立刻按新几何重新摆放画面，父页面每秒读
+                 * 一次 videoInfo 跟着重算舞台。
+                 */
+                async setDisplayMode(mode) {
+                    if (mode !== "pp" && mode !== "wide") {
+                        return { ok: false, message: "不支持的显示比例。" };
+                    }
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再切换显示比例。" };
+                    }
+                    const toWide = mode === "wide";
+                    try {
+                        inst.gameManager.setVariable("fceumm_aspect", toWide ? "4:3" : "PP");
+                        inst.gameManager.setVariable("fceumm_overscan_v_top", toWide ? "0" : "8");
+                        inst.gameManager.setVariable("fceumm_overscan_v_bottom", toWide ? "0" : "8");
+                    } catch {
+                        return { ok: false, message: "切换显示比例失败。" };
+                    }
+                    return { ok: true };
+                },
+
+                /**
+                 * 截图：先走引擎自带截图（内核侧读帧缓冲，得到的是**原生像素**，如 FC 256×224），
+                 * 拿不到或是全黑时退回拷画布（尺寸 = 画布显示尺寸）。
+                 *
+                 * 之所以不只用画布拷贝：引擎的 WebGL 上下文是 preserveDrawingBuffer:false（实测），
+                 * 拷贝必须赶在「同一帧、合成清空缓冲之前」完成——所以 captureCanvas 里用
+                 * requestAnimationFrame。Chromium 下这样可靠，但个别浏览器（iOS Safari 等）仍会
+                 * 拷到已清空的缓冲，得到一张全黑图；内核侧路径不碰画布，没有这个问题。
+                 * 反过来内核侧也可能在某些内核/驱动组合下返回空帧，所以两条都试、优先有画面的那张。
+                 * 返回的 width/height 是 PNG 的真实像素尺寸，父页面提示直接用。
+                 */
+                async screenshot() {
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再截图。" };
+                    }
+                    const core = await captureCoreFrame(inst);
+                    if (core && !(await isBlankFrame(core))) {
+                        return toShot(core);
+                    }
+                    const canvas = await captureCanvasFrame(inst);
+                    if (canvas && !(await isBlankFrame(canvas))) {
+                        return toShot(canvas);
+                    }
+                    const frame = core || canvas;
+                    return frame ? toShot(frame) : { ok: false, message: "当前没有可截取的画面。" };
+                },
+            };
+
+            // ---------- 底部控制条显隐接管 ----------
+            // 引擎默认“点到画面才出现、闲置很久才收起、悬停其上也会自动收起”，体验拖沓。
+            // 这里接管为：**只有指针滑到画面底边（90px 感应带内）才浮出**，离开即收起；
+            // 指针落在控制条/其弹层上时既不自动收也不因点按关闭。
+            // 点按画面不再唤出控制条——左键在游戏里是操作，不该冒出模拟器的按钮；
+            // 已经浮出时点一下画面则立即收起，免得挡着画面。
+            const CTRL_EDGE_ZONE = 90; // 底部感应带高度（px）
+            let ctrlInited = false;
+            let ctrlHideTimer = null;
+
+            function ctrlClearTimer() {
+                if (ctrlHideTimer) {
+                    window.clearTimeout(ctrlHideTimer);
+                    ctrlHideTimer = null;
+                }
+            }
+
+            function ctrlShow(bar) {
+                ctrlClearTimer();
+                bar.classList.remove("x-ctrl-hide");
+                bar.classList.add("x-ctrl-show");
+            }
+
+            function ctrlHideSoon(bar, delay = 600) {
+                ctrlClearTimer();
+                ctrlHideTimer = window.setTimeout(() => {
+                    bar.classList.remove("x-ctrl-show");
+                    bar.classList.add("x-ctrl-hide");
+                }, delay);
+            }
+
+            // 可能是引擎自身的浮层（设置/右键菜单/状态提示等），点它们不应触发显隐切换
+            function ctrlInChrome(target) {
+                const CHROME = ".ejs_menu_bar, .ejs_contextmenu, .ejs_contextMenu, .ejs_menu, .ejs_settings_parent, .ejs_settings, .ejs_statePopupPanel, .ejs_state_popup";
+                return target && typeof target.closest === "function" && target.closest(CHROME);
+            }
+
+            function initControlBar() {
+                if (ctrlInited) {
+                    return;
+                }
+                const bar = document.querySelector("#ejs .ejs_menu_bar");
+                if (!bar) {
+                    // 引擎界面还没构建完，稍后再试
+                    window.setTimeout(initControlBar, 300);
+                    return;
+                }
+                ctrlInited = true;
+                const root = document.getElementById("ejs");
+
+                function nearBottom(event) {
+                    // 只有贴着画面底边的那条窄带才算“靠近控制条”：在画面中间怎么点、怎么拖
+                    // 都不会把它惊动出来
+                    return event.clientY >= window.innerHeight - CTRL_EDGE_ZONE;
+                }
+
+                bar.classList.add("x-ctrl-hide");
+                bar.addEventListener("pointermove", () => ctrlShow(bar));
+                bar.addEventListener("pointerdown", () => ctrlShow(bar));
+
+                if (root) {
+                    // 指针在控制条/浮层上：保持显示；在画面底边：浮出；否则延迟收起。
+                    root.addEventListener("pointermove", (event) => {
+                        if (ctrlInChrome(event.target)) {
+                            ctrlShow(bar);
+                        } else if (nearBottom(event)) {
+                            ctrlShow(bar);
+                        } else {
+                            ctrlHideSoon(bar);
+                        }
+                    });
+                    root.addEventListener("pointerleave", () => {
+                        if (!ctrlInChrome(event.relatedTarget)) {
+                            ctrlHideSoon(bar, 350);
+                        }
+                    });
+                }
+
+                // 点按画面空白：只负责收起（已经浮出时立即收起），**绝不唤出**；点在控制条/浮层上不算。
+                document.addEventListener(
+                    "pointerdown",
+                    (event) => {
+                        const target = event.target;
+                        if (!target || !(target instanceof Node) || !(document.getElementById("ejs").contains(target))) {
+                            return;
+                        }
+                        if (ctrlInChrome(target)) {
+                            ctrlShow(bar);
+                            return;
+                        }
+                        if (bar.classList.contains("x-ctrl-show")) {
+                            ctrlClearTimer();
+                            bar.classList.remove("x-ctrl-show");
+                            bar.classList.add("x-ctrl-hide");
+                        }
+                    },
+                    true,
+                );
+            }
+
+            function start() {
+                window.EJS_player = "#ejs";
+                window.EJS_core = core;
+                // ROM 直连后端流式接口；带版本参数使重传本体后 EmulatorJS 缓存可失效
+                const romUrl = `/api/games/${encodeURIComponent(id)}/play` + (version ? `?v=${encodeURIComponent(version)}` : "");
+                window.EJS_gameUrl = romUrl;
+                window.EJS_pathtodata = "/emulatorjs/data/";
+                window.EJS_gameID = String(id);
+                window.EJS_gameName = name;
+                window.EJS_threads = false;
+                // 固定中文界面：loader 会按浏览器语言自动请求 localization/<locale>.json，
+                // 若不由我们固定会去外找不存在的文件（404）。本文件即 fetch:emulatorjs 构建期
+                // 由官方 en-US + zh-CN 合成发布的“完整中文包”。
+                window.EJS_language = "zh-CN";
+                // 免去「开始游戏」点按：引擎就绪后自动启动游戏本体
+                window.EJS_startOnLoaded = true;
+                // 引擎“保存/读取状态”写入浏览器（IndexedDB），作为云存档捕捉/放回的中转
+                window.EJS_defaultOptions = { "save-state-location": "browser" };
+                // FC（系统名 nes → fceumm 内核）的内核选项默认值，两种显示比例各一套：
+                //   pp（像素完美）：裁掉上下各 8 行过扫描（内核默认就是 8）→ 帧缓冲 256×224，
+                //     按 PP（Pixel Perfect，1:1 方像素）摆放的比例就是 8:7 = 256×224；
+                //   wide（4:3，真机 CRT 观感）：**不裁过扫描**→ 帧缓冲 256×240，按 4:3 摆放正好
+                //     铺满 4:3 的电视屏幕（224 行按内核的 4:3 摆放会算成 ≈1.43，屏里会留黑边）。
+                // 两套各对应一张电视机壳素材的屏幕洞（见 emulator-player.vue 的 SHELLS），
+                // 模式由父页面经 ?ratio= 传进来，运行中切换走 __ejsRpc.setDisplayMode。
+                if (core === "nes") {
+                    window.EJS_defaultOptions.fceumm_aspect = wide ? "4:3" : "PP";
+                    window.EJS_defaultOptions.fceumm_overscan_v_top = wide ? "0" : "8";
+                    window.EJS_defaultOptions.fceumm_overscan_v_bottom = wide ? "0" : "8";
+                }
+                // 引擎开始运行后标记就绪，并接管底部控制条显隐
+                window.EJS_onGameStart = () => {
+                    window.__ejsReady = true;
+                    initControlBar();
+                };
+
+                statusEl.style.display = "none"; // 引擎容器 #ejs 常驻可见（样式表），只撤掉遮罩层
+
+                const script = document.createElement("script");
+                script.src = "/emulatorjs/data/loader.js";
+                script.onerror = () =>
+                    showError("模拟器加载失败：引擎文件不完整，请重新运行 npm run fetch:emulatorjs。");
+                document.body.appendChild(script);
+            }
+
+            // 引擎就绪检查；缺失时给出可执行的修复提示而非白屏
+            fetch("/emulatorjs/data/loader.js", { method: "HEAD" })
+                .then((response) => {
+                    if (!response.ok) {
+                        throw new Error("loader missing");
+                    }
+                    start();
+                })
+                .catch(() =>
+                    showError("模拟器引擎缺失：请先运行 npm run fetch:emulatorjs（Docker 镜像会自动拉取）后重试。"),
+                );
+        })();
+    </script>
+</body>
+</html>

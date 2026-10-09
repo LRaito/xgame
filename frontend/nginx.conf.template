@@ -1,0 +1,100 @@
+# 只提供 HTTPS：不发布 80 端口，也没有 http→https 跳转 server，浏览器一律走 https://。
+# 证书固定是仓库里的 certs/cert.pem 与 certs/cert.key，由 docker-compose 只读挂到
+# /etc/nginx/certs。换证书就换这两个文件（或用 scripts/gen-certs.sh 重新生成）。
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name _;
+    root /usr/share/nginx/html;
+    # GBA 整卡可达 32MiB，给上传留余量（游戏本体经 /api 反代，上传限制在此网关生效）
+    client_max_body_size 128m;
+
+    ssl_certificate     /etc/nginx/certs/cert.pem;
+    ssl_certificate_key /etc/nginx/certs/cert.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_ciphers         HIGH:!aNULL:!MD5;
+    ssl_session_cache   shared:SSL:10m;
+
+    location /api/ {
+        proxy_pass http://api:8910;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # 上传/下载都经后端流式代理：关闭响应缓冲，避免大文件被 nginx 整包缓冲后才下发
+        proxy_buffering off;
+        proxy_read_timeout 300s;
+    }
+
+    location /health {
+        proxy_pass http://api:8910;
+        proxy_set_header Host $host;
+    }
+
+    # Ruffle 引擎（JS 加载器 + WASM 内核）文件名固定。长缓存 + 同源无 Cookie，
+    # 可让浏览器跨会话复用已下载的引擎与「已编译的 WASM 模块」，首次之后基本不再等待。
+    # 注意：升级 Ruffle 版本后请手动清一次浏览器缓存，否则旧缓存会顶住新引擎。
+    location ^~ /ruffle/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        types {
+            application/wasm wasm;
+            application/javascript js;
+        }
+        default_type application/javascript;
+    }
+
+    # EmulatorJS 引擎（loader + 引擎 + 各平台 WASM core，文件名固定，构建期拉取）。
+    # core 的 *.data 以 arraybuffer 抓取、MIME 不敏感，default_type 兜底即可。
+    # 同样 immutable 长缓存：跨会话复用已下载引擎与 core。
+    location ^~ /emulatorjs/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+        types {
+            application/wasm wasm;
+            application/javascript js json;
+            text/css css;
+            application/octet-stream data;
+        }
+        default_type application/octet-stream;
+    }
+
+    # Vite 产物均带内容哈希，可放心 immutable 长缓存
+    location ^~ /assets/ {
+        try_files $uri =404;
+        add_header Cache-Control "public, max-age=31536000, immutable";
+    }
+
+    # HTML 入口（SPA 的 index.html 与模拟器宿主 emulator-host.html）文件名固定、不带内容哈希，
+    # 一旦被浏览器启发式缓存，就会与 /assets/ 下换了名字的新产物错配，
+    # 表现就是「部署完打开还是旧页面」。no-cache = 仍可存储，但每次使用前必须回源再验证
+    # （命中 ETag 时是 304，几十字节），绝不会用到旧 HTML。
+    # 不用 no-store：它禁止存储、每次都传完整响应体，而且 Chrome/Firefox 会把 no-store 的
+    # 文档排除出 bfcache，前进/后退都要重新下载重建——对 SPA 入口是纯损失。
+    # 注意必须写成这里这条：location / 的 try_files 兜底是内部跳转，会重新做一次 location
+    # 匹配，最终响应由最后命中的 location 决定，而 add_header 是「子层级一旦出现就整体覆盖
+    # 父层级」而非合并——在 location / 上写一行盖不住 /index.html。
+    # 正则必须锚定根路径：写成 ~* \.html$ 会抢走 /api/games/{id}/h5/index.html
+    # （H5 游戏根目录的入口文件，见 backend/games/router.py:302），被当成静态文件而 404。
+    location ~ ^/(index|emulator-host)\.html$ {
+        add_header Cache-Control "no-cache";
+    }
+
+    # 版本探针：构建期随产物写出的纯文本小文件，前端定时拉取以判断服务端是否换了新构建。
+    # 必须不缓存——缓存住就等于探测到的永远是首次那份，更新提示永远不会出现。
+    # 用 = 精确匹配（location 优先级最高），不会被 location / 的 try_files 兜底吞掉；
+    # 文件缺失时必须显式 404，绝不能落到 /index.html，否则前端会把整篇 HTML 当版本号。
+    location = /version.txt {
+        default_type text/plain;
+        add_header Cache-Control "no-cache";
+        try_files $uri =404;
+    }
+
+    location ~* \.wasm$ {
+        default_type application/wasm;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+}

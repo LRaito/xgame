@@ -1,0 +1,44 @@
+services:
+  api:
+    container_name: xgame-api
+    image: xgame-api:latest
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    volumes:
+      # 数据总目录：游戏本体/封面/H5 资源/攻略、云端存档、截图，以及 db/ 下的 SQLite 库与月度备份
+      - ${STORAGE_HOST_DIR:-./data/storage}:/data
+    restart: unless-stopped
+
+  web:
+    container_name: xgame-web
+    image: xgame-web:latest
+    build:
+      context: ./frontend
+      # 构建版本号（产物内联 + nginx 的 /version.txt 都来自它，供浏览器发现新部署）。
+      # 默认留空，让 vite 退化为构建时刻，这样不经 make 直接 docker compose build 也不会缺版本文件。
+      args:
+        APP_VERSION: ${APP_VERSION:-}
+    # 只发布「宿主侧」端口，容器内 nginx 仍固定听 443。
+    # 只支持 HTTPS：不发布 80，也没有 http→https 跳转，浏览器一律走 https://。
+    # 换端口只改 .env 的 WEB_HTTPS_PORT（如 8443 → 站点跑在 https://localhost:8443）。
+    # 注意：宿主的该端口已被别的服务占用时，docker 绑不上、web 容器直接起不来。
+    ports:
+      - "${WEB_HTTPS_PORT:-443}:443"
+    volumes:
+      # 证书随仓库提交在 ./certs（cert.pem / cert.key），只读挂给 nginx。
+      # 换证书就换这个目录里的这两个文件（或用 scripts/gen-certs.sh 重新生成）。
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      - api
+    restart: unless-stopped
+
+# 本项目不使用任何 docker 具名卷：数据一律落在宿主目录，用 ${STORAGE_HOST_DIR} 指定。
+# 这样备份、迁移、排查都是普通文件操作，不需要进容器或借 docker 命令。
+#
+# ⚠️ 时序要求：宿主目录 bind 的源路径必须在 docker 启动之前就可达。
+# 数据目录若在 WSL 发行版（Ubuntu-22.04）的文件系统上，而 Docker Desktop 的守护进程先于该
+# 发行版启动，开机时 bind 会被挂成一个空 tmpfs —— api 会在空目录里新建一个空 app.db，
+# 看起来就像「数据全没了」。发行版起来后重启容器即可恢复，但窗口期内的写入会真丢（落在
+# tmpfs 内存里）。因此这个目录应当指向 docker 启动前就稳定的路径，且别放在会被 git pull
+# 覆盖的仓库内。见 DEVELOP.md 的「排障」。

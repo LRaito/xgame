@@ -1,0 +1,238 @@
+:root {
+    color-scheme: light;
+    /* 给文档滚动条永久留一条槽位：内容变长变短时滚动条出现/消失不再改变内容区宽度，
+       否则像游戏中心那种按列宽摊的网格（repeat(auto-fill, minmax(180px, 1fr))）
+       会跟着重新分配宽度，卡片尺寸来回跳。
+       不支持的浏览器直接忽略这行，退回原来的行为。 */
+    scrollbar-gutter: stable;
+    font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: #1e293b;
+    background: #f1f5f9;
+    --brand-dark: #0f172a;
+    --brand-accent: #2563eb;
+    --brand-accent-soft: #eff6ff;
+    --surface: #ffffff;
+    --border: #e2e8f0;
+    --text-muted: #64748b;
+    --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+    --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.06);
+    --radius-lg: 14px;
+    --radius-md: 10px;
+}
+
+/* 游戏播放页（GameShell 挂载期间）：整页铺满视口、滚动交给内部容器，页面本身不滚动。
+   scrollbar-gutter 必须一起改回 auto——只写 overflow: hidden 的话，槽位照样会被留下，
+   右侧一直空出一条 :root 背景色（#f1f5f9）的竖条。类由 GameShell.vue 挂/摘。 */
+html.game-shell-locked {
+    overflow: hidden;
+    scrollbar-gutter: auto;
+}
+
+/* Element Plus 弹浮层（弹窗/右键菜单）时会藏掉页面滚动条，并把 body 宽度写成
+   calc(100% - 滚动条宽)——它以为滚动条没了、得把这点宽度补回来。
+   但 :root 上已经有 scrollbar-gutter: stable 常驻留槽，这一点宽度不该再减：
+   减了就会在浮层弹出的瞬间把整页往左缩约 15px，看起来像页面抖了一下
+   （游戏中心右键「详情」/「设置时长」最明显）。这里把那个内联宽度压回去，
+   必须 !important —— EP 写的是元素上的内联样式。 */
+body.el-popup-parent--hidden {
+    width: 100% !important;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 {
+    margin: 0;
+}
+
+a {
+    color: var(--brand-accent);
+}
+
+.page-header {
+    margin-bottom: 20px;
+}
+
+.page-title {
+    font-size: 24px;
+    font-weight: 600;
+    color: #0f172a;
+    letter-spacing: 0.01em;
+    margin-bottom: 6px;
+}
+
+.page-lead {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-muted);
+}
+
+.content-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 24px;
+    box-shadow: var(--shadow-sm);
+}
+
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 16px;
+}
+
+.tool-card {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 22px 22px 20px;
+    text-decoration: none;
+    color: inherit;
+    box-shadow: var(--shadow-sm);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.tool-card:hover {
+    border-color: #cbd5e1;
+    box-shadow: var(--shadow-md);
+    transform: translateY(-2px);
+}
+
+.tool-card__head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.tool-card__title {
+    font-size: 17px;
+    font-weight: 600;
+    color: #0f172a;
+}
+
+.tool-card__desc {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-muted);
+    flex: 1;
+}
+
+.tool-card__foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 4px;
+    font-size: 13px;
+    color: var(--brand-accent);
+    font-weight: 500;
+}
+
+.status-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+}
+
+.status-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 20px 22px;
+    box-shadow: var(--shadow-sm);
+}
+
+.status-card__title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #0f172a;
+    margin-bottom: 12px;
+}
+
+.status-card__desc {
+    margin: 10px 0 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--text-muted);
+}
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
+.status-badge--ok {
+    background: #ecfdf5;
+    color: #047857;
+}
+
+.status-badge--warn {
+    background: #fffbeb;
+    color: #b45309;
+}
+
+.status-badge--muted {
+    background: #f1f5f9;
+    color: #64748b;
+}
+
+.muted {
+    color: var(--text-muted);
+}
+
+.secret-title {
+    margin: 0 0 12px;
+    font-size: 14px;
+    color: var(--text-muted);
+}
+
+/* 删除游戏的二次确认（ElMessageBox，DOM 挂在 body 下、拿不到页面的 scoped 样式，
+   所以放全局）：警示文案下面单列一行卡带 ID + 复制按钮，方便照着它手打确认串。
+   复制按钮复用 AppButton 的 link 样式，靠 gap 与文字拉开距离。 */
+.game-manage__delete-confirm-text {
+    margin: 0;
+}
+
+.game-manage__delete-confirm-id {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 8px;
+    font-size: 13px;
+}
+
+.game-manage__delete-confirm-label {
+    color: var(--text-muted);
+}
+
+.game-manage__delete-confirm-value {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 600;
+    color: #0f172a;
+    user-select: all;
+}
+
+.content-panel :deep(.el-table) {
+    --el-table-border-color: var(--border);
+    --el-table-header-bg-color: #f8fafc;
+}
+
+.content-panel :deep(.el-table th.el-table__cell) {
+    font-weight: 600;
+    color: #475569;
+}
