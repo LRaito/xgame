@@ -2,7 +2,7 @@
 
 本项目所有结构化数据的权威清单：**SQLite 关系结构** 与 **文件存储结构**。
 
-**准确性约定：** 以代码为准，本文件只是索引。SQLite 结构源头是各模块的 `backend/*/models.py`（SQLModel `table=True`）；文件路径规则的源头是 `backend/games/paths.py`。改模型或路径规则时请同步更新本文。最后核对时间：2026-10-04。
+**准确性约定：** 以代码为准，本文件只是索引。SQLite 结构源头是各模块的 `backend/*/models.py`（SQLModel `table=True`）；文件路径规则的源头是 `backend/games/paths.py`。改模型或路径规则时请同步更新本文。最后核对时间：2026-10-12。
 
 ## 存储总览
 
@@ -10,7 +10,7 @@
 |--------|------|------|
 | SQLite 单文件 | `<数据根>/db/app.db`（Docker 里是宿主 `${STORAGE_HOST_DIR}/db/app.db` → 容器 `/data/db/app.db`） | 全部业务元数据 |
 | SQLite 月度备份 | 与库同目录的 `<数据根>/db/<YYYY-MM>.db` | 服务启动时按当月补一份，一个自然月一份；不做还原，回滚就手工换回 `app.db` |
-| 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/H5 资源/攻略/图集、云端存档、游戏截图，以及 `db/` 下的 SQLite 库与月度备份 |
+| 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/H5 资源/攻略/图集、云端存档、游戏截图，以及 `db/` 下的 SQLite 库与月度备份；数据根在 Windows 盘挂载路径下时另有一个**人工创建**的哨兵文件 `.mounted`（缺了服务拒绝启动，见 `backend/mount_guard.py`） |
 
 分工原则：**所有元数据在 SQLite，SQLite 里存的是相对于文件根目录的路径**；文件本身是磁盘上的普通文件，用户可以直接从宿主目录拷走、备份、浏览。相对路径统一用 `/` 作分隔符，读取时由 `LocalStorage` 拼上根路径。
 
@@ -191,7 +191,9 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 ## 文件存储结构
 
-根目录由 `backend/config.py` 的 `STORAGE_ROOT` 决定（本机默认 `<仓库>/data/storage`，容器内为 `/data/storage`），`LocalStorage` 构造时自动建出来。**SQLite 里存的都是相对这个根目录的路径**，读取时 `LocalStorage._resolve()` 拼上根路径并挡掉越界（绝对路径、`..` 一律拒绝）。浏览器从不直连磁盘，所有上传/下载都由 API 经 `StorageBackend` 分块流式代理。
+根目录由 `backend/config.py` 的 `STORAGE_ROOT` 决定（本机默认 `<仓库>/data/storage`，容器内为 `/data`），`LocalStorage` 构造时自动建出来。**SQLite 里存的都是相对这个根目录的路径**，读取时 `LocalStorage._resolve()` 拼上根路径并挡掉越界（绝对路径、`..` 一律拒绝）。浏览器从不直连磁盘，所有上传/下载都由 API 经 `StorageBackend` 分块流式代理。
+
+**根目录下还可能有一个不在表里的哨兵文件 `.mounted`**：空文件，**人工创建**（不由 `LocalStorage`、也不由任何代码代建）。**只有数据根落在 Windows 盘挂载路径前缀下时**（`backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，默认 `/mnt`）服务启动才会检查它，缺了就打日志等 5 秒退出（`backend/mount_guard.py`）；放普通 Linux 目录下的数据根不做这个检查。它只用来判断「这个目录确实是挂上了的数据根」，不参与任何业务路径。
 
 目录名一律用「游戏类型键 + 卡带ID」，**不随游戏名变化**——卡带ID 建后不可改，所以改游戏名不会挪动任何文件。
 

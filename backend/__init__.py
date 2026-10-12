@@ -8,6 +8,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from backend.auth.router import router as auth_router
 from backend.backup import backup_database
 from backend.config import (
+    LOG_FORMAT,
     SECRET_KEY,
     SESSION_COOKIE_SECURE,
     settings_from_overrides,
@@ -21,7 +22,7 @@ from backend.games.screenshot_router import router as game_screenshots_router
 from backend.games.settings_router import router as game_settings_router
 from backend.games.stats_router import router as game_stats_router
 from backend.http import json_err
-from backend.mount_guard import ensure_mounted
+from backend.mount_guard import require_mounted
 from backend.storage.local import LocalStorage
 from backend.tools.router import router as tools_router
 
@@ -31,10 +32,11 @@ logger = logging.getLogger(__name__)
 def create_app(test_config: dict | None = None) -> FastAPI:
     settings = settings_from_overrides(test_config)
 
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 
-    # 数据根目录里缺 .mounted 哨兵文件就补一个（见 backend/mount_guard.py）
-    ensure_mounted(settings)
+    # 数据根目录里没有 .mounted 哨兵文件就不放行：打日志、等 5 秒、退出进程，由容器重启策略
+    # 反复重试（见 backend/mount_guard.py）。必须在建目录、建库之前。
+    require_mounted(settings)
 
     ensure_data_dir(settings)
     engine = make_engine(settings)

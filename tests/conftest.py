@@ -24,7 +24,7 @@ def register_as(client, username="alice", password="secret123"):
 
 @pytest.fixture
 def app(tmp_path):
-    # 数据根目录不用预先建：create_app 启动时会连同 .mounted 哨兵文件一起建出来
+    # 数据根目录不用预先建：create_app 启动时会建出来
     application = create_app(
         {
             "TESTING": True,

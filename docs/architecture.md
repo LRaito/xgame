@@ -84,7 +84,7 @@ x/
 │   └── public/emulatorjs/    # EmulatorJS 引擎资产（构建生成，gitignore）
 ├── backend/                  # FastAPI JSON API（见下方路由树）
 ├── tests/                    # test_auth/local_storage/games/game_saves/game_screenshots/game_stats/game_recent/game_emulator_settings
-├── data/                     # 本机开发默认的数据根目录 data/storage（含 db/，gitignore）
+├── data/                     # 本机开发默认的数据根目录 data/storage（含 db/，gitignore；不在 /mnt 下，不需要哨兵）
 ├── docker-compose.yml        # web + api（宿主数据根目录 bind：STORAGE_HOST_DIR → /data）
 ├── requirements.txt
 ├── .env.example              # 全部键、假值、中文注释
@@ -286,9 +286,12 @@ backend/
 
 **决定：** compose 里一个具名卷都不用：**数据是一个宿主目录** `STORAGE_HOST_DIR`（默认 `./data/storage` → 容器 `/data`，后端读 `STORAGE_ROOT`），里面装着游戏文件与 SQLite（库固定在其下的 `db/app.db`，月度备份也在这个 `db/` 里）；**证书**是仓库里的 `certs/`（`cert.pem` / `cert.key`），compose 只读挂给 web 的 `/etc/nginx/certs`。
 **原因：** 数据要能被人直接拿到——存档要能自己拷出来备份、本体要能直接扔进模拟器、库要能用 sqlite3 打开看一眼，套一层 docker 卷管理就都得借容器。全部落宿主目录后，备份/迁移/排查都是普通文件操作。
-**代价与时序要求：** 宿主 bind 在 WSL 发行版（或 Windows 盘）未就绪时会被挂成空目录（详见「排障」）。发行版起来后重启容器即恢复，但**窗口期内的写入会真丢**（落在空目录里）。
+**代价与时序要求：** 宿主 bind 在 WSL 发行版（或 Windows 盘）未就绪时会被挂成空目录（详见「排障」）。
 
-**挂载哨兵：** `backend/mount_guard.py` 在 `create_app()` 最开头（早于建目录、建库）确保数据根目录 `STORAGE_ROOT` 里有一个空的 `.mounted` 文件：没有就建出来（库就在这个根目录下的 `db/` 里，一个哨兵够了）。它是「这个目录就是数据根」的标记，**不拦启动**：上面那条时序问题会静默发生（api 在空目录里建空库），而判据只能是哨兵文件——目录可写、能 statvfs 都测不出空目录（tmpfs 同样可写），何况 bind 在容器创建时就解析完了，容器内等待也没用，拦不住。规避办法是把 `STORAGE_HOST_DIR` 指向 docker 启动前就可达的稳定路径，见「排障」。
+**数据根目录哨兵（`.mounted`）：** 数据根落在 **Windows 盘的挂载路径前缀下**时（前缀写死在 `backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，默认 `/mnt`，设成 `/` = 所有路径都要求），它里面要有一个**人工创建**的空文件 `.mounted`：`create_app()` 在建目录、建库**之前**调 `backend/mount_guard.py::require_mounted()` 检查，缺了就只 stat 一下、打一条中文日志、等 5 秒、以非零码退出（容器里这一步由入口脚本 `backend/entrypoint.sh` 在 `exec gunicorn` 之前触发，退的是**容器主进程**，compose 的 `api.restart: unless-stopped` 把容器重新拉起，循环重试到哨兵出现）。**不在这个前缀下的数据根（普通 Linux 目录）没有那条竞态，不做任何检查、直接启动。** 判断用的是「数据根路径」：容器里 `STORAGE_ROOT` 固定是 bind 目标 `/data`、看不出宿主路径，所以 compose 把 `STORAGE_HOST_DIR` 也作为环境变量传进容器供这一处判断（业务代码不读它）；本机直跑时退回 `STORAGE_ROOT`。
+**原因：** 上面那条时序问题（bind 挂成空目录）在容器内没有别的判据——空目录同样可写、`statvfs` 也正常，只有「这个目录里有我认得的哨兵文件」能识破它；而它只可能发生在宿主 bind 的场景，所以按前缀把「有风险的数据根」圈出来，别让放普通目录的人白折腾。拦住启动的代价是「Windows 盘上的数据目录首次部署要手工 `touch` 一次」，换来的是「绝不会在空目录里静默建出一个空库」。
+**它不代建：** 代码只检查、绝不自动补——自动补就等于承认「空目录也是数据根」，判据立刻失效。也**不是** `configured` 那类开关：storage 永远可用，哨兵只拦启动。
+
 **何时重评：** 多容器并发写或拆出的服务需要网络 SQL。
 
 ### 决策 5：账号只做隔离，不做安全机制
@@ -409,11 +412,12 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 ```
 主机
 └── docker compose（一条命令启动，**不用任何具名卷**）
-     ├── api                    # backend/Dockerfile → Gunicorn+uvicorn :8910（仅内部）
-     │    ├── 宿主目录 ${STORAGE_HOST_DIR} → /data
+     ├── api                    # backend/Dockerfile → ENTRYPOINT entrypoint.sh（哨兵检查）→ Gunicorn+uvicorn :8910（仅内部）
+     │    ├── 宿主目录 ${STORAGE_HOST_DIR} → /data         （宿主路径也作为环境变量传进容器，供哨兵前缀判断）
+     │    │    ├── .mounted             哨兵文件（数据根在 /mnt 这类 Windows 盘路径下时人工创建，缺了 api 拒绝启动并反复重启）
      │    │    ├── game/ save/ image/   游戏文件、存档与截图
      │    │    └── db/           app.db 与月度备份 <YYYY-MM>.db
-     │    └── 配置：全部在 backend/config.py（后端不读 .env）
+     │    └── 配置：全部在 backend/config.py（后端不读 .env 文件；容器里只多一个 STORAGE_HOST_DIR 给哨兵判断）
      └── web                    # frontend/Dockerfile → nginx :443，反代 /api 到 api
           └── 仓库 certs/ → /etc/nginx/certs（只读）
 ```
@@ -437,14 +441,14 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 
 ## 配置
 
-配置**写死在代码里**：`backend/config.py` 放 `SECRET_KEY`、`SESSION_COOKIE_*`、`DB_SUBDIR` / `DB_FILENAME` 与本机默认的数据根目录，容器里的数据根目录由 `backend/Dockerfile` 的 `ENV STORAGE_ROOT=/data` 固定。`.env` 只剩两个键，而且**只有 docker compose 读它们，后端进程一个都不读**（`backend/config.py` 不加载 `.env`）；`.env.example` 列出这两个键与中文注释，`.env` 加入 gitignore，不建 `.env` 也能跑。
+配置**写死在代码里**：`backend/config.py` 放 `SECRET_KEY`、`SESSION_COOKIE_*`、`DB_SUBDIR` / `DB_FILENAME`、`WINDOWS_MOUNT_PREFIX` 与本机默认的数据根目录，容器里的数据根目录由 `backend/Dockerfile` 的 `ENV STORAGE_ROOT=/data` 固定。`.env` 只剩两个键，而且**只有 docker compose 读那个文件**（`backend/config.py` 不加载 `.env`）；其中 `STORAGE_HOST_DIR` 会被 compose 作为环境变量传进 api 容器，后端**只用它**做启动时的哨兵前缀判断（容器里看不出宿主路径，见决策 4），业务代码不碰它。`.env.example` 列出这两个键与中文注释，`.env` 加入 gitignore，不建 `.env` 也能跑。
 
 | 变量 | 默认 | 用途 |
 |----------|----------|---------|
-| `STORAGE_HOST_DIR` | `./data/storage` | **宿主侧**数据根目录；容器里挂到 `/data`。游戏文件在它下面，SQLite 固定在 `<根>/db/app.db` |
+| `STORAGE_HOST_DIR` | `./data/storage` | **宿主侧**数据根目录；容器里挂到 `/data`，同时作为环境变量传进容器供哨兵判断。游戏文件在它下面，SQLite 固定在 `<根>/db/app.db` |
 | `WEB_HTTPS_PORT` | `443` | 对外发布的 HTTPS 端口（容器内 nginx 固定听 443，见「安全架构」） |
 
-代码内固定：`SECRET_KEY`（session cookie 的签名密钥，换值让所有已登录会话失效）、`STORAGE_ROOT`（容器 `/data`，本机 `<repo>/data/storage`）、SQLite 路径 `<STORAGE_ROOT>/db/app.db`、证书 `certs/cert.pem` / `certs/cert.key`、`SESSION_COOKIE_SECURE`；nginx `client_max_body_size 128m` 是上传网关（游戏 GBA 整卡 32MiB 等大文件经它放行）。
+代码内固定：`SECRET_KEY`（session cookie 的签名密钥，换值让所有已登录会话失效）、`STORAGE_ROOT`（容器 `/data`，本机 `<repo>/data/storage`）、`WINDOWS_MOUNT_PREFIX`（Windows 盘挂载路径前缀，默认 `/mnt`；数据根在它下面才要求 `.mounted` 哨兵）、SQLite 路径 `<STORAGE_ROOT>/db/app.db`、证书 `certs/cert.pem` / `certs/cert.key`、`SESSION_COOKIE_SECURE`；nginx `client_max_body_size 128m` 是上传网关（游戏 GBA 整卡 32MiB 等大文件经它放行）。
 
 ## 性能
 
@@ -466,8 +470,8 @@ cd frontend && npm run lint
 ## 排障（设计层面）
 
 **问题：开机（`wsl --shutdown` 后重开）后 data 目录看起来是空的**
-原因：数据目录所在的盘（WSL 挂载的 Windows 盘 `/mnt/…`）在容器起来时还没挂上，bind 把宿主的空目录挂进了容器，服务就在那儿建了一个新库。数据本身没丢，但**窗口期内的写入会真丢**（落在空目录里）。哨兵文件不拦这种情况——盘没挂上时它只会在空目录里再建一个。
-处理：确认盘挂上（`mountpoint -q /mnt/d`），然后 `docker compose restart api`；治本是把 `STORAGE_HOST_DIR` 指向挂载稳定、docker 启动前就可达的路径，别放会被 `git pull` 覆盖的仓库里。
+原因：数据目录所在的盘（WSL 挂载的 Windows 盘 `/mnt/…`）在容器起来时还没挂上，bind 把宿主的空目录挂进了容器。
+处理：**数据根在 `/mnt` 前缀下时不需要人工介入**——空挂载里没有 `.mounted` 哨兵，api 会拒绝启动并被 `restart: unless-stopped` 反复重启，一个字节都不会写进空目录；盘挂上后容器下一次重启即自愈（急的话 `docker compose restart api`）。前提是哨兵当初建在**真实的数据目录**里：从没建过、或曾建在空挂载里，都会让这道守卫失效/误判，先在宿主侧补 `touch "$STORAGE_HOST_DIR/.mounted"`；治本仍是把 `STORAGE_HOST_DIR` 指向挂载稳定、docker 启动前就可达的路径。放普通 Linux 目录下的数据根不走这条判断。
 
 **问题：登录时提示「今日已禁止登录」/「请 5 分钟后再试」**
 原因：同一用户名连续失败触发了登录锁定（≥3 短锁 5 分钟，≥6 锁到当天 UTC 结束）。

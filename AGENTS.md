@@ -121,16 +121,17 @@ backend/asgi.py              # 生产 ASGI 入口
 backend/config.py            # 配置（全部写死在这里，含 SECRET_KEY）
 backend/database.py          # engine、init_db、SQLite 路径解析
 backend/backup.py            # 启动时的 SQLite 月度备份（当月一份，不做还原）
-backend/mount_guard.py       # 数据根目录的哨兵文件 .mounted（启动时缺了就建）
+backend/mount_guard.py       # 启动前的数据根目录哨兵检查（数据根在 Windows 盘挂载前缀下时才查：缺 .mounted 就打日志、等 5 秒、退出）
 backend/deps.py              # 依赖注入：session、登录态、各 service 依赖
 backend/csrf.py              # CSRF 中间件
 backend/cli.py               # init-db
-backend/Dockerfile           # api 镜像（ENV STORAGE_ROOT=/data + gunicorn）
+backend/entrypoint.sh        # api 容器的 ENTRYPOINT：先过哨兵检查，再 exec CMD 里的 gunicorn
+backend/Dockerfile           # api 镜像（ENV STORAGE_ROOT=/data + ENTRYPOINT entrypoint.sh + gunicorn）
 backend/auth/                # 注册/登录/退出（密码 + 失败锁定）
 backend/tools/registry.py    # 功能列表（给 /api/tools）
 backend/games/               # 游戏 router/service/paths + 云端存档 save_* + 游戏截图 screenshot_* + 游戏图集 gallery_* + 模拟器设置 settings_* + 游玩统计 stats_* + 搬运 importer + 网络上传 remote
 backend/storage/             # 跨模块：types(协议与 StoredObject) / local(LocalStorage) / access(流式下载响应)
-tests/                       # pytest（test_auth / test_backup / test_mount_guard / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats）
+tests/                       # pytest（test_auth / test_backup / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats）
 docker-compose.yml           # web + api（宿主数据根目录 bind：STORAGE_HOST_DIR → /data）
 requirements.txt
 .env.example
@@ -151,7 +152,7 @@ requirements.txt
 4. **前端分层。** 页面(view) → `api/*`（`xxxAPI`）→ `request.js` → FastAPI。新增接口只改 api 层和后端 router，不碰 `request.js`。
 5. **通用组件。** 自定义风格的弹窗、按钮、筛选、空状态放 `frontend/src/components/common/`，页面不要复制一份。只被一个工具用的放 `components/<tool>/`。带路由的页面只放 `views/`。
 6. **导航由路由表驱动。** 侧栏菜单由 `router` 的 `meta.title` 运行时生成（顺序即 `children` 声明顺序），不要在页面里写死链接。`backend/tools/registry.py` 与 `GET /api/tools` 仍在，但自首页改为游戏中心后暂无前端使用方。
-7. **配置写死在代码里。** 全部配置在 `backend/config.py`（含 `SECRET_KEY`、`SESSION_COOKIE_*`、`DB_SUBDIR` / `DB_FILENAME`）与 `backend/Dockerfile` 的 `ENV STORAGE_ROOT=/data`。`.env` 只剩 `STORAGE_HOST_DIR` 与 `WEB_HTTPS_PORT` 两个键，而且**只给 docker compose 读，后端进程一个都不读**（`backend/config.py` 不加载 `.env`）——加配置项一律进 `config.py`，不要新增 `.env` 键。文件根目录（`STORAGE_ROOT`）不存在时 `LocalStorage` 会自己建出来，没有「未配置」状态——**存储永远可用，不要复活 `configured` 这类开关**。
+7. **配置写死在代码里。** 全部配置在 `backend/config.py`（含 `SECRET_KEY`、`SESSION_COOKIE_*`、`DB_SUBDIR` / `DB_FILENAME`、`WINDOWS_MOUNT_PREFIX`）与 `backend/Dockerfile` 的 `ENV STORAGE_ROOT=/data`。`.env` 只剩 `STORAGE_HOST_DIR` 与 `WEB_HTTPS_PORT` 两个键，都**只给 docker compose 读，后端不读 `.env` 文件**——加配置项一律进 `config.py`，不要新增 `.env` 键。唯一例外是 `STORAGE_HOST_DIR`：compose 把它作为**环境变量**传进 api 容器，后端只拿它做启动时的哨兵前缀判断（容器里看不出宿主路径，见 `backend/mount_guard.py`），业务代码不碰它。文件根目录（`STORAGE_ROOT`）不存在时 `LocalStorage` 会自己建出来，没有「未配置」状态——**存储永远可用，不要复活 `configured` 这类开关**。唯一会拦住启动的是数据根目录哨兵 `.mounted`，且**只在数据根落在 Windows 盘挂载前缀下时**才要求（见下面「宿主目录 bind 的时序要求」）：它**不是**配置开关，只拦启动、不表示存储不可用，也绝不代建。
 8. **SQLite 路径。** 写死为 `<STORAGE_ROOT>/db/app.db`（`backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME`），**没有 `DATABASE_URL` 可配**；启动时确保该目录存在。
 9. **Gunicorn + SQLite：** `gunicorn backend.asgi:app -k uvicorn.workers.UvicornWorker --workers 1 --threads 8`。必须单进程以免 SQLite 写冲突；多线程用于并发处理 keep-alive 连接。
 
@@ -297,8 +298,9 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 
 - 构建上下文为仓库根目录（`docker-compose` 中 `context: .`，`dockerfile: backend/Dockerfile`）
 - `python:3.12.15-slim-trixie`，工作目录 `/app`
-- 安装根目录 `requirements.txt`，仅复制 `backend/` 包，创建 `/app/data`
+- 安装根目录 `requirements.txt`，仅复制 `backend/` 包，给 `backend/entrypoint.sh` 加执行位
 - `EXPOSE 8910`
+- `ENTRYPOINT` 是 `/app/backend/entrypoint.sh`：先调 `backend/mount_guard.py::require_mounted()`（**数据根在 Windows 盘挂载前缀下**——按 compose 传进来的宿主路径 `STORAGE_HOST_DIR` 判断，前缀可配、默认 `/mnt`——而容器里缺 `.mounted` 哨兵时，打中文日志 → 等 5 秒 → 以非零码退出，退的是**容器主进程**，compose 的 `api.restart: unless-stopped` 随即把容器重新拉起，循环重试直到哨兵出现；宿主数据目录不在那个前缀下就直接放行），再 `exec "$@"` 跑 CMD。判断与日志只有 `mount_guard.py` 一份，脚本不重复实现
 - `CMD`：`gunicorn backend.asgi:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8910 --workers 1 --threads 8 --timeout 300`（300s 是为了长上传/流式下载不被 worker 超时杀）
 
 **web 镜像（`frontend/Dockerfile`）**
@@ -311,20 +313,18 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 
 **`docker-compose.yml`**
 
-- `api`：`build.context: .` + `dockerfile: backend/Dockerfile`，数据根目录 bind `${STORAGE_HOST_DIR:-./data/storage}:/data`，不对外发端口，**没有 `env_file`**（后端不读 `.env`）
+- `api`：`build.context: .` + `dockerfile: backend/Dockerfile`，数据根目录 bind `${STORAGE_HOST_DIR:-./data/storage}:/data`，不对外发端口，**没有 `env_file`**（后端不读 `.env` 文件）；`environment` 里只把 `STORAGE_HOST_DIR` 传进容器，供启动时的哨兵前缀判断（见 `backend/mount_guard.py`）
 - `web`：`build: ./frontend`，`ports: ["${WEB_HTTPS_PORT:-443}:443"]`（**只支持 HTTPS**：不发布 80，也没有 http→https 跳转；只发布宿主侧端口，容器内固定听 443，换端口只改 `.env`），证书目录 bind `./certs:/etc/nginx/certs:ro`（证书随仓库提交），`depends_on: [api]`
 - **没有 `volumes:` 段**
 - api / web `restart: unless-stopped`
 
-**宿主目录 bind 的时序要求：** 数据目录若在 WSL 发行版（Ubuntu-22.04）的文件系统上，而 Docker Desktop 守护进程先于该发行版启动——开机时 bind 源路径不可达，docker 会挂一个空 tmpfs 顶上，容器里看起来就像「文件全没了」（api 在空目录里建了个空库），重启服务才恢复，且窗口期内的写入会真丢。所以 `STORAGE_HOST_DIR` 必须指向 docker 启动前就可达的固定路径（别指外挂盘的临时挂载点，也别放会被 `git pull` 覆盖的仓库内）。
-
-**数据根目录哨兵**：`create_app()` 第一步（早于建目录、建库）调 `backend/mount_guard.py::ensure_mounted()`——数据根目录 `STORAGE_ROOT` 里没有 `.mounted`（空的标记文件，库就在这个根目录下的 `db/` 里，一个哨兵够了）就建一个。**它不拦启动**：判据只能是哨兵文件（目录可写、能 statvfs 都测不出空目录），而盘没挂上时 bind 已经把空目录挂进容器了，拦也拦不回来——所以这里只做标记与排障线索，风险靠上面那条「把 `STORAGE_HOST_DIR` 指向稳定的路径」规避。
+**宿主目录 bind 的时序要求：** 数据目录若在 WSL 发行版（Ubuntu-22.04）的文件系统上（`/mnt/…` 这类 Windows 盘挂载路径），而 Docker Desktop 守护进程先于该发行版启动——开机时 bind 源路径不可达，docker 会挂一个空 tmpfs 顶上，容器里看起来就像「文件全没了」。**这种数据根由哨兵拦住**：判断按宿主路径 `STORAGE_HOST_DIR`（容器里的 `STORAGE_ROOT` 固定是 `/data`，看不出宿主路径），落在 Windows 盘挂载前缀（`config.WINDOWS_MOUNT_PREFIX`，默认 `/mnt`）下、而容器里又没有 `.mounted`（空挂载天然没有它）时 `require_mounted()` 拒绝启动 → 容器退出 → `restart: unless-stopped` 反复重启，直到盘挂上、哨兵可见，服务自己恢复（窗口期内不会有任何写入，也就不会丢）。**数据根不在那个前缀下（普通 Linux 目录）不做任何检查，直接启动**。前缀下的数据目录**要人工建一次哨兵**：`touch "$STORAGE_HOST_DIR/.mounted"`，换新数据目录要重新建一次；`STORAGE_HOST_DIR` 本身仍应指向 docker 启动前就可达的固定路径（别指外挂盘的临时挂载点，也别放会被 `git pull` 覆盖的仓库内）。
 
 **备份**：不再内置备份脚本。数据都在宿主目录里（`STORAGE_HOST_DIR`），直接拷就行。SQLite 另有一层自动兜底：`create_app()` 启动时调 `backend/backup.py::backup_database()`，当月还没有 `<YYYY-MM>.db`（写在库同目录 `<STORAGE_ROOT>/db/`）就备一份、有就跳过；用 sqlite3 的 backup API 而非拷文件（WAL 下裸拷会撕裂），失败只记 warning 不拦启动，**不做还原功能**。存档（`save/`）不可重建，本体/封面/H5 资源都能重传。
 
 `docker compose up --build` 之后，浏览器打开 **https://localhost**（只支持 HTTPS，80 端口不发布）。
 
-本地开发：`uvicorn backend.asgi:app --reload --port 8910` + `cd frontend && npm run dev`。
+本地开发：`uvicorn backend.asgi:app --reload --port 8910` + `cd frontend && npm run dev`。本机数据根默认是仓库下的 `data/storage`，不在 `/mnt` 下、**不需要哨兵文件**；只有你把数据根指到 WSL 的 Windows 盘（如 `STORAGE_ROOT=/mnt/x/xgame`）时才要先 `touch /mnt/x/xgame/.mounted`，否则 uvicorn 起来就打一条日志、等 5 秒退出。测试不受影响（`TESTING` 下跳过检查）。
 
 ## 实现时要生成的配置文件
 

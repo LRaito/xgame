@@ -8,7 +8,6 @@ from backend.auth.service import AuthService
 from backend.games import paths
 from backend.games.models import GameCloudSnapshot, GameCloudSnapshotFile
 from backend.config import DB_SUBDIR
-from backend.mount_guard import SENTINEL_NAME
 
 
 @pytest.fixture
@@ -25,7 +24,6 @@ def _files(storage_root) -> set[str]:
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file()
-        and p.name != SENTINEL_NAME
         # db/ 里是 SQLite 库与它的月度备份，不属于游戏素材
         and p.relative_to(root).parts[0] != DB_SUBDIR
     }

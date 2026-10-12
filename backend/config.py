@@ -27,6 +27,16 @@ SECRET_KEY = "7DRuoN-aQgNE7vuHsHQ-UGXt2RleZFT2gRJrjKzTtNv9wRuB9CthMDMpPz5M_3hWQO
 # 固定应用配置（按需改代码）
 SESSION_COOKIE_SECURE = True
 
+# 日志格式：`create_app()` 与启动前的哨兵检查（`backend/mount_guard.py`）各配一次日志，
+# 后者跑在入口脚本里、早于 `create_app()`，所以两处共用这一个常量。
+LOG_FORMAT = "%(levelname)s %(name)s %(message)s"
+
+# Windows 盘的挂载路径前缀（可改；设成 "/" 表示对所有路径都要求哨兵）。
+# WSL 里挂进来的 Windows 盘都在这个前缀下（如 /mnt/x/xgame）。数据根落在它下面时，开机存在
+# 「盘还没挂上、bind 把宿主空目录挂进容器」的竞态，所以启动前要求 `.mounted` 哨兵；其它路径
+# （普通 Linux 目录）没有这个风险，不检查、直接启动。判断细节见 backend/mount_guard.py。
+WINDOWS_MOUNT_PREFIX = "/mnt"
+
 # SQLite 库在根目录下的固定子目录（`<根路径>/db/app.db`，月度备份也落在同一个 db/ 里）。
 # 写死是为了让「库永远在根目录的 db/ 下」这件事在代码里成立，而不是靠各处的约定。
 DB_SUBDIR = "db"
@@ -49,6 +59,12 @@ class Settings(BaseSettings):
     # 项目文件根目录：游戏本体/封面/H5 资源/攻略、云端存档、截图与 SQLite 库都在它下面。
     # 容器里由 backend/Dockerfile 固定为 /data，宿主目录经 compose 挂到该路径。
     STORAGE_ROOT: str = default_storage_root()
+
+    # 宿主侧数据目录：compose 把 .env 的 STORAGE_HOST_DIR 也传进容器，**只**用于启动时判断
+    # 「数据根是不是在 Windows 盘挂载前缀下」——容器里 STORAGE_ROOT 固定是 /data，看不出宿主
+    # 路径（见 backend/mount_guard.py）。本机直跑没有它，判断退回 STORAGE_ROOT。
+    # 业务代码不读它，`.env` 文件本身后端仍然不读。
+    STORAGE_HOST_DIR: str | None = None
 
     @property
     def database_path(self) -> Path:

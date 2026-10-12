@@ -5,7 +5,6 @@ from backend.auth.service import AuthService
 from backend.config import DB_SUBDIR
 from backend.games import paths
 from backend.games.models import Game, GameGalleryImage
-from backend.mount_guard import SENTINEL_NAME
 
 # 一张“长得像 PNG”的最小字节：magic 之后接任意业务字节
 PNG_HEAD = b"\x89PNG\r\n\x1a\n"
@@ -27,7 +26,6 @@ def _files(storage_root) -> set[str]:
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file()
-        and p.name != SENTINEL_NAME
         and p.relative_to(root).parts[0] != DB_SUBDIR
     }
 

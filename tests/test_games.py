@@ -11,7 +11,6 @@ from sqlmodel import Session, select
 
 from backend.errors import ValidationError
 from backend.config import DB_SUBDIR
-from backend.mount_guard import SENTINEL_NAME
 from backend.games import importer, paths
 from backend.games.models import Game, GameCloudSnapshot, GameCloudSnapshotFile, GameH5File
 from backend.games.service import (
@@ -55,7 +54,6 @@ def _files(storage_root) -> set[str]:
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file()
-        and p.name != SENTINEL_NAME
         # db/ 里是 SQLite 库与它的月度备份，不属于游戏素材
         and p.relative_to(root).parts[0] != DB_SUBDIR
     }

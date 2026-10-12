@@ -26,8 +26,9 @@ backend/
   __init__.py             # create_app() 应用工厂（唯一入口）
   config.py               # 配置：全部写死在这里，见下
   asgi.py                 # 生产 ASGI 入口（gunicorn 用）
-  mount_guard.py          # 数据根目录的 .mounted 哨兵文件
   backup.py               # SQLite 月度备份
+  mount_guard.py          # 启动前的数据根目录哨兵检查（数据根在 Windows 盘挂载路径下时缺 .mounted 就退出）
+  entrypoint.sh           # api 容器的 ENTRYPOINT：先过哨兵检查，再 exec gunicorn
   database.py             # 引擎、建表、_ensure_columns() 补列（无迁移框架）
   storage/                # types（协议）/ local（LocalStorage）/ access（流式下载响应）
   auth/ games/ tools/     # 一块功能一个包，各含 router.py（只 HTTP）+ service.py（领域逻辑）
@@ -55,6 +56,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn backend.asgi:app --reload --port 8910
 ```
+
+本机数据根默认是仓库下的 `data/storage`，它不在 Windows 盘挂载前缀（`/mnt`）下，**不需要**哨兵文件。
+只有把数据根指到 WSL 挂载的 Windows 盘上（如 `STORAGE_ROOT=/mnt/x/xgame`）时才要**先手工建一次**
+`/mnt/x/xgame/.mounted`，否则后端不会启动：打一条中文日志、等 5 秒、以非零码退出（本机没有容器
+重启策略，就是起不来）——这是有意的，见下面「启动时发生什么」。测试不用管（`TESTING` 下跳过检查）。
 
 前端（另开一个终端）：
 
@@ -85,9 +91,17 @@ make all            # = docker compose build && up -d
 cp .env.example .env        # 改 STORAGE_HOST_DIR / WEB_HTTPS_PORT
 ```
 
+**数据目录在 Windows 盘上（`/mnt/…`）时，第一次运行平台前要先建 `.mounted` 哨兵**，否则 api 容器
+起不来（日志里反复出现「数据根目录 … 里没有哨兵文件」，容器被 `restart: unless-stopped` 反复重启）。
+数据目录放在普通 Linux 路径（如 `/srv/xgame`）下不用建、也完全不检查。要建的话先建目录再 `make all`：
+
+```bash
+mkdir -p "$STORAGE_HOST_DIR" && touch "$STORAGE_HOST_DIR/.mounted"     # 只建一次
+```
+
 ## 配置
 
-绝大部分配置**写死在代码里**，只有两个键留在 `.env`，而且**后端进程一个都不读**：
+绝大部分配置**写死在代码里**，只有两个键留在 `.env`，而且**后端进程不读这个文件**（唯一例外见下表：`STORAGE_HOST_DIR` 会被 compose 作为环境变量传进 api 容器，只用于启动时的哨兵判断）：
 
 | 键 | 默认 | 作用 |
 | --- | --- | --- |
@@ -100,10 +114,12 @@ cp .env.example .env        # 改 STORAGE_HOST_DIR / WEB_HTTPS_PORT
 | --- | --- | --- |
 | `SECRET_KEY` | `backend/config.py` | session cookie 的签名密钥，跟仓库一起走；改它会让所有已登录会话失效 |
 | `STORAGE_ROOT` | `backend/Dockerfile` 的 `ENV`（容器）/ `backend/config.py`（本机） | 容器里固定 `/data`；本机是 `<仓库>/data/storage` |
+| `STORAGE_HOST_DIR` | `.env`（只给 compose） | 宿主侧数据目录。compose 除了拿它做 bind，还把它作为环境变量传进 api 容器，**只**用于启动时的哨兵前缀判断（见 `backend/mount_guard.py`） |
+| `WINDOWS_MOUNT_PREFIX` | `backend/config.py` | Windows 盘的挂载路径前缀，默认 `/mnt`；数据根落在这下面才要求 `.mounted` 哨兵（设成 `/` = 所有路径都要求） |
 | SQLite 路径 | `backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME` | `<STORAGE_ROOT>/db/app.db`，**没有 `DATABASE_URL` 可配** |
 | 证书 | `docker-compose.yml` + `frontend/nginx.conf.template` | `certs/cert.pem` 与 `certs/cert.key` |
 | Session cookie | `backend/config.py` | HttpOnly、SameSite=Lax、HTTPS 下 Secure（测试自动关） |
-| `TESTING` | `backend/config.py` | 只给测试用 |
+| `TESTING` | `backend/config.py` | 只给测试用（顺带跳过启动时的 `.mounted` 哨兵检查） |
 
 > **这是有意的取舍**：平台只给自己用，不打算部署到别人的机器上，所以不做「可配置化」。
 > 密钥、证书都随仓库提交，安全性不是考虑项。别把 `SECRET_KEY` 之类的再挪回环境变量。
@@ -112,21 +128,47 @@ cp .env.example .env        # 改 STORAGE_HOST_DIR / WEB_HTTPS_PORT
 
 `create_app()`（`backend/__init__.py`）按顺序做四件事：
 
-1. `ensure_mounted()` — 数据根目录没有 `.mounted` 哨兵文件就建一个；
+1. `require_mounted()` — 数据根落在 Windows 盘挂载前缀下时，没有 `.mounted` 哨兵就**拒绝启动**（见下）；不在那个前缀下直接放行；
 2. `ensure_data_dir()` — 建出 `<STORAGE_ROOT>/db`；
 3. `init_db()` — `create_all` 建缺失的表，再 `_ensure_columns()` 给老表 `ALTER TABLE ADD COLUMN` 补列；
 4. `backup_database()` — 当月还没有备份就往 `<STORAGE_ROOT>/db/<YYYY-MM>.db` 备一份。
 
-第 4 步失败只记 warning，**绝不拦住启动**；不做还原功能，回滚靠手工替换 `app.db`。
+第 1 步与第 4 步的失败处理正好相反：哨兵缺了**一定拦住启动**；备份失败只记 warning、绝不拦，
+也不做还原功能（回滚就手工把备份文件改名成 `app.db` 替换）。
 
 ### `.mounted` 哨兵文件
 
-数据根目录里有一个空的 `.mounted`，服务启动时检查一次：**没有就新建**。它只是「这个目录就是
-数据根」的标记。
+**只对 Windows 盘挂载路径下的数据根**要求一个空的 `.mounted`：**人工创建，代码只检查、绝不代建**
+（`backend/mount_guard.py`）。
 
-**它不拦启动**：数据目录挂在 WSL 的 Windows 盘上（`/mnt/…`）而 docker 先于盘起来时，bind 会把
-宿主空目录挂进容器，服务会在空目录里建一个新库。规避办法是把 `STORAGE_HOST_DIR` 指向 docker
-启动前就可达的稳定路径，见下面「排障」。
+它用来识破「bind 把宿主空目录挂进来了」这种情况：数据目录放在 WSL 挂的 Windows 盘（`/mnt/…`）上
+时，开机可能 docker 先于盘挂载起来，那时容器里的数据根目录是个**空目录**——可写、`statvfs` 也
+正常，服务照常启动就会在里面新建一个空库，看起来就像「数据全没了」。唯一能识破它的判据就是
+哨兵文件在不在。
+
+所以判断分两步：
+
+1. **要不要检查**：数据根路径是否落在 Windows 盘挂载前缀下。前缀写死在
+   `backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`（**可改，默认 `/mnt`**；设成 `/` 表示对所有路径
+   都要求哨兵）。**不在这个前缀下（普通 Linux 目录，比如仓库内的 `data/storage` 或 `/srv/xgame`）
+   没有这个竞态，直接启动、不要求任何文件**。这里的「数据根路径」在容器里取 compose 传进来的
+   宿主路径 `STORAGE_HOST_DIR`（容器里 `STORAGE_ROOT` 固定是 bind 目标 `/data`，看不出宿主路径），
+   本机直跑时退回 `STORAGE_ROOT`。
+2. **检查哪一份**：进程能看到的 `<STORAGE_ROOT>/.mounted`（容器里就是挂进来的宿主目录）。
+
+缺哨兵时：打一条中文日志（含该 `touch` 哪个路径）→ 等 5 秒 → 以非零码退出。容器里这一步发生在
+`exec gunicorn` **之前**（`backend/entrypoint.sh` 是 api 镜像的 ENTRYPOINT，它调的就是
+`create_app()` 里同一个 `require_mounted()`），退出的是容器主进程，compose 的
+`api.restart: unless-stopped` 随即把容器重新拉起，如此循环直到哨兵出现、服务自己恢复。
+判断与日志只有 `mount_guard.py` 一份，脚本只是把退出码透传出去。
+
+```bash
+# 数据根在 Windows 盘上（如 /mnt/x/xgame）时，第一次运行平台前建一次；普通 Linux 目录不用建
+touch "$STORAGE_HOST_DIR/.mounted"
+```
+
+哨兵要建在**真实的数据目录**里（它会随数据目录一起被备份；空的 bind 挂载天然没有它），
+换新的数据目录要重新建一次。
 
 ## 证书
 
@@ -151,7 +193,7 @@ docker compose restart web
 数据根目录（`STORAGE_ROOT`）里的一切都是普通文件，**没有任何对象存储、也没有 docker 具名卷**：
 
 ```
-.mounted                                     哨兵文件（启动时自动创建）
+.mounted                                     哨兵文件（数据根在 /mnt 这类 Windows 盘路径下时人工创建）
 db/app.db                                    SQLite 库（SQLModel 表）
 db/2026-10.db                                月度备份
 game/{游戏类型}/{卡带ID}/game.{后缀}          本体
@@ -190,10 +232,18 @@ cd frontend && npm run lint
 ## 排障
 
 **数据目录在 WSL 的 Windows 盘上（`/mnt/…`），开机后数据像是空的。**
-Docker 守护进程可能先于 WSL 发行版起来，bind 把宿主的空目录挂进了容器，服务就在那儿建了新库
-（写入落在 tmpfs 内存里，重启即丢）。发行版起来后 `docker compose restart api` 即可恢复。
-治本的办法是把 `STORAGE_HOST_DIR` 指向 docker 启动前就稳定的路径，并且别放在会被 `git pull`
-覆盖的仓库目录里。
+Docker 守护进程可能先于 WSL 发行版起来，bind 把宿主的空目录挂进了容器。**这种数据根由哨兵拦住**：
+容器里的数据根没有 `.mounted`，api 拒绝启动并被反复重启，窗口期内一个字节都写不进去（不会再
+静默建出空库）。盘挂上后不用做别的，容器下一次重启就自己恢复（急的话 `docker compose restart api`）。
+前提是哨兵当初已建在**真实的数据目录**里——走的是「数据根在 `/mnt` 前缀下」这条判断，若曾在空
+挂载里建过一次 `.mounted`，它反而会把问题掩盖掉。治本的仍是把 `STORAGE_HOST_DIR` 指向 docker
+启动前就稳定的路径，别放在会被 `git pull` 覆盖的仓库目录里。
+
+**api 容器一直在重启，日志反复出现「数据根目录 … 里没有哨兵文件」。**
+数据根在 Windows 盘挂载前缀（默认 `/mnt`）下、却缺 `.mounted`：从没建过、换过 `STORAGE_HOST_DIR`、
+或者盘还没挂上。确认盘已挂上（`mountpoint -q /mnt/d`）之后，在**宿主侧**那个数据目录里
+`touch .mounted`，容器下一次重启就起来了。在容器里 `touch /data/.mounted` 也行，但那是建在 bind
+进来的宿主目录里，效果一样（盘没挂上时只是白建，掩盖问题）。日志给出的 `touch` 路径就是宿主路径。
 
 **页面还是旧版。** 前端按构建版本号（git 短 sha）探测更新，`nginx` 对 HTML 与 `/version.txt`
 都不缓存。经 `make all` 构建才会带上 sha；直接 `docker compose build` 会退化成构建时间戳。

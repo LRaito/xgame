@@ -8,6 +8,11 @@ services:
     volumes:
       # 数据总目录：游戏本体/封面/H5 资源/攻略、云端存档、截图，以及 db/ 下的 SQLite 库与月度备份
       - ${STORAGE_HOST_DIR:-./data/storage}:/data
+    environment:
+      # 宿主侧数据目录：只给启动时的哨兵判断用——容器里 STORAGE_ROOT 固定是 /data，看不出宿主
+      # 路径，判断不了「这份数据是不是在 Windows 盘上（需要 .mounted）」（见 backend/mount_guard.py）。
+      # 后端仍然不读 .env 文件，这个值是 compose 按 .env / 默认值算好后传进去的。
+      STORAGE_HOST_DIR: ${STORAGE_HOST_DIR:-./data/storage}
     restart: unless-stopped
 
   web:
@@ -38,7 +43,17 @@ services:
 #
 # ⚠️ 时序要求：宿主目录 bind 的源路径必须在 docker 启动之前就可达。
 # 数据目录若在 WSL 发行版（Ubuntu-22.04）的文件系统上，而 Docker Desktop 的守护进程先于该
-# 发行版启动，开机时 bind 会被挂成一个空 tmpfs —— api 会在空目录里新建一个空 app.db，
-# 看起来就像「数据全没了」。发行版起来后重启容器即可恢复，但窗口期内的写入会真丢（落在
-# tmpfs 内存里）。因此这个目录应当指向 docker 启动前就稳定的路径，且别放在会被 git pull
-# 覆盖的仓库内。见 DEVELOP.md 的「排障」。
+# 发行版启动，开机时 bind 会被挂成一个空 tmpfs —— 以前 api 会在空目录里新建一个空 app.db，
+# 看起来就像「数据全没了」。
+#
+# 现在这层由数据根目录的哨兵文件兜住：api 的入口脚本（backend/entrypoint.sh）在 exec gunicorn
+# 之前检查 /data/.mounted（backend/mount_guard.py），**只在宿主数据目录落在 Windows 盘挂载前缀
+# （默认 /mnt，见 backend/config.py 的 WINDOWS_MOUNT_PREFIX）下时才检查**——那种目录才有上面这条
+# 竞态；空挂载里没有哨兵就打一条中文日志、等 5 秒、以非零码退出，靠本文件 api 服务的
+# `restart: unless-stopped` 反复重启，直到盘挂上、哨兵可见，服务自己恢复 —— 窗口期内一个字节
+# 都不会写进空目录。数据目录放普通 Linux 路径（如 /srv/xgame）下则完全不检查、直接启动。
+#
+# 所以：**Windows 盘上的数据目录要人工建一次哨兵**（代码只检查、绝不代建）：
+#     mkdir -p "$STORAGE_HOST_DIR" && touch "$STORAGE_HOST_DIR/.mounted"
+# 并且这个目录应当指向 docker 启动前就稳定的路径，别放在会被 git pull 覆盖的仓库内。
+# 见 DEVELOP.md 与 README.md 的「排障 / 常见问题」。
