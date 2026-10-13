@@ -32,6 +32,13 @@
                 :aspect="stageAspect"
                 :wide="wideMode"
             />
+            <!-- 复古滤镜（只有配了滤镜清单的机种显示）：内核选项 + 引擎内置着色器，
+                 清单见 constants/emuFilters.js，运行中切换走宿主页的 setFilter -->
+            <emu-filter-select
+                v-if="filters"
+                v-model="filterId"
+                :filters="filters"
+            />
             <!-- 有洞对齐图的平台（GBA、FC、GBC）：把机壳图盖在画面上，中间那个洞正好露出游戏画面 -->
             <button
                 v-if="supportsShell"
@@ -126,6 +133,13 @@ import {
 } from "@/api/games";
 import { gameTypeMeta } from "@/constants/gameTypes";
 import {
+    EMU_FILTER_NONE,
+    EMU_FILTER_SETTING_KEYS,
+    emuFilterResets,
+    emuFiltersFor,
+    filterForShader,
+} from "@/constants/emuFilters";
+import {
     EMU_SAVE_FILENAME,
     emuBase64ToBlob,
     ensureSingleSlotModel,
@@ -139,6 +153,7 @@ import {
     writeEngineSettings,
 } from "@/utils/emulatorSettings";
 import GameShell from "@components/games/GameShell.vue";
+import EmuFilterSelect from "@components/games/EmuFilterSelect.vue";
 import EmuSaveManager from "@components/games/EmuSaveManager.vue";
 import EmuWindowSelect from "@components/games/EmuWindowSelect.vue";
 import ScreenshotConfirmDialog from "@components/games/ScreenshotConfirmDialog.vue";
@@ -215,6 +230,10 @@ const SHELLS = {
 const WINDOW_STORAGE_KEY = "games.emu.window";
 // 机壳开关也是本地偏好（纯观赏层，不随账号走），下次进有对应机壳的游戏沿用上次的选择
 const SHELL_STORAGE_KEY = "games.emu.shell";
+// 滤镜也按游戏类型各记一条（GBA 想用液晶、FC 想用 CRT），整张表存一个 JSON 里
+const FILTER_STORAGE_KEY = "games.emu.filter";
+// 引擎自带菜单里试出来的着色器：自动进表的那几条（同样按游戏类型各记一份）
+const FILTER_CUSTOM_STORAGE_KEY = "games.emu.filter.custom";
 
 // 显示比例模式（窗口选择器里那一列）：pp = 像素完美（1:1 方像素，画面比例 = 帧缓冲比例）；
 // wide = 4:3（真机 CRT 观感，把画面横向拉宽填满 4:3）。只有 FC 两种都提供
@@ -260,6 +279,75 @@ function loadStoredShell() {
     }
 }
 
+/** 读该游戏类型记住的滤镜 id；没记过、内容坏了都返回「无」，越界取值由 emuFilterFor 回落。 */
+function loadStoredFilter(gameType) {
+    if (!gameType) {
+        return "none";
+    }
+    try {
+        const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+        const map = raw ? JSON.parse(raw) : null;
+        return typeof map?.[gameType] === "string" ? map[gameType] : "none";
+    } catch {
+        return "none";
+    }
+}
+
+function saveStoredFilter(gameType, id) {
+    if (!gameType) {
+        return;
+    }
+    try {
+        const raw = localStorage.getItem(FILTER_STORAGE_KEY);
+        const map = raw ? JSON.parse(raw) : null;
+        const next = map && typeof map === "object" && !Array.isArray(map) ? map : {};
+        next[gameType] = id;
+        localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+        // 隐私模式等写失败场景忽略即可
+    }
+}
+
+/** 读该类型自动进表的滤镜（引擎自带菜单里试出来的着色器）；结构不对的条目丢掉。 */
+function loadStoredCustomFilters(gameType) {
+    if (!gameType) {
+        return [];
+    }
+    try {
+        const raw = localStorage.getItem(FILTER_CUSTOM_STORAGE_KEY);
+        const map = raw ? JSON.parse(raw) : null;
+        const stored = map ? map[gameType] : null;
+        if (!Array.isArray(stored)) {
+            return [];
+        }
+        return stored.filter(
+            (item) =>
+                item &&
+                typeof item.id === "string" &&
+                typeof item.label === "string" &&
+                typeof item.shader === "string" &&
+                (item.options === null || typeof item.options === "object"),
+        );
+    } catch {
+        return [];
+    }
+}
+
+function saveStoredCustomFilters(gameType, list) {
+    if (!gameType) {
+        return;
+    }
+    try {
+        const raw = localStorage.getItem(FILTER_CUSTOM_STORAGE_KEY);
+        const map = raw ? JSON.parse(raw) : null;
+        const next = map && typeof map === "object" && !Array.isArray(map) ? map : {};
+        next[gameType] = list;
+        localStorage.setItem(FILTER_CUSTOM_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+        // 隐私模式等写失败场景忽略即可
+    }
+}
+
 const route = useRoute();
 const router = useRouter();
 
@@ -286,6 +374,10 @@ const windowMode = ref(loadStoredWindow());
 const stageSize = ref(null);
 // 是否盖上机壳：本地记住的偏好，进游戏时按它恢复
 const shellVisible = ref(loadStoredShell());
+// 当前滤镜 id：进游戏时按该类型的记忆恢复（见 loadGame），取不到就是「无」
+const filterId = ref("none");
+// 引擎自带菜单里试出来、自动进表的滤镜（按游戏类型，见 loadStoredCustomFilters）
+const customFilters = ref([]);
 // 舞台在视口里的位置。机壳是 position: fixed（见样式里的说明），要用视口坐标，
 // 而这只能从 DOM 现读，滚动 / 缩放窗口 / 全屏之后都得重新同步一次
 const stageEl = ref(null);
@@ -377,6 +469,22 @@ const shell = computed(() => {
 });
 const supportsShell = computed(() => Boolean(shell.value));
 
+// 该机种的滤镜清单（没配就是 null → 标题栏不出现滤镜入口）：内置表 + 自动进表的那几条
+const filters = computed(() => {
+    const builtin = emuFiltersFor(game.value?.category);
+    if (!builtin) {
+        return null;
+    }
+    const extra = customFilters.value.filter((item) => !builtin.some((base) => base.id === item.id));
+    return [...builtin, ...extra];
+});
+// 当前生效的滤镜：id 找不到（换了清单、手改过 localStorage）就回落到「无」，
+// 所以运行中切换与设置块覆写都可以放心用它的 options/shader
+const filter = computed(() => {
+    const list = filters.value || [];
+    return list.find((item) => item.id === filterId.value) || list[0] || EMU_FILTER_NONE;
+});
+
 // 真正生效的机壳状态。偏好是全局记的，所以换到没有机壳的游戏上即使上次开着也不盖
 const shellOn = computed(() => supportsShell.value && shellVisible.value);
 
@@ -451,6 +559,8 @@ function refreshEngineReady() {
     if (!ready) {
         return;
     }
+    // 引擎自带菜单里换了着色器就跟着选中（试衣间 → 选择器），见 syncFilterFromEngine
+    syncFilterFromEngine();
     // 就绪时（以及之后每隔 1 秒）取一次引擎的显示宽高比：内核加载完才有值，
     // 用户在引擎设置里改了 aspect 也能跟着变；变了就重算舞台。
     const aspect = readEngineAspect(rpc);
@@ -623,6 +733,90 @@ async function applyCloudSettings() {
     const remote = settingsPrefetch ? await settingsPrefetch : null;
     if (remote?.settings) {
         writeEngineSettings(engineSettingsKeyValue, remote.settings);
+    }
+}
+
+/** 该类型记住的滤镜：合并清单里找得到就用它，否则「无」（进游戏时恢复选择用）。 */
+function filterForStored() {
+    const list = filters.value || [];
+    const stored = loadStoredFilter(game.value?.category);
+    return list.find((item) => item.id === stored) || EMU_FILTER_NONE;
+}
+
+/** 当前滤镜交给宿主页的参数：内核选项串（`k=v,k=v`）与着色器键名。 */
+function filterQuery() {
+    const current = filter.value;
+    return {
+        copts: Object.entries(current.options || {})
+            .map(([name, value]) => `${name}=${value}`)
+            .join(","),
+        shader: current.shader || "",
+    };
+}
+
+/**
+ * 把当前滤镜写进引擎设置块。
+ *
+ * 只在设置块**已经存在**时改写：没玩过就没必要凭一个滤镜给这个游戏留一份半成品配置。
+ * 先按滤镜清单里出现过的所有键清一遍——上次选的滤镜留下的值不清就会跟着这一局
+ * （比如上次选「真机液晶」留下的色彩校正，这次换成 CRT 还照旧生效）；
+ * 清完再写入本次的键值。引擎启动时会重放这块设置，所以引擎自带菜单里显示的也是我们这份选择。
+ */
+function applyFilterToEngineSettings() {
+    const raw = engineSettingsKeyValue ? readEngineSettingsRaw(engineSettingsKeyValue) : null;
+    if (!raw) {
+        return;
+    }
+    const blob = JSON.parse(raw);
+    for (const name of EMU_FILTER_SETTING_KEYS) {
+        delete blob.settings[name];
+    }
+    const current = filter.value;
+    if (current.shader) {
+        blob.settings.shader = current.shader;
+    }
+    for (const [name, value] of Object.entries(current.options || {})) {
+        blob.settings[name] = value;
+    }
+    writeEngineSettings(engineSettingsKeyValue, blob);
+}
+
+/**
+ * 把引擎自带菜单里选的着色器同步到滤镜选择器。
+ *
+ * 引擎那个菜单（底部工具栏 → 图形设置 → 着色器）当「试衣间」用：在那里换一个，这里就跟着
+ * 选中；表里没有的会**自动进表**（沿用当前滤镜的内核选项，名字用着色器名）并记住，
+ * 于是下次进游戏照样套用——不这么做的话，引擎菜单里的改动会被本页启动时的重置逻辑丢掉。
+ * 引擎不发设置变更事件，所以只能每秒读一次它写的设置块（菜单里改完会立刻落盘）。
+ */
+function syncFilterFromEngine() {
+    if (!filters.value) {
+        return;
+    }
+    const raw = engineSettingsKeyValue ? readEngineSettingsRaw(engineSettingsKeyValue) : null;
+    if (!raw) {
+        return;
+    }
+    let settings = null;
+    try {
+        settings = JSON.parse(raw).settings;
+    } catch {
+        return;
+    }
+    const stored = typeof settings?.shader === "string" ? settings.shader : "";
+    const shader = stored === "disabled" ? "" : stored;
+    if (shader === (filter.value.shader || "")) {
+        return;
+    }
+    const { entry, created } = filterForShader(filters.value, filter.value, shader);
+    if (created) {
+        const next = [...customFilters.value, entry];
+        customFilters.value = next;
+        saveStoredCustomFilters(game.value?.category, next);
+    }
+    if (entry.id !== filterId.value) {
+        // 选中它：watch 会记住这次选择，并把状态（幂等地）再下发一次给引擎
+        filterId.value = entry.id;
     }
 }
 
@@ -911,6 +1105,10 @@ async function launchEngine() {
         // 引擎只在启动时读一次设置：先把云端的写进 localStorage，再拉起 iframe
         engineSettingsKeyValue = engineSettingsKey(item.id, meta.value.core, item.name || "");
         await applyCloudSettings();
+        // 滤镜：内核选项既要进内核设置文件（内核加载前就得在，见宿主页），也要进引擎设置块
+        // （引擎自己的重放路径）；设置块里的值优先级更高，所以顺序必须是「先云端的、再本局的
+        // 滤镜」，反过来就会被云端或上一次的选择顶掉。
+        applyFilterToEngineSettings();
         // ROM 直连后端流式接口；带 updated_at 参数，重传本体后可让 EmulatorJS 缓存失效
         const params = new URLSearchParams({
             id: String(item.id),
@@ -920,6 +1118,14 @@ async function launchEngine() {
             // 显示比例：宿主页据此设内核选项（只有 FC 认这个参数），与标题栏窗口选择器里选的那列一致
             ratio: aspectMode.value,
         });
+        // 滤镜：内核选项串在加载前落进内核设置文件，着色器键名在引擎起来后启用
+        const filterParams = filterQuery();
+        if (filterParams.copts) {
+            params.set("copts", filterParams.copts);
+        }
+        if (filterParams.shader) {
+            params.set("shader", filterParams.shader);
+        }
         iframeSrc.value = `/emulator-host.html?${params.toString()}`;
         reportGamePlayed(item.id);
         startGamePlaytime(item.id);
@@ -945,6 +1151,7 @@ async function loadGame() {
     if (!gameId) {
         game.value = null;
         meta.value = null;
+        filterId.value = "none";
         iframeSrc.value = "";
         saveManagerVisible.value = false;
         shotDialogVisible.value = false;
@@ -1004,6 +1211,10 @@ async function loadGame() {
         }
         game.value = item;
         meta.value = typeMeta;
+        // 滤镜：按该类型记住的选择恢复（含引擎菜单里试出来、自动进表的条目）；
+        // 清单里已经没有它了就回落到「无」
+        customFilters.value = loadStoredCustomFilters(item.category);
+        filterId.value = filterForStored().id;
         // 云端设置与游戏状态并行拉取；无手势时这段等待正好用来完成它
         prefetchCloudSettings(item.category);
         // 无用户手势（例如刷新页面、直接打开链接进入）时，浏览器会拦截音频自动开始
@@ -1046,6 +1257,24 @@ watch(shellVisible, (value) => {
     } catch {
         // 隐私模式等写失败场景忽略即可
     }
+});
+
+// 滤镜：记住选择（按游戏类型），运行中切换就立刻推给引擎——引擎只在启动时读一次设置，
+// 所以运行中改走宿主页的 setFilter；下次进游戏由 iframe 的 copts / shader 参数兜住。
+watch(filterId, (value) => {
+    saveStoredFilter(game.value?.category, value);
+    if (!engineReady.value) {
+        return;
+    }
+    // 设置块也跟上：中途按「保存配置」时传的就是当下这份选择，而不是启动时那份
+    applyFilterToEngineSettings();
+    const current = filter.value;
+    void callRpc("setFilter", {
+        options: current.options || {},
+        shader: current.shader || "",
+        // 本类型滤镜涉及的内核选项及各自的关闭值：宿主页先把它们复位，再下发本次的取值
+        reset: emuFilterResets(game.value?.category),
+    });
 });
 
 // 关掉截图确认框（确认或取消）就把那张预览 URL 收掉，不留内存里的孤儿图

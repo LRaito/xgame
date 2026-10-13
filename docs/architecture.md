@@ -169,7 +169,7 @@ backend/
   Flash  → /games/flash/{id}   Ruffle 播放，SW（game-asset-sw.js）按 key+updated_at 缓存资源
   主机   → /games/play/{id}    外层 SPA 壳内嵌 iframe /emulator-host.html → EmulatorJS；
                               ROM 直连 /api/games/{id}/play（EmulatorJS 自带 IndexedDB 缓存 core/ROM）
-                              标题栏按钮（自左向右）：截图 → 保存配置 → 窗口倍率 → 显示游戏机（GBA / FC / GBC 有）→ 存档管理；
+                              标题栏按钮（自左向右）：截图 → 保存配置 → 窗口倍率 → 滤镜 → 显示游戏机（GBA / FC / GBC 有）→ 存档管理；
                               显示游戏机：把机壳图按「洞宽 = 画面宽」放大后盖在画面上，洞正好露出游戏画面，
                               画面尺寸一变就跟着缩放。图与洞的几何按游戏类型放在 emulator-player.vue 的 SHELLS 表里，
                               FC 还按显示比例分两套（切比例一起换）：GBA = public/gba-shell.png（带透明屏幕洞的
@@ -204,6 +204,21 @@ backend/
                               __ejsRpc.setDisplayMode）：pp → fceumm_aspect = PP + 上下各裁 8 行过扫描
                               （帧缓冲 256×224，显示 8:7）；wide → fceumm_aspect = 4:3 + 不裁过扫描
                               （帧缓冲 256×240，显示 4:3）
+                              滤镜（EmuFilterSelect.vue，7 个主机平台都有）：清单按游戏类型放在
+                              constants/emuFilters.js，每项 = 内核选项键值对 + 引擎内置着色器键名。
+                              着色器对所有内核通用（写 /shader/shader.glslp + 调内核的 shader_enable，
+                              6 个内核的两种构建都导出了它），所以每个平台都有 CRT 两条；内核选项则按
+                              各内核自己的能力配（FC/SFC/SMS 的 Blargg NTSC 复合信号、GB 的 LCD 拖影、
+                              GBA 的色彩校正 + 拖影、MD/GG 的 NTSC + LCD 鬼影）。选择按类型记在本地
+                              localStorage（games.emu.filter），拉起引擎前把设置块里滤镜相关的旧值
+                              清掉再写入本次取值。宿主页按 iframe 的 ?copts=k=v,k=v&shader=… 在内核
+                              加载前把内核选项写进内核设置文件、引擎就绪后 enableShader 启用着色器；
+                              运行中切换走 __ejsRpc.setFilter（先按表里逐键声明的关闭值复位——OFF 与
+                              disabled 不通用——再下发本次取值，内核下一帧重读可变项）。滤镜只作用在
+                              画布上，内核侧截图那条路不带它。引擎自带菜单里的「着色器」也接了进来：
+                              在那里换一个，播放页每秒读引擎写的设置块跟着选中，表里没有的着色器自动
+                              进表（沿用当前条目的内核选项，名字取 EMU_SHADER_LABELS）并记住，
+                              下次进游戏照样套用
   H5     → /games/h5/{id}      外层 SPA 壳内嵌 sandbox iframe，入口 /api/games/{id}/h5/index.html，
                               页内相对资源落到同前缀（/api/games/{id}/h5/…）
   攻略   → 不在 SPA 里开页面：游戏中心右键「攻略」用 window.open 在**新标签页顶层**打开
