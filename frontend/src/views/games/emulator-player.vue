@@ -133,10 +133,11 @@ import {
 } from "@/api/games";
 import { gameTypeMeta } from "@/constants/gameTypes";
 import {
+    EMU_FILTER_NONE,
     EMU_FILTER_SETTING_KEYS,
-    emuFilterFor,
     emuFilterResets,
     emuFiltersFor,
+    filterForShader,
 } from "@/constants/emuFilters";
 import {
     EMU_SAVE_FILENAME,
@@ -231,6 +232,8 @@ const WINDOW_STORAGE_KEY = "games.emu.window";
 const SHELL_STORAGE_KEY = "games.emu.shell";
 // 滤镜也按游戏类型各记一条（GBA 想用液晶、FC 想用 CRT），整张表存一个 JSON 里
 const FILTER_STORAGE_KEY = "games.emu.filter";
+// 引擎自带菜单里试出来的着色器：自动进表的那几条（同样按游戏类型各记一份）
+const FILTER_CUSTOM_STORAGE_KEY = "games.emu.filter.custom";
 
 // 显示比例模式（窗口选择器里那一列）：pp = 像素完美（1:1 方像素，画面比例 = 帧缓冲比例）；
 // wide = 4:3（真机 CRT 观感，把画面横向拉宽填满 4:3）。只有 FC 两种都提供
@@ -305,6 +308,46 @@ function saveStoredFilter(gameType, id) {
     }
 }
 
+/** 读该类型自动进表的滤镜（引擎自带菜单里试出来的着色器）；结构不对的条目丢掉。 */
+function loadStoredCustomFilters(gameType) {
+    if (!gameType) {
+        return [];
+    }
+    try {
+        const raw = localStorage.getItem(FILTER_CUSTOM_STORAGE_KEY);
+        const map = raw ? JSON.parse(raw) : null;
+        const stored = map ? map[gameType] : null;
+        if (!Array.isArray(stored)) {
+            return [];
+        }
+        return stored.filter(
+            (item) =>
+                item &&
+                typeof item.id === "string" &&
+                typeof item.label === "string" &&
+                typeof item.shader === "string" &&
+                (item.options === null || typeof item.options === "object"),
+        );
+    } catch {
+        return [];
+    }
+}
+
+function saveStoredCustomFilters(gameType, list) {
+    if (!gameType) {
+        return;
+    }
+    try {
+        const raw = localStorage.getItem(FILTER_CUSTOM_STORAGE_KEY);
+        const map = raw ? JSON.parse(raw) : null;
+        const next = map && typeof map === "object" && !Array.isArray(map) ? map : {};
+        next[gameType] = list;
+        localStorage.setItem(FILTER_CUSTOM_STORAGE_KEY, JSON.stringify(next));
+    } catch {
+        // 隐私模式等写失败场景忽略即可
+    }
+}
+
 const route = useRoute();
 const router = useRouter();
 
@@ -333,6 +376,8 @@ const stageSize = ref(null);
 const shellVisible = ref(loadStoredShell());
 // 当前滤镜 id：进游戏时按该类型的记忆恢复（见 loadGame），取不到就是「无」
 const filterId = ref("none");
+// 引擎自带菜单里试出来、自动进表的滤镜（按游戏类型，见 loadStoredCustomFilters）
+const customFilters = ref([]);
 // 舞台在视口里的位置。机壳是 position: fixed（见样式里的说明），要用视口坐标，
 // 而这只能从 DOM 现读，滚动 / 缩放窗口 / 全屏之后都得重新同步一次
 const stageEl = ref(null);
@@ -424,11 +469,21 @@ const shell = computed(() => {
 });
 const supportsShell = computed(() => Boolean(shell.value));
 
-// 该机种的滤镜清单（没配就是 null → 标题栏不出现滤镜入口）
-const filters = computed(() => emuFiltersFor(game.value?.category));
-// 当前生效的滤镜：表里没有的 id（换了清单、手改过 localStorage）回落到「无」，
+// 该机种的滤镜清单（没配就是 null → 标题栏不出现滤镜入口）：内置表 + 自动进表的那几条
+const filters = computed(() => {
+    const builtin = emuFiltersFor(game.value?.category);
+    if (!builtin) {
+        return null;
+    }
+    const extra = customFilters.value.filter((item) => !builtin.some((base) => base.id === item.id));
+    return [...builtin, ...extra];
+});
+// 当前生效的滤镜：id 找不到（换了清单、手改过 localStorage）就回落到「无」，
 // 所以运行中切换与设置块覆写都可以放心用它的 options/shader
-const filter = computed(() => emuFilterFor(game.value?.category, filterId.value));
+const filter = computed(() => {
+    const list = filters.value || [];
+    return list.find((item) => item.id === filterId.value) || list[0] || EMU_FILTER_NONE;
+});
 
 // 真正生效的机壳状态。偏好是全局记的，所以换到没有机壳的游戏上即使上次开着也不盖
 const shellOn = computed(() => supportsShell.value && shellVisible.value);
@@ -504,6 +559,8 @@ function refreshEngineReady() {
     if (!ready) {
         return;
     }
+    // 引擎自带菜单里换了着色器就跟着选中（试衣间 → 选择器），见 syncFilterFromEngine
+    syncFilterFromEngine();
     // 就绪时（以及之后每隔 1 秒）取一次引擎的显示宽高比：内核加载完才有值，
     // 用户在引擎设置里改了 aspect 也能跟着变；变了就重算舞台。
     const aspect = readEngineAspect(rpc);
@@ -679,6 +736,13 @@ async function applyCloudSettings() {
     }
 }
 
+/** 该类型记住的滤镜：合并清单里找得到就用它，否则「无」（进游戏时恢复选择用）。 */
+function filterForStored() {
+    const list = filters.value || [];
+    const stored = loadStoredFilter(game.value?.category);
+    return list.find((item) => item.id === stored) || EMU_FILTER_NONE;
+}
+
 /** 当前滤镜交给宿主页的参数：内核选项串（`k=v,k=v`）与着色器键名。 */
 function filterQuery() {
     const current = filter.value;
@@ -715,6 +779,45 @@ function applyFilterToEngineSettings() {
         blob.settings[name] = value;
     }
     writeEngineSettings(engineSettingsKeyValue, blob);
+}
+
+/**
+ * 把引擎自带菜单里选的着色器同步到滤镜选择器。
+ *
+ * 引擎那个菜单（底部工具栏 → 图形设置 → 着色器）当「试衣间」用：在那里换一个，这里就跟着
+ * 选中；表里没有的会**自动进表**（沿用当前滤镜的内核选项，名字用着色器名）并记住，
+ * 于是下次进游戏照样套用——不这么做的话，引擎菜单里的改动会被本页启动时的重置逻辑丢掉。
+ * 引擎不发设置变更事件，所以只能每秒读一次它写的设置块（菜单里改完会立刻落盘）。
+ */
+function syncFilterFromEngine() {
+    if (!filters.value) {
+        return;
+    }
+    const raw = engineSettingsKeyValue ? readEngineSettingsRaw(engineSettingsKeyValue) : null;
+    if (!raw) {
+        return;
+    }
+    let settings = null;
+    try {
+        settings = JSON.parse(raw).settings;
+    } catch {
+        return;
+    }
+    const stored = typeof settings?.shader === "string" ? settings.shader : "";
+    const shader = stored === "disabled" ? "" : stored;
+    if (shader === (filter.value.shader || "")) {
+        return;
+    }
+    const { entry, created } = filterForShader(filters.value, filter.value, shader);
+    if (created) {
+        const next = [...customFilters.value, entry];
+        customFilters.value = next;
+        saveStoredCustomFilters(game.value?.category, next);
+    }
+    if (entry.id !== filterId.value) {
+        // 选中它：watch 会记住这次选择，并把状态（幂等地）再下发一次给引擎
+        filterId.value = entry.id;
+    }
 }
 
 /** 「保存配置」：把当前引擎配置整块传到云端，之后进该平台的游戏会自动加载。 */
@@ -1108,8 +1211,10 @@ async function loadGame() {
         }
         game.value = item;
         meta.value = typeMeta;
-        // 滤镜：按该类型记住的选择恢复；清单里已经没有它了就回落到「无」
-        filterId.value = emuFilterFor(item.category, loadStoredFilter(item.category)).id;
+        // 滤镜：按该类型记住的选择恢复（含引擎菜单里试出来、自动进表的条目）；
+        // 清单里已经没有它了就回落到「无」
+        customFilters.value = loadStoredCustomFilters(item.category);
+        filterId.value = filterForStored().id;
         // 云端设置与游戏状态并行拉取；无手势时这段等待正好用来完成它
         prefetchCloudSettings(item.category);
         // 无用户手势（例如刷新页面、直接打开链接进入）时，浏览器会拦截音频自动开始

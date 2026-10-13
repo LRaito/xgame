@@ -18,6 +18,9 @@
 
 const NONE = { id: "none", label: "无", shader: "", options: null };
 
+/** 「无」的条目本身：播放页在清单里找不到当前选择时用它兜底。 */
+export const EMU_FILTER_NONE = NONE;
+
 // 所有平台共用的 CRT 着色器两项（引擎内置，键名见 window.EJS_SHADERS）
 const CRT_LOTTES = { id: "crt-lottes", label: "CRT（lottes）", shader: "crt-lottes", options: null };
 const CRT_EASYMODE = {
@@ -189,4 +192,69 @@ export function emuFilterFor(gameType, id) {
         return NONE;
     }
     return list.find((filter) => filter.id === id) || NONE;
+}
+
+/**
+ * 引擎内置着色器的**键名 → 显示名**（键名见引擎里的 window.EJS_SHADERS，一字不差）。
+ * 上面表里用到的两个 CRT 也在其中，所以面板里的名字与引擎自带菜单里的一致。
+ * 引擎升级后若多出新的着色器也没关系：`emuShaderLabel` 会回落到键名本身。
+ */
+export const EMU_SHADER_LABELS = {
+    "crt-lottes": "CRT（lottes）",
+    "crt-easymode.glslp": "CRT（简易模式）",
+    "crt-aperture.glslp": "CRT（荫栅式）",
+    "crt-beam": "CRT（电子束）",
+    "crt-caligari": "CRT（caligari）",
+    "crt-geom.glslp": "CRT（几何）",
+    "crt-mattias.glslp": "CRT（马蒂亚斯）",
+    "crt-yeetron": "CRT（yeetron）",
+    "crt-zfast": "CRT（zfast）",
+    "2xScaleHQ.glslp": "2xScaleHQ",
+    "4xScaleHQ.glslp": "4xScaleHQ",
+    sabr: "SABR",
+    bicubic: "Bicubic",
+    "mix-frames": "Mix frames",
+};
+
+/** 着色器键名 → 显示名；不认识的直接给键名（引擎加过新着色器时就这样显示）。 */
+export function emuShaderLabel(name) {
+    return EMU_SHADER_LABELS[name] || name;
+}
+
+/** 内核选项的规范化签名：与顺序无关，用于比较两个条目的选项是否同一套。 */
+export function filterOptionsKey(options) {
+    return Object.entries(options || {})
+        .map(([name, value]) => `${name}=${value}`)
+        .sort()
+        .join(",");
+}
+
+/**
+ * 引擎自带菜单里换了着色器之后，找/造对应的滤镜条目。
+ *
+ * 引擎菜单（底部工具栏 → 图形设置 → 着色器）是个「试衣间」：它改完着色器后，本函数找一条
+ * **同一套内核选项、着色器换成新值**的条目；表里没有就照当前条目的选项造一条新的，
+ * 由调用方记住（这样引擎菜单里的改动不会在下次进游戏时被本页的重置逻辑丢掉）。
+ * 返回 `{ entry, created }`：`created=true` 表示条目是刚造出来的、需要持久化。
+ */
+export function filterForShader(list, current, shader) {
+    const key = filterOptionsKey(current.options);
+    const hit = list.find(
+        (item) => filterOptionsKey(item.options) === key && (item.shader || "") === shader,
+    );
+    if (hit) {
+        return { entry: hit, created: false };
+    }
+    const base = list.find((item) => filterOptionsKey(item.options) === key);
+    const label = shader
+        ? base && base.id !== "none"
+            ? `${base.label} + ${emuShaderLabel(shader)}`
+            : emuShaderLabel(shader)
+        : base
+          ? base.label
+          : "自定义";
+    return {
+        entry: { id: `auto:${shader}|${key}`, label, options: current.options || null, shader },
+        created: true,
+    };
 }
