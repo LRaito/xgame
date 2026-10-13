@@ -135,7 +135,7 @@ import { gameTypeMeta } from "@/constants/gameTypes";
 import {
     EMU_FILTER_SETTING_KEYS,
     emuFilterFor,
-    emuFilterOptionKeys,
+    emuFilterResets,
     emuFiltersFor,
 } from "@/constants/emuFilters";
 import {
@@ -1167,8 +1167,8 @@ watch(filterId, (value) => {
     void callRpc("setFilter", {
         options: current.options || {},
         shader: current.shader || "",
-        // 本类型所有滤镜涉及的键：宿主页先把它们复位，再下发本次的取值
-        keys: emuFilterOptionKeys(game.value?.category),
+        // 本类型滤镜涉及的内核选项及各自的关闭值：宿主页先把它们复位，再下发本次的取值
+        reset: emuFilterResets(game.value?.category),
     });
 });
 

@@ -7,20 +7,24 @@
  *   shader  —— EmulatorJS 内置 GLSL 着色器的**键名**（见引擎里的 window.EJS_SHADERS，
  *              有的键带 .glslp 后缀，必须一字不差）。空串表示这个滤镜不用着色器。
  *
- * 所有键值都对着随包 EmulatorJS 4.2.3 与 mgba 内核核过：
- *   · mgba_color_correction：OFF / GBA / GBC / Auto —— 把画面调成真机 LCD 的颜色；
- *   · mgba_interframe_blending：OFF / mix / mix_smart / lcd_ghosting / lcd_ghosting_fast
- *     —— 模拟 LCD 的响应时间（拖影），真机玩透明特效（波浪竞速、F-Zero 之类）就靠它；
- *   · 着色器键名来自引擎内置表（crt-lottes / crt-easymode.glslp …）。
- *
+ * 所有键值都对着随包 EmulatorJS 4.2.3 与各内核源码的 libretro_core_options.h 核过。
  * 界面文案只能是中文，着色器原名（lottes 等）作为专名保留。
- * 这台机器的列表第一项必须是「无」：它是默认值，也是表以外的取值回落的目标。
+ * 每台机器的列表第一项必须是「无」：它是默认值，也是表以外的取值回落的目标。
  */
 
 const NONE = { id: "none", label: "无", shader: "", options: null };
 
+// 引擎内置的 CRT 着色器（键名见 window.EJS_SHADERS）
+const CRT_LOTTES = { id: "crt-lottes", label: "CRT（lottes）", shader: "crt-lottes", options: null };
+const CRT_EASYMODE = {
+    id: "crt-easymode",
+    label: "CRT（简易模式）",
+    shader: "crt-easymode.glslp",
+    options: null,
+};
+
 export const EMU_FILTERS = {
-    // GBA（mgba 内核）：真机液晶两条走内核选项，CRT 两条走着色器
+    // GBA（mgba）：色彩校正 + 拖影 + CRT
     gba: [
         NONE,
         {
@@ -41,14 +45,19 @@ export const EMU_FILTERS = {
                 mgba_interframe_blending: "lcd_ghosting",
             },
         },
-        { id: "crt-lottes", label: "CRT（lottes）", shader: "crt-lottes", options: null },
-        {
-            id: "crt-easymode",
-            label: "CRT（简易模式）",
-            shader: "crt-easymode.glslp",
-            options: null,
-        },
+        CRT_LOTTES,
+        CRT_EASYMODE,
     ],
+};
+
+/**
+ * 各内核选项的**关闭值**（切滤镜时把上一个滤镜留下的键复位成它）。
+ * 不统一：mGBA 用 `OFF`，其余内核用 `disabled`——真机行为各不相同，所以逐个写死，
+ * 不能拿一个常量去关所有的键（关不干净的滤镜会一直留在画面上）。
+ */
+const OFF_VALUES = {
+    mgba_color_correction: "OFF",
+    mgba_interframe_blending: "OFF",
 };
 
 /**
@@ -74,17 +83,17 @@ export function emuFiltersFor(gameType) {
 }
 
 /**
- * 该游戏类型所有滤镜用到的内核选项键（不含 shader——它不走内核选项那条路）。
- * 运行中切滤镜时宿主页先把这些键复位，否则上一个滤镜的取值会跟着新滤镜继续生效。
+ * 该游戏类型所有滤镜涉及的内核选项及其关闭值（`{键: 关闭值}`）。
+ * 运行中切滤镜时宿主页先按它复位，否则上一个滤镜的取值会跟着新滤镜继续生效。
  */
-export function emuFilterOptionKeys(gameType) {
-    const keys = new Set();
+export function emuFilterResets(gameType) {
+    const resets = {};
     for (const filter of emuFiltersFor(gameType) || []) {
         for (const name of Object.keys(filter.options || {})) {
-            keys.add(name);
+            resets[name] = OFF_VALUES[name] || "disabled";
         }
     }
-    return [...keys];
+    return resets;
 }
 
 /** 按 id 取滤镜；表里没有（换了清单、手改过 localStorage）就回落到「无」。 */

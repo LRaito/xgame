@@ -416,10 +416,10 @@
                 },
 
                 /**
-                 * 切滤镜（父页面标题栏的滤镜选择器）：先按 keys 把上一次用过的内核选项复位
-                 * （libretro 内核选项的关闭值惯例是 OFF，mgba 这两个选项的默认值也是 OFF），
-                 * 再下发本次的键值，最后换着色器——内核下一帧会重读可变项，不用重启。
-                 * 启动那一份不走这里：由 iframe 的 copts / shader 参数在内核加载前落好。
+                 * 切滤镜（父页面标题栏的滤镜选择器）：先按 reset 把上一次用过的内核选项复位
+                 * （各内核的关闭值不一样——mGBA 是 OFF、其余是 disabled，所以由父页面的滤镜表
+                 * 逐键给出，这里不猜），再下发本次的键值，最后换着色器——内核下一帧会重读可变项，
+                 * 不用重启。启动那一份不走这里：由 iframe 的 copts / shader 参数在内核加载前落好。
                  */
                 setFilter(payload) {
                     if (!window.EJS_emulator || !window.__ejsReady) {
@@ -430,10 +430,11 @@
                         return { ok: false, message: "请先开始游戏再切换滤镜。" };
                     }
                     const options = (payload && payload.options) || {};
+                    const reset = (payload && payload.reset) || {};
                     try {
-                        for (const key of (payload && payload.keys) || []) {
+                        for (const [key, off] of Object.entries(reset)) {
                             if (!(key in options)) {
-                                inst.gameManager.setVariable(key, "OFF");
+                                inst.gameManager.setVariable(key, off);
                             }
                         }
                         for (const [key, value] of Object.entries(options)) {
