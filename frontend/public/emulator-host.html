@@ -79,6 +79,19 @@
         // 同源 iframe 内可直接使用，无需猜测 DOM 选择器。
 
         (() => {
+            /** 父页面传来的内核选项串（`k=v,k=v`）→ `{k: v}`；不合规的片段丢掉，不因它整个崩。 */
+            function parseFilterOptions(raw) {
+                const options = {};
+                for (const pair of String(raw || "").split(",")) {
+                    const index = pair.indexOf("=");
+                    if (index <= 0) {
+                        continue;
+                    }
+                    options[pair.slice(0, index)] = pair.slice(index + 1);
+                }
+                return options;
+            }
+
             const params = new URLSearchParams(location.search);
             const id = params.get("id");
             const core = params.get("core");
@@ -86,6 +99,10 @@
             const version = params.get("v") || "";
             // 显示比例（父页面「窗口」选择器里选的那一列）：wide = 4:3，其余 = 像素完美 PP
             const wide = params.get("ratio") === "wide";
+            // 复古滤镜：内核选项（`k=v,k=v`，内核加载前写进内核设置文件）与着色器键名
+            // （引擎起来后启用）。两者都由父页面标题栏的滤镜选择器给出，这里是唯一落地点。
+            const filterOptions = parseFilterOptions(params.get("copts"));
+            const filterShader = params.get("shader") || "";
 
             const statusEl = document.getElementById("status");
 
@@ -246,6 +263,23 @@
                 }
             }
 
+            /**
+             * 启用/关闭引擎内置着色器（滤镜里 CRT 那一类）。引擎自带的设置菜单走的就是这个方法：
+             * 把着色器预设写进 /shader 再让内核打开着色器管线。name 为空即关掉，返回是否调用成功。
+             */
+            function applyShader(name) {
+                const inst = window.EJS_emulator;
+                if (!inst || typeof inst.enableShader !== "function") {
+                    return false;
+                }
+                try {
+                    inst.enableShader(name || "disabled");
+                    return true;
+                } catch {
+                    return false;
+                }
+            }
+
             window.__ejsRpc = {
                 get ready() {
                     return window.__ejsReady === true && Boolean(window.EJS_emulator);
@@ -377,6 +411,39 @@
                         inst.gameManager.setVariable("fceumm_overscan_v_bottom", toWide ? "0" : "8");
                     } catch {
                         return { ok: false, message: "切换显示比例失败。" };
+                    }
+                    return { ok: true };
+                },
+
+                /**
+                 * 切滤镜（父页面标题栏的滤镜选择器）：先按 keys 把上一次用过的内核选项复位
+                 * （libretro 内核选项的关闭值惯例是 OFF，mgba 这两个选项的默认值也是 OFF），
+                 * 再下发本次的键值，最后换着色器——内核下一帧会重读可变项，不用重启。
+                 * 启动那一份不走这里：由 iframe 的 copts / shader 参数在内核加载前落好。
+                 */
+                setFilter(payload) {
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再切换滤镜。" };
+                    }
+                    const options = (payload && payload.options) || {};
+                    try {
+                        for (const key of (payload && payload.keys) || []) {
+                            if (!(key in options)) {
+                                inst.gameManager.setVariable(key, "OFF");
+                            }
+                        }
+                        for (const [key, value] of Object.entries(options)) {
+                            inst.gameManager.setVariable(key, value);
+                        }
+                    } catch {
+                        return { ok: false, message: "切换滤镜失败。" };
+                    }
+                    if (!applyShader((payload && payload.shader) || "disabled")) {
+                        return { ok: false, message: "切换滤镜失败。" };
                     }
                     return { ok: true };
                 },
@@ -529,8 +596,13 @@
                 window.EJS_language = "zh-CN";
                 // 免去「开始游戏」点按：引擎就绪后自动启动游戏本体
                 window.EJS_startOnLoaded = true;
-                // 引擎“保存/读取状态”写入浏览器（IndexedDB），作为云存档捕捉/放回的中转
-                window.EJS_defaultOptions = { "save-state-location": "browser" };
+                // 引擎“保存/读取状态”写入浏览器（IndexedDB），作为云存档捕捉/放回的中转。
+                // 滤镜的内核选项也一并给：它们会在内核加载前写进内核设置文件、内核启动时按它
+                // 初始化，比起来之后再改可靠（运行中切换见 __ejsRpc.setFilter）。
+                window.EJS_defaultOptions = {
+                    "save-state-location": "browser",
+                    ...filterOptions,
+                };
                 // FC（系统名 nes → fceumm 内核）的内核选项默认值，两种显示比例各一套：
                 //   pp（像素完美）：裁掉上下各 8 行过扫描（内核默认就是 8）→ 帧缓冲 256×224，
                 //     按 PP（Pixel Perfect，1:1 方像素）摆放的比例就是 8:7 = 256×224；
@@ -546,6 +618,8 @@
                 // 引擎开始运行后标记就绪，并接管底部控制条显隐
                 window.EJS_onGameStart = () => {
                     window.__ejsReady = true;
+                    // 着色器不是内核选项，得等引擎起来后显式启用（此时内核与虚拟文件系统都就绪）
+                    applyShader(filterShader);
                     initControlBar();
                 };
 
