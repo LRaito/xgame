@@ -7,14 +7,18 @@
  *   shader  —— EmulatorJS 内置 GLSL 着色器的**键名**（见引擎里的 window.EJS_SHADERS，
  *              有的键带 .glslp 后缀，必须一字不差）。空串表示这个滤镜不用着色器。
  *
- * 所有键值都对着随包 EmulatorJS 4.2.3 与各内核源码的 libretro_core_options.h 核过。
+ * 着色器是**所有内核通用**的（引擎层面：切换 = 写 /shader/shader.glslp + 调内核的
+ * shader_enable，本项目 6 个内核的两种构建都导出了它），所以每个平台都配 CRT 系；
+ * 内核选项则要看对应内核有没有那个选项——下面每条都对着各内核源码的
+ * libretro_core_options.h 与随包 wasm 核过（取值、关闭值、默认值）。
+ *
  * 界面文案只能是中文，着色器原名（lottes 等）作为专名保留。
  * 每台机器的列表第一项必须是「无」：它是默认值，也是表以外的取值回落的目标。
  */
 
 const NONE = { id: "none", label: "无", shader: "", options: null };
 
-// 引擎内置的 CRT 着色器（键名见 window.EJS_SHADERS）
+// 所有平台共用的 CRT 着色器两项（引擎内置，键名见 window.EJS_SHADERS）
 const CRT_LOTTES = { id: "crt-lottes", label: "CRT（lottes）", shader: "crt-lottes", options: null };
 const CRT_EASYMODE = {
     id: "crt-easymode",
@@ -24,7 +28,38 @@ const CRT_EASYMODE = {
 };
 
 export const EMU_FILTERS = {
-    // GBA（mgba）：色彩校正 + 拖影 + CRT
+    // FC/NES（fceumm）：Blargg 的 NTSC 滤镜模拟各种视频信号
+    nes: [
+        NONE,
+        { id: "composite", label: "复合信号", shader: "", options: { fceumm_ntsc_filter: "composite" } },
+        { id: "svideo", label: "S-Video 信号", shader: "", options: { fceumm_ntsc_filter: "svideo" } },
+        { id: "mono", label: "单色电视", shader: "", options: { fceumm_ntsc_filter: "monochrome" } },
+        CRT_LOTTES,
+        CRT_EASYMODE,
+    ],
+    // SFC/SNES（snes9x）：Blargg NTSC 比 fceumm 多一档 RF 天线
+    snes: [
+        NONE,
+        { id: "composite", label: "复合信号", shader: "", options: { snes9x_blargg: "composite" } },
+        { id: "rf", label: "RF 天线", shader: "", options: { snes9x_blargg: "rf" } },
+        { id: "mono", label: "单色电视", shader: "", options: { snes9x_blargg: "monochrome" } },
+        CRT_LOTTES,
+        CRT_EASYMODE,
+    ],
+    // GB/GBC（gambatte）：真机 LCD 的两档拖影（没有 mGBA 那档 mix_smart）
+    gb: [
+        NONE,
+        { id: "lcd", label: "真机液晶", shader: "", options: { gambatte_mix_frames: "mix" } },
+        {
+            id: "lcd-ghost",
+            label: "真机液晶（强拖影）",
+            shader: "",
+            options: { gambatte_mix_frames: "lcd_ghosting" },
+        },
+        CRT_LOTTES,
+        CRT_EASYMODE,
+    ],
+    // GBA（mgba）
     gba: [
         NONE,
         {
@@ -48,6 +83,51 @@ export const EMU_FILTERS = {
         CRT_LOTTES,
         CRT_EASYMODE,
     ],
+    // MD（genesis_plus_gx）：复合信号 + Nomad 那块 LCD 的鬼影
+    segaMD: [
+        NONE,
+        {
+            id: "composite",
+            label: "复合信号",
+            shader: "",
+            options: { genesis_plus_gx_blargg_ntsc_filter: "composite" },
+        },
+        {
+            id: "lcd-ghost",
+            label: "LCD 鬼影（Nomad）",
+            shader: "",
+            options: { genesis_plus_gx_lcd_filter: "enabled" },
+        },
+        CRT_LOTTES,
+        CRT_EASYMODE,
+    ],
+    // GG（同一个 genesis_plus_gx 内核）：Game Gear 本来就是 LCD，鬼影排在前
+    segaGG: [
+        NONE,
+        {
+            id: "lcd-ghost",
+            label: "LCD 鬼影（Game Gear 屏）",
+            shader: "",
+            options: { genesis_plus_gx_lcd_filter: "enabled" },
+        },
+        {
+            id: "composite",
+            label: "复合信号",
+            shader: "",
+            options: { genesis_plus_gx_blargg_ntsc_filter: "composite" },
+        },
+        CRT_LOTTES,
+        CRT_EASYMODE,
+    ],
+    // SMS（smsplus）
+    segaMS: [
+        NONE,
+        { id: "composite", label: "复合信号", shader: "", options: { smsplus_ntsc_filter: "composite" } },
+        { id: "svideo", label: "S-Video 信号", shader: "", options: { smsplus_ntsc_filter: "svideo" } },
+        { id: "mono", label: "单色电视", shader: "", options: { smsplus_ntsc_filter: "monochrome" } },
+        CRT_LOTTES,
+        CRT_EASYMODE,
+    ],
 };
 
 /**
@@ -58,6 +138,12 @@ export const EMU_FILTERS = {
 const OFF_VALUES = {
     mgba_color_correction: "OFF",
     mgba_interframe_blending: "OFF",
+    gambatte_mix_frames: "disabled",
+    fceumm_ntsc_filter: "disabled",
+    snes9x_blargg: "disabled",
+    genesis_plus_gx_blargg_ntsc_filter: "disabled",
+    genesis_plus_gx_lcd_filter: "disabled",
+    smsplus_ntsc_filter: "disabled",
 };
 
 /**
