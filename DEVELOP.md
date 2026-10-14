@@ -35,7 +35,7 @@ backend/
   games/paths.py          # 所有磁盘相对路径规则的唯一出处
   games/importer.py       # 搬运（7k7k / 4399 / flash.homes）
   games/remote.py         # 网络上传（http/https 直链）
-  games/search_*.py       # 游戏检索：text（归一化，索引期与查询期共用）/ index（建库，唯一写入方）/ service（只读查询）/ router
+  games/search_*.py       # 游戏检索：text（归一化，索引期与查询期共用）/ index（建库，唯一写入方：启动补建 + make index）/ service（只读查询）/ router
   search/csv/             # 游戏检索的 37 个中英文名录 CSV（纯数据，只被 make index 读；被 .dockerignore 排除、不进镜像）
 scripts/gen-certs.sh      # 重新生成自签名证书
 certs/                    # 证书，随仓库提交（cert.pem / cert.key）
@@ -235,20 +235,30 @@ cd frontend && npm run lint
 make index        # = STORAGE_ROOT=${STORAGE_HOST_DIR:-./data/storage} python -m backend.cli index
 ```
 
-- **可重复执行**：每次都整库重建（写同目录临时文件再 `os.replace` 原子替换），直接覆盖旧文件。
-  约 1 秒、5 万余行、10MB 左右。
-- **只有这个命令写它**。运行期所有读都经 `GameSearchService`，用 `mode=ro` + `PRAGMA query_only=1`
-  打开，每请求一条短连接；服务端也**绝不代建**这个文件（没构建时接口返回 `indexed:false`）。
+**两个写入口，同一份实现**（`backend/games/search_index.py::build_index()`）：
+
+1. **服务启动自动补建**：`create_app()` 启动时调 `ensure_game_index()`（紧跟 `backup_database()`）
+   ——文件不存在就整库建一次，已存在就跳过；`TESTING` 下直接跳过；失败只记一条中文 warning、
+   **绝不拦住启动**。所以装好就能用检索，不用先读文档。
+2. **`make index`**：手动重建/更新（换了 CSV、改了分词规则、升级了平台之后用它覆盖）。
+
+两者都是：**整库重建**（写同目录临时文件再 `os.replace` 原子替换）、直接覆盖旧文件，约 1 秒、
+5 万余行、10MB 左右。
+
+- **运行期只读**。所有读都经 `GameSearchService`，用 `mode=ro` + `PRAGMA query_only=1` 打开，
+  每请求一条短连接；没有第三条路径会写它。
 - **不参与月度备份**（`backend/backup.py` 只备份 `app.db`）——它随时能从 CSV 重建。
 - **重建后不用重启 api**：`os.replace` 之后，已经打开的连接继续读旧 inode，新请求自动拿新库。
-- **只能在宿主机跑**：CSV 被根目录 `.dockerignore` 排除了，镜像里没有这份数据。数据根取自
-  `.env` 的 `STORAGE_HOST_DIR`，与容器挂的是同一个宿主目录，所以构建完 api 立刻能读到。
+- **只能在宿主机跑**：CSV 被根目录 `.dockerignore` 排除了，镜像里没有这份数据，容器里的自动
+  补建必然跳过（只记一条 INFO）。数据根取自 `.env` 的 `STORAGE_HOST_DIR`，与容器挂的是同一个
+  宿主目录，所以宿主机建完容器立刻能读到。
 
-### 写不进去（PermissionError / 「数据根不可写」）
+### 自动补建没成功（PermissionError / 「数据根不可写」）
 
 数据目录若是 Docker 容器以 root 建的（默认的 `./data/storage` 跑过一次 compose 之后就是这样），
-宿主用户在里面**建不了临时文件**，`build_index` 的原子替换就无从谈起。`make index` 会先做一次
-`test -w` 预检并打印对策，直接照做即可：
+宿主用户在里面**建不了临时文件**，启动时的自动补建会失败并记一条 warning（服务照常起来，
+检索页提示「尚未构建索引」）。手动 `make index` 会先做一次 `test -w` 预检并打印对策，
+照做即可：
 
 ```bash
 sudo chown -R "$USER" "$STORAGE_HOST_DIR"     # 默认就是 ./data/storage

@@ -1,8 +1,9 @@
 """游戏检索的只读查询。
 
-数据是 `backend/games/search_index.py` 用 `make index` 从 CSV 名录构建出来的独立 SQLite 库
-（`<根路径>/db/game.db`）。**这里只读**：每个请求开一条 `mode=ro` 的短连接，从不建文件、从不写。
-库不存在是正常状态（用户还没跑过 `make index`），返回「未构建」而不是报错。
+数据是 `backend/games/search_index.py` 用 `make index` 或**服务启动时的自动补建**从 CSV 名录
+构建出来的独立 SQLite 库（`<根路径>/db/game.db`）。**这里只读**：每个请求开一条 `mode=ro` 的
+短连接，从不建文件、从不写。库不存在是正常状态（服务起来时没能补建成功，例如容器里没有 CSV 源），
+返回「未构建」而不是报错。
 """
 
 import logging

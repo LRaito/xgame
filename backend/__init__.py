@@ -19,6 +19,7 @@ from backend.games.gallery_router import router as game_gallery_router
 from backend.games.router import router as games_router
 from backend.games.save_router import router as game_saves_router
 from backend.games.screenshot_router import router as game_screenshots_router
+from backend.games.search_index import ensure_game_index
 from backend.games.search_router import router as game_search_router
 from backend.games.settings_router import router as game_settings_router
 from backend.games.stats_router import router as game_stats_router
@@ -44,6 +45,8 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     init_db(engine)
     # 启动时检查一次月度备份：当月还没有就补一份，已有则跳过
     backup_database(settings)
+    # 启动时检查一次游戏检索索引：没有就自动补建（已有则跳过；建不出来只记 warning，不拦启动）
+    ensure_game_index(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

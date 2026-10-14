@@ -10,7 +10,9 @@ import sqlite3
 
 import pytest
 
-from backend.games.search_index import IndexBuildError, build_index
+from backend import create_app
+from backend.games import search_index
+from backend.games.search_index import IndexBuildError, build_index, ensure_game_index
 from backend.games.search_service import GameSearchService
 from backend.games.search_text import fts_query, index_text, strip_tags
 
@@ -204,6 +206,69 @@ def test_build_index_reports_unwritable_target(csv_dir, tmp_path):
         assert not (target_dir / "game.db.tmp").exists()
     finally:
         os.chmod(target_dir, 0o755)
+
+
+# --------------------------------------------------------------------------
+# 启动时自动补建
+# --------------------------------------------------------------------------
+
+
+def _settings(tmp_path, *, testing=False):
+    from backend.config import Settings
+
+    return Settings(TESTING=testing, STORAGE_ROOT=str(tmp_path / "storage"))
+
+
+def test_ensure_game_index_builds_when_missing(csv_dir, tmp_path):
+    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir)
+
+    assert stats is not None
+    assert stats.rows == _EXPECTED_ROWS
+    assert (tmp_path / "storage" / "db" / "game.db").is_file()
+
+
+def test_ensure_game_index_skips_when_present(csv_dir, tmp_path):
+    """已有索引就跳过：不重建、不覆盖（内容与 mtime 都不变）。"""
+    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir)
+    index_path = tmp_path / "storage" / "db" / "game.db"
+    before = _digest(index_path)
+
+    assert ensure_game_index(_settings(tmp_path), csv_dir=csv_dir) is None
+    assert _digest(index_path) == before
+
+
+def test_ensure_game_index_skips_when_testing(tmp_path):
+    """测试环境不自动建：否则每个用例都要白建一次 5 万行的索引。"""
+    assert ensure_game_index(_settings(tmp_path, testing=True), csv_dir=tmp_path) is None
+    assert not (tmp_path / "storage" / "db" / "game.db").exists()
+
+
+def test_ensure_game_index_tolerates_missing_csv(tmp_path):
+    """容器里就是这样：CSV 被 .dockerignore 排除。跳过并记一条日志，不建文件、不抛异常。"""
+    assert ensure_game_index(_settings(tmp_path), csv_dir=tmp_path / "nope") is None
+    assert not (tmp_path / "storage" / "db" / "game.db").exists()
+
+
+def test_ensure_game_index_tolerates_broken_csv(tmp_path):
+    """名录坏了也不能拦住服务启动（best-effort）。"""
+    source = tmp_path / "bad"
+    source.mkdir()
+    (source / "坏.csv").write_text("只有两列\n", encoding="utf-8")
+
+    assert ensure_game_index(_settings(tmp_path), csv_dir=source) is None
+    assert not (tmp_path / "storage" / "db" / "game.db").exists()
+
+
+def test_app_startup_builds_missing_index(monkeypatch, csv_dir, tmp_path):
+    """接线：create_app() 起来时确实会自检并补建。"""
+    monkeypatch.setattr(search_index, "SEARCH_CSV_DIR", csv_dir)
+
+    create_app({"TESTING": False, "STORAGE_ROOT": str(tmp_path / "storage")})
+
+    index_path = tmp_path / "storage" / "db" / "game.db"
+    assert index_path.is_file()
+    with sqlite3.connect(index_path) as conn:
+        assert conn.execute("SELECT count(*) FROM game").fetchone()[0] == _EXPECTED_ROWS
 
 
 # --------------------------------------------------------------------------

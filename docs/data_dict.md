@@ -10,7 +10,7 @@
 |--------|------|------|
 | SQLite 单文件 | `<数据根>/db/app.db`（Docker 里是宿主 `${STORAGE_HOST_DIR}/db/app.db` → 容器 `/data/db/app.db`） | 全部业务元数据 |
 | SQLite 月度备份 | 与库同目录的 `<数据根>/db/<YYYY-MM>.db` | 服务启动时按当月补一份，一个自然月一份；不做还原，回滚就手工换回 `app.db` |
-| SQLite 检索索引 | `<数据根>/db/game.db` | 游戏检索用的**派生只读库**（外部中英文名录的全文索引），只由 `make index` 写、**不备份**、可从 CSV 重建，见文末「游戏检索索引」 |
+| SQLite 检索索引 | `<数据根>/db/game.db` | 游戏检索用的**派生只读库**（外部中英文名录的全文索引），服务启动时不存在会自动补建、也可用 `make index` 重建；**不备份**，可从 CSV 重建，见文末「游戏检索索引」 |
 | 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/H5 资源/攻略/图集、云端存档、游戏截图，以及 `db/` 下的 SQLite 库与月度备份；数据根在 Windows 盘挂载路径下时另有一个**人工创建**的哨兵文件 `.mounted`（缺了服务拒绝启动，见 `backend/mount_guard.py`） |
 
 分工原则：**所有元数据在 SQLite，SQLite 里存的是相对于文件根目录的路径**；文件本身是磁盘上的普通文件，用户可以直接从宿主目录拷走、备份、浏览。相对路径统一用 `/` 作分隔符，读取时由 `LocalStorage` 拼上根路径。
@@ -232,8 +232,8 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | 项 | 值 |
 |----|----|
 | 路径 | `<数据根>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`；容器里就是 `/data/db/game.db`） |
-| 写入方 | **只有 `make index`**（`Makefile` → `python -m backend.cli index` → `backend/games/search_index.py::build_index()`） |
-| 读取方 | `backend/games/search_service.py::GameSearchService`，一律 `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接 |
+| 写入方 | 只有 `backend/games/search_index.py::build_index()` 一处，两个触发口：**服务启动自动补建**（`create_app()` → `ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning）与 **`make index`**（`Makefile` → `python -m backend.cli index`，手动重建/更新）。容器里没有 CSV 源，自动补建必然跳过 |
+| 读取方 | `backend/games/search_service.py::GameSearchService`，一律 `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接——**运行期只读，绝不写它** |
 | 是否备份 | **不进月度备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）。它可从 `backend/search/csv/` 的 CSV 完整重建 |
 | 源数据 | `backend/search/csv/` 下 37 个 CSV（3 列无表头、UTF-8 带 BOM、CRLF），**被根目录 `.dockerignore` 排除、不进镜像** |
 | 重建方式 | 整库重建 + 原子替换（写同目录 `game.db.tmp` → `chmod 0644` → `os.replace`）。**不开 WAL**，所以不会留 `-wal`/`-shm`；重建后无需重启 api |

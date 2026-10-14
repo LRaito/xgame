@@ -1,8 +1,9 @@
-"""游戏检索索引的构建（`make index`）。
+"""游戏检索索引的构建。
 
-这个模块是 `<根路径>/db/game.db` 的**唯一写入方**：平台运行期的所有读都走
-`search_service.GameSearchService`，它一律以 `mode=ro` 打开。所以这里可以放心用「整库重建 +
-原子替换」这种最简单也最不容易出错的做法，不需要增量更新。
+`make index` 与**服务启动时的自动补建**都走这里的 `build_index()`，它是
+`<根路径>/db/game.db` 的**唯一写入方**；平台运行期的所有读都走
+`search_service.GameSearchService`，它一律以 `mode=ro` 打开。所以这里可以放心用
+「整库重建 + 原子替换」这种最简单也最不容易出错的做法，不需要增量更新。
 
 数据源是 `backend/search/csv/` 下的一份份 `机种,中文,英文` 三列名录（UTF-8 带 BOM、CRLF、无表头）。
 """
@@ -16,6 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from backend.config import SEARCH_CSV_DIR, Settings
 from backend.games.search_text import index_text
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,39 @@ class BuildStats:
     seconds: float
     size: int
     path: Path
+
+
+def ensure_game_index(settings: Settings, *, csv_dir: Path | None = None) -> BuildStats | None:
+    """启动时补一次索引：**没有才建**，已经存在就跳过。
+
+    服务起来后自检一次，用户就不用为了第一次能用检索页去手工跑命令；`make index` 仍然是
+    手动重建/更新索引的入口（换 CSV、改分词规则之后用它覆盖）。
+
+    全程 best-effort，**绝不拦住启动**：建不出来最多是检索页提示「尚未构建索引」。
+    容器里必然走 `csv_dir` 不存在那条分支——CSV 被 `.dockerignore` 排除、镜像里没有，
+    索引应当在宿主机上构建（数据根是同一个宿主目录，所以构建完容器立刻能读到）。
+    """
+    if settings.TESTING:
+        return None
+    target = settings.game_index_path
+    if target.is_file():
+        return None
+
+    source = Path(csv_dir) if csv_dir else SEARCH_CSV_DIR
+    if not source.is_dir():
+        logger.info(
+            "没有找到游戏检索的 CSV 名录（%s），跳过自动构建；"
+            "要在容器里用检索，请先在宿主机执行 make index。",
+            source,
+        )
+        return None
+
+    try:
+        # build_index 自己会打一条 INFO（路径 + 行数 + 机种数），这里不重复
+        return build_index(source, target)
+    except Exception as exc:  # noqa: BLE001 - 建不出来不该拦住服务启动
+        logger.warning("自动构建游戏检索索引失败（不影响启动）：%s", exc)
+        return None
 
 
 def build_index(csv_dir: Path, out_path: Path) -> BuildStats:
