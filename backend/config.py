@@ -42,6 +42,14 @@ WINDOWS_MOUNT_PREFIX = "/mnt"
 DB_SUBDIR = "db"
 DB_FILENAME = "app.db"
 
+# 游戏检索用的索引库，与 app.db 同目录（`<根路径>/db/game.db`）。它是从 CSV 名录派生的只读库：
+# **只有 `make index` 写它**，运行期一律以 mode=ro 打开；也不参与月度备份（备份只认 DB_FILENAME）。
+GAME_INDEX_FILENAME = "game.db"
+
+# 生成游戏检索索引的 CSV 名录（`机种,中文,英文` 三列）。这份数据只在仓库/宿主机上存在——
+# `.dockerignore` 刻意排除了它，所以镜像里没有，`make index` 只能在宿主机跑。
+SEARCH_CSV_DIR = BASE_DIR / "backend" / "search" / "csv"
+
 
 def default_storage_root() -> str:
     """本机开发默认落在仓库下的 data/storage；容器里由 Dockerfile 覆盖成 /data。"""
@@ -74,6 +82,11 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         return f"sqlite:///{self.database_path}"
+
+    @property
+    def game_index_path(self) -> Path:
+        """游戏检索索引路径：根路径/db/game.db。运行期只读，不存在时视为「尚未构建索引」。"""
+        return Path(self.STORAGE_ROOT) / DB_SUBDIR / GAME_INDEX_FILENAME
 
 
 @lru_cache

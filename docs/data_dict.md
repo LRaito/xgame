@@ -10,6 +10,7 @@
 |--------|------|------|
 | SQLite 单文件 | `<数据根>/db/app.db`（Docker 里是宿主 `${STORAGE_HOST_DIR}/db/app.db` → 容器 `/data/db/app.db`） | 全部业务元数据 |
 | SQLite 月度备份 | 与库同目录的 `<数据根>/db/<YYYY-MM>.db` | 服务启动时按当月补一份，一个自然月一份；不做还原，回滚就手工换回 `app.db` |
+| SQLite 检索索引 | `<数据根>/db/game.db` | 游戏检索用的**派生只读库**（外部中英文名录的全文索引），只由 `make index` 写、**不备份**、可从 CSV 重建，见文末「游戏检索索引」 |
 | 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/H5 资源/攻略/图集、云端存档、游戏截图，以及 `db/` 下的 SQLite 库与月度备份；数据根在 Windows 盘挂载路径下时另有一个**人工创建**的哨兵文件 `.mounted`（缺了服务拒绝启动，见 `backend/mount_guard.py`） |
 
 分工原则：**所有元数据在 SQLite，SQLite 里存的是相对于文件根目录的路径**；文件本身是磁盘上的普通文件，用户可以直接从宿主目录拷走、备份、浏览。相对路径统一用 `/` 作分隔符，读取时由 `LocalStorage` 拼上根路径。
@@ -19,6 +20,8 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 ## SQLite 结构
 
 库路径在代码里写死为 `<STORAGE_ROOT>/db/app.db`（`backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME`，不可另配），`create_app()` 启动时 `init_db()` 建全部表。**没有迁移框架**：`create_all` 只建缺失的表、不给已存在的表补列，所以后来新增的列靠 `backend/database.py` 的 `_ADDED_COLUMNS` / `_ensure_columns()` 在启动时 `ALTER TABLE … ADD COLUMN` 补上（只加列，不改不删）。
+
+同目录下还有第二个库 `game.db`（游戏检索索引），它是**派生、只读**的，结构与本节无关，见文末「游戏检索索引」。
 
 ### 表索引
 
@@ -220,3 +223,36 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 - **游戏截图**：与云端存档同构——目录按 `用户名/游戏类型/卡带ID` 分，一个截图一个 `{uuid}.{后缀}`（uuid 不可猜、不重名），原始文件名与游戏名都不进路径。后缀由**内容的 magic** 定（播放页截的是 `.png`，图库里手动上传的还可能是 `.jpg`/`.webp`/`.gif`），单张上限 16MB。**目录里的 `game_type` 是上传当时的类型**：截图不参与「换游戏类型」的迁移，所以读取、单张删除、删游戏清理一律用行里的 `file_path`，绝不用游戏当前类型拼目录（换过类型时，同一游戏的截图可能分散在两个类型目录里，功能不受影响）。
 - **游戏图集**：与截图相反，它在**游戏目录内**（`game/{类型}/{卡带ID}/image/{uuid}.{后缀}`），一个游戏一套、按游戏共享、不记上传者（目录名 `image` 与顶层按账号隔离的截图目录同名，但一个挂在游戏目录下、一个挂在用户名下，是两回事）。**目录里的 `game_type` 跟游戏当前类型走**：换本体换了游戏类型时整个 `image/` 目录随游戏目录一起搬到新类型目录，行里的 `file_path` 同步换成新前缀；读取、单张删除、删游戏清理同样按行里的 `file_path`。
 - **云端存档**：目录按 `用户名/游戏类型/卡带ID` 分，一个快照的每个文件各一个 `{uuid}.state`，文件名不体现原文件名（原名只用于下载时的 `Content-Disposition`，见 `game_cloud_snapshot_files.name`）。用户名进路径是安全的——用户名规则本身就限定在数字/字母/中划线/下划线。下载/删除快照按 `file_path` 定位文件；快照删除时逐文件删；上传中途失败回滚已写的文件（避免孤儿文件）。**删除游戏时连同它的全部存档快照与 `save/{用户名}/{类型}/{卡带ID}/` 目录一起清掉**（目录名带的是快照当时的游戏类型，所以按文件路径反推目录，而不是用游戏当前类型拼）。
+
+## 游戏检索索引（`game.db`）
+
+第三个页面的数据源：一份**与平台游戏库无关**的外部中英文名录（`机种 / 中文名 / 英文名`），
+所以它单独一个库，**与 `app.db` 没有任何外键关系**。
+
+| 项 | 值 |
+|----|----|
+| 路径 | `<数据根>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`；容器里就是 `/data/db/game.db`） |
+| 写入方 | **只有 `make index`**（`Makefile` → `python -m backend.cli index` → `backend/games/search_index.py::build_index()`） |
+| 读取方 | `backend/games/search_service.py::GameSearchService`，一律 `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接 |
+| 是否备份 | **不进月度备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）。它可从 `backend/search/csv/` 的 CSV 完整重建 |
+| 源数据 | `backend/search/csv/` 下 37 个 CSV（3 列无表头、UTF-8 带 BOM、CRLF），**被根目录 `.dockerignore` 排除、不进镜像** |
+| 重建方式 | 整库重建 + 原子替换（写同目录 `game.db.tmp` → `chmod 0644` → `os.replace`）。**不开 WAL**，所以不会留 `-wal`/`-shm`；重建后无需重启 api |
+
+### 表
+
+| 表 | 用途 |
+|----|------|
+| `console` | 机种（`id` / `name` UNIQUE）。单独一张表是为了不给每行重复存机种名 |
+| `game` | 名录一行（`id` / `console_id` / `zh` / `en` / `src`）。`src` 是来源 CSV 文件名，仅作溯源 |
+| `game_fts` | FTS5 全文索引（`zh_uni` / `en_uni`），**contentless**（`content=''`，不重复存正文），`tokenize='unicode61 remove_diacritics 2'`；`rowid` 与 `game.id` 一一对应 |
+| `meta` | 键值元信息：`schema_version`（与 `search_index.SCHEMA_VERSION` 比对，不符时接口 503）/ `built_at` / `rows` / `consoles` |
+| `idx_game_console` | `game(console_id, en)` 上的普通索引：无关键词时按机种分页排序走它，搜索不走它 |
+
+### 约定
+
+- `game_fts` 里的两列是**处理过**的文本（NFKC → 剥结尾的地区/语言/版本标签 → 汉字逐字拆成 token，
+  见 `backend/games/search_text.py::index_text()`）；`game.zh` / `game.en` 存的是**原文**，
+  接口返回的也是原文。索引期与查询期共用同一份实现。
+- 建库时按 `(机种, 中文, 英文)` **三元组完全一致**去重（52,611 行源数据 → 51,359 行）；
+  只中文或只英文相同的**不去重**——那是同款游戏的不同地区版本。
+- 落库行数/机种数变了不用改代码，重跑 `make index` 覆盖即可。

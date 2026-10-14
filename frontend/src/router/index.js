@@ -30,6 +30,12 @@ const routes = [
                 meta: { title: "游戏管理" },
             },
             {
+                path: "games/search",
+                name: "games-search",
+                component: () => import("@/views/games/search/index.vue"),
+                meta: { title: "游戏检索" },
+            },
+            {
                 path: "games/flash/:gameId",
                 name: "games-flash",
                 component: () => import("@/views/games/flash-player.vue"),

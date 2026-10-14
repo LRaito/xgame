@@ -171,7 +171,7 @@ def test_tools_requires_login(client, user, do_login):
     response = client.get("/api/tools")
     assert response.status_code == 200
     tools = response.json()["data"]
-    assert [item["id"] for item in tools] == ["games", "games-manage"]
+    assert [item["id"] for item in tools] == ["games", "games-manage", "games-search"]
 
 
 def test_games_status(logged_in):

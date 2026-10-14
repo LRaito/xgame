@@ -331,3 +331,22 @@ export async function fetchCloudSaveFileBase64(id, fileId) {
     });
     return blobToBase64(blob);
 }
+
+/**
+ * 游戏检索：在外部中英文名录索引里搜一页（服务端分页 + 机种过滤）。
+ * 数据来自独立只读库，由项目根目录的 `make index` 构建。
+ * 请求带 notShowError：检索是高频操作，失败由页面内联提示，不弹全局 Message。
+ */
+export function searchGamesAPI(params) {
+    return request({
+        url: "/api/games/search",
+        method: "get",
+        params,
+        notShowError: true,
+    });
+}
+
+/** 游戏检索的机种下拉候选项（按源文件顺序）。 */
+export function listSearchConsolesAPI() {
+    return request({ url: "/api/games/search/consoles", method: "get" });
+}

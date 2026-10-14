@@ -19,6 +19,7 @@ from backend.games.gallery_router import router as game_gallery_router
 from backend.games.router import router as games_router
 from backend.games.save_router import router as game_saves_router
 from backend.games.screenshot_router import router as game_screenshots_router
+from backend.games.search_router import router as game_search_router
 from backend.games.settings_router import router as game_settings_router
 from backend.games.stats_router import router as game_stats_router
 from backend.http import json_err
@@ -72,6 +73,10 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.include_router(tools_router)
     app.include_router(auth_router)
     app.include_router(games_router)
+    # 紧跟 games_router。注意 `/api/games/search` 与 `/api/games/search/consoles` 之所以不会
+    # 被 games_router 的 `/{game_id}/…` 抢走，是因为那些路由的第二段字面量只有 cover/play/h5/guide，
+    # 且 `/api/games` 下没有单段 `/{game_id}`。以后若给 games_router 加一条单段动态路由，这里就会撞车。
+    app.include_router(game_search_router)
     app.include_router(game_saves_router)
     app.include_router(game_screenshots_router)
     app.include_router(game_gallery_router)

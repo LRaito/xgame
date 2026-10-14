@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 本仓库是什么
 
-个人自托管的**游戏平台**。Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`），ORM 用 SQLModel + SQLite。两块内容：**游戏中心**（Flash 用 Ruffle、HTML5 上传 ZIP 解包后用沙箱 iframe、8/16-bit 主机 ROM 用 EmulatorJS 浏览器内游玩；Flash 与模拟器含本地与云端存档，主机另有按账号的游玩截图图库，H5 仅游玩）与**游戏管理**（上传/直链/搬运、卡带 ID 与元数据、整目录上传**攻略**）。账号开放注册，只用于隔离各人的模拟器配置与存档。
+个人自托管的**游戏平台**。Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`），ORM 用 SQLModel + SQLite。三块内容：**游戏中心**（Flash 用 Ruffle、HTML5 上传 ZIP 解包后用沙箱 iframe、8/16-bit 主机 ROM 用 EmulatorJS 浏览器内游玩；Flash 与模拟器含本地与云端存档，主机另有按账号的游玩截图图库，H5 仅游玩）、**游戏管理**（上传/直链/搬运、卡带 ID 与元数据、整目录上传**攻略**）与**游戏检索**（外部中英文名录的只读全文检索，数据由 `make index` 构建）。账号开放注册，只用于隔离各人的模拟器配置与存档。
 
 **编码约定以 [`AGENTS.md`](AGENTS.md) 为准**——写代码、改代码前先读它。人读的设计文档在 [`docs/architecture.md`](docs/architecture.md)；SQLite 表与文件路径规则的完整结构在 [`docs/data_dict.md`](docs/data_dict.md)。
 
@@ -35,6 +35,8 @@ npm run dev        # Vite :5173，/api 与 /health 代理到 :8910
 
 ```bash
 make test                   # 等价于 python -m pytest + cd frontend && npm run lint，本机跑，不动 Docker
+make index                  # 构建「游戏检索」的只读索引 <数据根>/db/game.db（可重复执行、直接覆盖；
+                            #   首次用检索功能前手动跑一次。数据根是 Docker 以 root 建的时先 sudo chown）
 pytest                      # 后端（用临时 SQLite + 临时 STORAGE_ROOT，直接打真实文件系统）
 cd frontend && npm run lint
 ```
@@ -54,7 +56,7 @@ make all                    # 等价 docker compose build && up -d
 - **应用工厂。** `backend/__init__.py` 的 `create_app()` 是唯一入口；生产 ASGI 入口 `backend/asgi.py`。配置来自环境变量（Pydantic Settings，`backend/config.py`）。
 - **一个功能一块。** 每块含 `router.py`（只管 HTTP，只返回 JSON）+ `service.py`（领域逻辑）。`service.py` 是以后拆微服务的边界：**禁止在里面使用 FastAPI `Request` / `session`**；存储后端等依赖由构造函数传入。跨模块的流式下载响应收敛在 `backend/storage/access.py`。
 - **前端分层。** 页面 `views/` → `api/*`（导出 `xxxAPI`）→ `src/utils/request.js`（唯一 axios 实例）→ FastAPI。新增接口只改 api 层和后端 router，不碰 `request.js`。跨模块 UI 组件放 `src/components/common/`（AppDialog、AppButton、AppFilterBar、AppEmpty、CopyButton），游戏专用组件放 `src/components/games/`。
-- **导航与浮层。** 首页即游戏中心（`/` 重定向到 `/games`，无导航中心页）；侧栏菜单项与顺序由 `router/index.js` 的子路由声明顺序 + `meta.title` 生成（游戏中心、游戏管理）。左侧侧栏与游戏播放页的 `GameShell` 标题栏都是**浮层**：常驻收起、鼠标靠近屏幕边缘时滑出，展开时盖在页面之上，不占位、不引起内容缩放。
+- **导航与浮层。** 首页即游戏中心（`/` 重定向到 `/games`，无导航中心页）；侧栏菜单项与顺序由 `router/index.js` 的子路由声明顺序 + `meta.title` 生成（游戏中心、游戏管理、游戏检索）。左侧侧栏与游戏播放页的 `GameShell` 标题栏都是**浮层**：常驻收起、鼠标靠近屏幕边缘时滑出，展开时盖在页面之上，不占位、不引起内容缩放。
 - **登录态。** 开放注册（账号 + 密码，`POST /api/register`），登录失败锁定；无游客模式，除注册/登录接口与 H5 解包资源外全部接口与页面都要登录（H5 是沙箱不透明源的浏览器约束，拿不到 cookie；**攻略资源是新标签页顶层打开的普通静态页，照常带 cookie，要登录**）。session cookie（HttpOnly、SameSite=Lax），axios `withCredentials`；写操作带 `X-CSRFToken`。路由守卫在 `frontend/src/permission.js`。**不把 token 写进 localStorage**。
 - **响应信封。** 成功 `{ "ok": true, "data": ... }`；失败 `{ "ok": false, "message": "中文" }`。
 - **配置。** 配置写死在代码里（`backend/config.py`，含 `SECRET_KEY`、`WINDOWS_MOUNT_PREFIX`）；`.env` 只有两个键、且**只给 compose 读**（后端不读 `.env` 文件）：`STORAGE_HOST_DIR`（宿主数据目录，默认 `./data/storage`）、`WEB_HTTPS_PORT`（对外端口，默认 443），不建 `.env` 也能跑。其中 `STORAGE_HOST_DIR` 由 compose 作为**环境变量**传给 api 容器，后端只拿它做启动时的哨兵前缀判断（见下条）。证书随仓库提交在 `certs/`（`cert.pem` / `cert.key`），compose 只读挂到 web 的 `/etc/nginx/certs`。
@@ -69,6 +71,7 @@ make all                    # 等价 docker compose build && up -d
 - **游戏图集。** `game_gallery_images`：一个游戏一套的展示图（宣传图、说明书扫描件之类），**按游戏共享**——不记上传者，任何登录用户都能传、改描述、删、拖动排序（`/api/games/gallery`，与截图的 `/api/games/screenshots` 共用同一套相册实现，只少了「用户」这一维）。内容落**游戏目录内**的 `game/{类型}/{卡带ID}/image/{uuid}.{后缀}`，所以**随换游戏类型一起迁移**（搬目录的同时把行里的 `file_path` 换成新前缀）；删游戏时行与文件一并清掉。管理入口在**游戏管理页的编辑弹框**（「图集 → 管理」，新建弹框没有），详情弹框的图片栏只读展示，顺序是封面 → 图集 → 本人的截图。
 - **SQLite 月度备份。** `create_app()` 启动时调一次 `backend/backup.py::backup_database()`：当月还没有 `<YYYY-MM>.db`（写在库同目录 `<STORAGE_ROOT>/db/`）就备一份，已有则跳过。用 `sqlite3` 的 backup API 而不是拷文件（WAL 下裸拷会撕裂），先写 `.tmp` 再改名，失败只记 warning、**绝不拦住启动**。不做还原功能，回滚靠手工替换 `app.db`。
 - **数据根目录哨兵（`.mounted`）。** **只当数据根落在 Windows 盘挂载前缀下**（`backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，可改，默认 `/mnt`；设成 `/` = 对所有路径都要求）才检查：`create_app()` 在 `ensure_data_dir()` **之前**调 `backend/mount_guard.py::require_mounted()`，那种目录里没有**人工创建**的空文件 `.mounted`（代码只检查、绝不代建）就只 stat 一下、不建目录不建库，打一条中文日志（含 `touch` 到哪）→ 等 5 秒 → `sys.exit(3)`；**不在这个前缀下的数据根（普通 Linux 目录，含本机默认的 `data/storage`）直接放行**，`TESTING` 下同样跳过。判断用的是「数据根路径」：容器里 `STORAGE_ROOT` 固定是 bind 目标 `/data`、看不出宿主路径，所以 compose 把 `.env` 的 `STORAGE_HOST_DIR` 也传进 api 容器（`Settings.STORAGE_HOST_DIR`，**只给这一处判断用**，业务代码不碰），本机直跑退回 `STORAGE_ROOT`；**查的文件**始终是 `<STORAGE_ROOT>/.mounted`。容器里的退出由入口脚本 `backend/entrypoint.sh`（`backend/Dockerfile` 的 `ENTRYPOINT`，CMD 仍是那条 gunicorn）在 `exec gunicorn` 之前触发——退出的是**容器主进程**，compose 的 `api.restart: unless-stopped` 随即把容器重新拉起，循环到哨兵出现（退出码 3 = gunicorn 的 `WORKER_BOOT_ERROR`，万一有人绕过入口脚本直接跑 gunicorn，master 也会跟着退出；换别的码只会 fork 新 worker 重试、容器不重启）。**它不是「待配置」开关**：storage 照旧永远可用，哨兵只拦启动。
+- **游戏检索。** 第三个页面（`/games/search`，侧栏第 3 项）。数据是一份**与平台游戏库无关**的外部中英文名录：`backend/search/csv/` 下 37 个 `机种,中文,英文` 三列 CSV（5 万余行、36 个机种），**不与 `games` 表比对/联动**。索引是**独立的只读库** `<STORAGE_ROOT>/db/game.db`（`config.py` 的 `GAME_INDEX_FILENAME`），**只由 `make index` 写**（`backend/games/search_index.py`，唯一写入方；`backend/cli.py` 的 `index` 命令；`Makefile` 的 `index` 目标），运行期经 `search_service.py` 的 `GameSearchService` 以 `Path.as_uri()` + `?mode=ro` + `PRAGMA query_only=1` 打开、每请求一条短连接；**不参与月度备份**（可从 CSV 重建）。构建是整库重建 + 原子替换（`os.replace`，**不开 WAL**），所以重建后**不用重启 api**。用户要**手动跑一次 `make index`**；没建时接口返回 `indexed:false` + 空列表（200，页面给「执行 make index」的中文引导），服务端**绝不代建**；坏库/`meta.schema_version` 不符 → 503 中文。**CSV 被根目录 `.dockerignore` 排除，只在宿主机上构建**（数据根取自 `.env` 的 `STORAGE_HOST_DIR`）。**分词**：FTS5 `unicode61 remove_diacritics 2` + 汉字逐字拆 token（裸 `unicode61` 搜不到中文子串、`trigram` 少于 3 字全废），查询把词包成短语、词间 AND；**索引期与查询期共用 `search_text.py` 的 `index_text()` 一份实现**，任一处漏调中文就搜不到。**中英文名结尾的地区/语言/版本标签不进索引**（`(Japan)`、`（日版）`、`[PS2]` …，`strip_tags()` 剥掉，落库与展示仍是原文），**按 `(机种,中文,英文)` 三元组去重**。SQL 四条硬约束：**FTS 表不能起别名**（`f MATCH` 报 `no such column`）、`bm25()` 权重顺序 = 列顺序、**不能用 `COUNT(*) OVER ()` 配 bm25 排序**（报错，total 单独查）、`ORDER BY` 末尾必须有 `g.id` 兜排序（否则翻页重复/丢行）；机种过滤按有无拼 `AND g.console_id = :cid`，**不写 `:cid IS NULL OR`**（会让 SQLite 弃用索引）。高亮在前端把片段切成数组渲染 `<mark>`（contentless 表没有 `snippet()`，**不用 `v-html`**）。接口 `GET /api/games/search`（`q`/`console_id`/`page`/`page_size`）与 `GET /api/games/search/consoles`，都要登录。
 - **会话签名密钥写死。** `SECRET_KEY` 在 `backend/config.py` 里写成一个常量（session cookie 签名用），跟仓库一起走、不从环境变量读；换值使所有已登录会话失效。
 - **明确不做。** React、TypeScript、i18n、OAuth/邮箱验证码/找回密码、对象存储（MinIO/S3）、JWT、WebSocket、Redis/PostgreSQL/Celery、把密钥写进前端或 git；也**不自动创建/自动修复 `.mounted`**（必须人工建，否则它就失去了「这个目录确实已挂载」的意义）。
 
@@ -78,13 +81,14 @@ make all                    # 等价 docker compose build && up -d
 frontend/                 # Vue 3 SPA（main.js / permission.js / router / layout / store / api / utils / views / components/common）
 frontend/src/components/games/  # 游戏专用组件（GameCard、GameDetailDialog、GameScreenshotGallery 图片栏、ScreenshotManagerDialog/ScreenshotConfirmDialog、GalleryManagerDialog/ImageAlbumDialog、Flash/EmuSaveManager、播放器与 GameShell）
 backend/__init__.py       # create_app() 工厂
-backend/{auth,games,tools,storage}/  # auth 与 games 各有 router.py + service.py；games 另有 paths.py、save_*（云端存档）、screenshot_*（截图）、gallery_*（图集）、settings_*、stats_*、importer.py、remote.py
+backend/{auth,games,tools,storage}/  # auth 与 games 各有 router.py + service.py；games 另有 paths.py、save_*（云端存档）、screenshot_*（截图）、gallery_*（图集）、settings_*、stats_*、search_*（检索：text/index/service/router）、importer.py、remote.py
+backend/search/csv/       # 游戏检索的 37 个中英文名录 CSV（纯数据目录，只被 make index 读；被 .dockerignore 排除）
 backend/storage/          # 跨模块：types（协议与 StoredObject）、local（LocalStorage）、access（流式下载响应）
-backend/cli.py            # python -m backend.cli（只剩 init-db）
+backend/cli.py            # python -m backend.cli（init-db / index）
 backend/mount_guard.py    # 数据根目录哨兵检查（数据根在 /mnt 这类 Windows 盘路径下、又缺 .mounted 时等 5 秒退出，让容器重启）
 backend/entrypoint.sh     # api 容器入口：先调上面的检查，再 exec CMD 里的 gunicorn
 docs/                     # architecture.md（设计源）+ data_dict.md（数据字典）
-tests/                    # pytest（test_auth / test_local_storage / test_games / test_game_saves / test_game_screenshots / test_game_emulator_settings / test_game_recent / test_game_stats）
+tests/                    # pytest（test_auth / test_local_storage / test_games / test_game_saves / test_game_screenshots / test_game_emulator_settings / test_game_recent / test_game_stats / test_game_search）
 ```
 
 ## Git 约定

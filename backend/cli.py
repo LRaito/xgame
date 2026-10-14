@@ -1,6 +1,8 @@
+from pathlib import Path
+
 import click
 
-from backend.config import get_settings
+from backend.config import SEARCH_CSV_DIR, get_settings
 from backend.database import ensure_data_dir, init_db, make_engine
 
 
@@ -17,6 +19,31 @@ def init_db_cmd() -> None:
     engine = make_engine(settings)
     init_db(engine)
     click.echo("数据库已初始化。")
+
+
+@cli.command("index")
+@click.option("--csv-dir", type=click.Path(path_type=Path), default=None)
+@click.option("--out", "out_path", type=click.Path(path_type=Path), default=None)
+def build_index_cmd(csv_dir: Path | None, out_path: Path | None) -> None:
+    """构建游戏检索索引（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。"""
+    # import 放在函数里：cli 的其它命令不该为了这个可选功能多拖依赖
+    from backend.games.search_index import IndexBuildError, build_index
+
+    settings = get_settings()
+    ensure_data_dir(settings)
+    source = csv_dir or SEARCH_CSV_DIR
+    target = out_path or settings.game_index_path
+
+    click.echo(f"读取名录：{source}")
+    try:
+        stats = build_index(source, target)
+    except IndexBuildError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    click.echo(
+        f"已写入 {stats.path}：{stats.rows} 行、{stats.consoles} 机种，"
+        f"耗时 {stats.seconds:.1f} 秒，文件 {stats.size / 1024 / 1024:.1f} MB。"
+    )
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from backend.config import Settings
 from backend.games.gallery_service import GalleryService
 from backend.games.save_service import CloudSaveService
 from backend.games.screenshot_service import ScreenshotService
+from backend.games.search_service import GameSearchService
 from backend.games.service import GameService
 from backend.games.settings_service import EmulatorSettingsService
 from backend.games.stats_service import GameStatsService
@@ -89,6 +90,14 @@ def get_game_stats_service(session: DbSession) -> GameStatsService:
 
 
 GameStatsServiceDep = Annotated[GameStatsService, Depends(get_game_stats_service)]
+
+
+def get_game_search_service(request: Request) -> GameSearchService:
+    # 检索用的是独立只读库（`<根路径>/db/game.db`），由 make index 构建，这里不碰 SQLite 会话
+    return GameSearchService(request.app.state.settings.game_index_path)
+
+
+GameSearchServiceDep = Annotated[GameSearchService, Depends(get_game_search_service)]
 
 
 def get_settings_dep(request: Request) -> Settings:

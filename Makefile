@@ -1,4 +1,4 @@
-.PHONY: all build up certs test
+.PHONY: all build up certs test index
 
 COMPOSE ?= docker compose
 
@@ -39,3 +39,16 @@ all: build up
 test:
 	python3 -m pytest $(ARGS)
 	cd frontend && npm run lint
+
+# 构建「游戏检索」用的索引库（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。
+# 只能在宿主机跑：CSV 名录被 .dockerignore 排除，镜像里没有（见 backend/search/csv/）。
+# 数据根取自 .env 的 STORAGE_HOST_DIR，与容器挂的是同一个宿主目录，所以构建完 api 立刻能读到。
+index:
+	@test -d "$${STORAGE_HOST_DIR:-./data/storage}" && ! test -w "$${STORAGE_HOST_DIR:-./data/storage}" \
+		&& { \
+			echo "数据根不可写：$${STORAGE_HOST_DIR:-./data/storage}"; \
+			echo "（多半是 Docker 容器以 root 建的目录）先执行一次："; \
+			echo "    sudo chown -R \"$$USER\" \"$${STORAGE_HOST_DIR:-./data/storage}\""; \
+			exit 1; \
+		} || true
+	STORAGE_ROOT=$${STORAGE_HOST_DIR:-./data/storage} python3 -m backend.cli index

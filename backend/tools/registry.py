@@ -23,4 +23,10 @@ def list_tools() -> list[ToolSpec]:
             description="上传与管理 Flash / 主机游戏本体、封面与元数据。",
             path="/games/manage",
         ),
+        ToolSpec(
+            id="games-search",
+            name="游戏检索",
+            description="在 5 万余条中英文游戏名录里按机种检索。",
+            path="/games/search",
+        ),
     ]

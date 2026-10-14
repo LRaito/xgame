@@ -10,3 +10,5 @@ frontend
 docs
 tests
 *.md
+# 游戏检索的 CSV 名录只给宿主机上的 `make index` 读，镜像里不需要（也跑不了那个命令）。
+backend/search/csv

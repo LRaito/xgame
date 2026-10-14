@@ -35,6 +35,8 @@ backend/
   games/paths.py          # 所有磁盘相对路径规则的唯一出处
   games/importer.py       # 搬运（7k7k / 4399 / flash.homes）
   games/remote.py         # 网络上传（http/https 直链）
+  games/search_*.py       # 游戏检索：text（归一化，索引期与查询期共用）/ index（建库，唯一写入方）/ service（只读查询）/ router
+  search/csv/             # 游戏检索的 37 个中英文名录 CSV（纯数据，只被 make index 读；被 .dockerignore 排除、不进镜像）
 scripts/gen-certs.sh      # 重新生成自签名证书
 certs/                    # 证书，随仓库提交（cert.pem / cert.key）
 tests/                    # pytest
@@ -196,6 +198,7 @@ docker compose restart web
 .mounted                                     哨兵文件（数据根在 /mnt 这类 Windows 盘路径下时人工创建）
 db/app.db                                    SQLite 库（SQLModel 表）
 db/2026-10.db                                月度备份
+db/game.db                                   游戏检索索引（派生只读库，make index 构建，不备份）
 game/{游戏类型}/{卡带ID}/game.{后缀}          本体
 game/{游戏类型}/{卡带ID}/cover.{后缀}         封面
 game/{游戏类型}/{卡带ID}/h5/{相对路径}        H5 解包资源（清单在 game_h5_files 表）
@@ -222,6 +225,43 @@ cd frontend && npm run lint
 
 后端测试用临时 SQLite + 临时 `STORAGE_ROOT`（直接打真实文件系统，不 mock 存储层），
 不需要 Docker。开发时按改动范围挑相关用例跑即可。
+
+## 构建游戏检索索引
+
+「游戏检索」页的数据源是 `backend/search/csv/` 下 37 个中英文名录 CSV。它不是业务数据，
+而是构建成一个**独立的只读索引库** `<数据根>/db/game.db`：
+
+```bash
+make index        # = STORAGE_ROOT=${STORAGE_HOST_DIR:-./data/storage} python -m backend.cli index
+```
+
+- **可重复执行**：每次都整库重建（写同目录临时文件再 `os.replace` 原子替换），直接覆盖旧文件。
+  约 1 秒、5 万余行、10MB 左右。
+- **只有这个命令写它**。运行期所有读都经 `GameSearchService`，用 `mode=ro` + `PRAGMA query_only=1`
+  打开，每请求一条短连接；服务端也**绝不代建**这个文件（没构建时接口返回 `indexed:false`）。
+- **不参与月度备份**（`backend/backup.py` 只备份 `app.db`）——它随时能从 CSV 重建。
+- **重建后不用重启 api**：`os.replace` 之后，已经打开的连接继续读旧 inode，新请求自动拿新库。
+- **只能在宿主机跑**：CSV 被根目录 `.dockerignore` 排除了，镜像里没有这份数据。数据根取自
+  `.env` 的 `STORAGE_HOST_DIR`，与容器挂的是同一个宿主目录，所以构建完 api 立刻能读到。
+
+### 写不进去（PermissionError / 「数据根不可写」）
+
+数据目录若是 Docker 容器以 root 建的（默认的 `./data/storage` 跑过一次 compose 之后就是这样），
+宿主用户在里面**建不了临时文件**，`build_index` 的原子替换就无从谈起。`make index` 会先做一次
+`test -w` 预检并打印对策，直接照做即可：
+
+```bash
+sudo chown -R "$USER" "$STORAGE_HOST_DIR"     # 默认就是 ./data/storage
+```
+
+换一个宿主用户自有的 `STORAGE_HOST_DIR` 也可以（推荐放在仓库外，见「配置」）。
+
+### 改了名录或改了分词规则之后
+
+`backend/games/search_text.py` 里是**索引期与查询期共用的唯一一份归一化实现**（NFKC → 剥结尾的
+地区/语言/版本标签 → 汉字逐字拆 token）。改它之后必须重跑 `make index`，否则老索引与新查询
+对不上，中文会静默搜不到。同理，改了 `search_index.py` 的表结构要把 `SCHEMA_VERSION` 加一——
+运行期读到不匹配的版本会明确报「索引版本过旧，请重新构建」，而不是给出莫名其妙的结果。
 
 ## 提交约定
 
