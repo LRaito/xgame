@@ -2,22 +2,9 @@
     <div class="game-search">
         <header class="page-header">
             <h1 class="page-title">游戏检索</h1>
-            <p class="page-lead">
-                在中英文游戏名录里按名称检索，可按机种过滤。数据来自项目根目录执行
-                <code>make index</code> 构建出的检索索引，与平台已收录的游戏无关。
-            </p>
         </header>
 
         <div class="game-search__toolbar">
-            <el-input
-                v-model="keyword"
-                class="game-search__keyword"
-                placeholder="搜索中文名或英文名"
-                clearable
-                @keyup.enter="searchNow"
-                @input="onKeywordInput"
-                @clear="searchNow"
-            />
             <el-select
                 v-model="activeConsole"
                 class="game-search__console"
@@ -33,6 +20,15 @@
                     :value="item.id"
                 />
             </el-select>
+            <el-input
+                v-model="keyword"
+                class="game-search__keyword"
+                placeholder="搜索中文名或英文名"
+                clearable
+                @keyup.enter="searchNow"
+                @input="onKeywordInput"
+                @clear="searchNow"
+            />
         </div>
 
         <div v-loading="loading" class="game-search__body">
@@ -83,7 +79,7 @@
 import { computed, onMounted, ref } from "vue";
 import { listSearchConsolesAPI, searchGamesAPI } from "@/api/games";
 
-const PAGE_SIZE = 20;
+const PAGE_SIZE = 10;
 // 防抖时长：与游戏管理页的关键词筛选一致
 const KEYWORD_DEBOUNCE = 300;
 
@@ -258,12 +254,9 @@ onMounted(async () => {
     border-bottom: none;
 }
 
-.game-search__table tbody tr:hover td {
-    background: var(--brand-accent-soft);
-}
-
+/* 够放下最长的机种名「任天堂SFC - Sufami Turbo」（约 178px 文字 + 左右各 16px 内边距） */
 .game-search__col-console {
-    width: 140px;
+    width: 220px;
 }
 
 .game-search__col-zh {
@@ -273,8 +266,6 @@ onMounted(async () => {
 .game-search__nowrap {
     color: var(--text-muted);
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .game-search__table mark {

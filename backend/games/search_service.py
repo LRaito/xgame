@@ -19,7 +19,7 @@ from backend.games.search_text import fts_query
 
 logger = logging.getLogger(__name__)
 
-PAGE_SIZE_DEFAULT = 20
+PAGE_SIZE_DEFAULT = 10
 PAGE_SIZE_MAX = 100
 
 # 主查询。几条硬约束（都实测过，别改）：

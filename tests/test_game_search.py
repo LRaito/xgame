@@ -404,7 +404,7 @@ def test_empty_query_lists_everything(built, logged_in):
 
 def test_missing_index_returns_guidance_and_creates_nothing(app, logged_in, index_path):
     data = _search(logged_in)
-    assert data == {"indexed": False, "total": 0, "page": 1, "page_size": 20, "items": []}
+    assert data == {"indexed": False, "total": 0, "page": 1, "page_size": 10, "items": []}
     assert logged_in.get(CONSOLES_URL).json()["data"] == {"indexed": False, "consoles": []}
     # 服务端绝不代建索引
     assert not index_path.exists()
