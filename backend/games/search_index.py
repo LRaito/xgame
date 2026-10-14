@@ -75,9 +75,8 @@ def ensure_game_index(settings: Settings, *, csv_dir: Path | None = None) -> Bui
     服务起来后自检一次，用户就不用为了第一次能用检索页去手工跑命令；`make index` 仍然是
     手动重建/更新索引的入口（换 CSV、改分词规则之后用它覆盖）。
 
-    全程 best-effort，**绝不拦住启动**：建不出来最多是检索页提示「尚未构建索引」。
-    容器里必然走 `csv_dir` 不存在那条分支——CSV 被 `.dockerignore` 排除、镜像里没有，
-    索引应当在宿主机上构建（数据根是同一个宿主目录，所以构建完容器立刻能读到）。
+    全程 best-effort，**绝不拦住启动**：建不出来最多是检索页提示「尚未构建索引」
+    （例如数据根没有写权限、或名录 CSV 被人删掉了）。
     """
     if settings.TESTING:
         return None

@@ -232,10 +232,10 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | 项 | 值 |
 |----|----|
 | 路径 | `<数据根>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`；容器里就是 `/data/db/game.db`） |
-| 写入方 | 只有 `backend/games/search_index.py::build_index()` 一处，两个触发口：**服务启动自动补建**（`create_app()` → `ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning）与 **`make index`**（`Makefile` → `python -m backend.cli index`，手动重建/更新）。容器里没有 CSV 源，自动补建必然跳过 |
+| 写入方 | 只有 `backend/games/search_index.py::build_index()` 一处，两个触发口：**服务启动自动补建**（`create_app()` → `ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning）与 **`make index`**（`Makefile` → `python -m backend.cli index`，手动重建/更新）。容器里也能建（CSV 随 `backend/` 进镜像） |
 | 读取方 | `backend/games/search_service.py::GameSearchService`，一律 `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接——**运行期只读，绝不写它** |
 | 是否备份 | **不进月度备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）。它可从 `backend/search/csv/` 的 CSV 完整重建 |
-| 源数据 | `backend/search/csv/` 下 37 个 CSV（3 列无表头、UTF-8 带 BOM、CRLF），**被根目录 `.dockerignore` 排除、不进镜像** |
+| 源数据 | `backend/search/csv/` 下 37 个 CSV（3 列无表头、UTF-8 带 BOM、CRLF），随 `backend/` 一起进 api 镜像 |
 | 重建方式 | 整库重建 + 原子替换（写同目录 `game.db.tmp` → `chmod 0644` → `os.replace`）。**不开 WAL**，所以不会留 `-wal`/`-shm`；重建后无需重启 api |
 
 ### 表

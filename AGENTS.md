@@ -130,7 +130,7 @@ backend/Dockerfile           # api 镜像（ENV STORAGE_ROOT=/data + ENTRYPOINT 
 backend/auth/                # 注册/登录/退出（密码 + 失败锁定）
 backend/tools/registry.py    # 功能列表（给 /api/tools）
 backend/games/               # 游戏 router/service/paths + 云端存档 save_* + 游戏截图 screenshot_* + 游戏图集 gallery_* + 模拟器设置 settings_* + 游玩统计 stats_* + 检索 search_*(text/index/service/router) + 搬运 importer + 网络上传 remote
-backend/search/csv/          # 游戏检索的 37 个中英文名录 CSV（纯数据目录，只被 make index 读；不进镜像）
+backend/search/csv/          # 游戏检索的 37 个中英文名录 CSV（纯数据目录，只被建索引读；随 backend/ 进 api 镜像）
 backend/storage/             # 跨模块：types(协议与 StoredObject) / local(LocalStorage) / access(流式下载响应)
 tests/                       # pytest（test_auth / test_backup / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats / game_search）
 docker-compose.yml           # web + api（宿主数据根目录 bind：STORAGE_HOST_DIR → /data）
@@ -225,9 +225,9 @@ requirements.txt
 - **独立的只读索引库。** 索引是 `<STORAGE_ROOT>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`，与 `app.db` 同目录、**无外键关系**）。写入方**只有 `backend/games/search_index.py::build_index()` 一处**，两个触发口：`make index`（手动重建/更新）与**服务启动时的自动补建**（`ensure_game_index()`，只在文件不存在时建）。平台运行期的读一律经 `backend/games/search_service.py` 的 `GameSearchService`，用 `Path.as_uri()` + `?mode=ro` + `PRAGMA query_only=1` 打开，每请求一条短连接、用完即关，**运行期绝不写它**。**它刻意不参与月度备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）——它是可从 CSV 重建的派生数据。
 - **构建是整库重建 + 原子替换。** `make index` → `python -m backend.cli index` → `build_index()`：写到同目录 `game.db.tmp`、`chmod 0644`、`os.replace()` 覆盖旧库（可重复执行，直接覆盖）。**不开 WAL**（WAL 会留 `-wal`/`-shm`，`os.replace` 只换主库，新库配旧 `-wal` 必坏）。所以**重建索引不需要重启 api**：已打开的连接继续读旧 inode，新请求自动拿到新库。
 - **索引不存在时服务自己补一次。** `create_app()` 启动时调 `ensure_game_index()`（紧跟 `backup_database()`，风格与月度备份一致）：文件不存在就整库建一次，已存在就跳过；**全程 best-effort，失败只记 warning、绝不拦住启动**（建不出来最多是检索页提示「尚未构建索引」）。`TESTING` 下直接跳过——否则每个测试用例都要白建一次 5 万行的索引，也会让「索引缺失」那组用例失去意义。`make index` 仍是手动重建/更新索引的正规入口（换 CSV、改分词规则之后用它覆盖）。
-- **容器里必然跳过自动补建**：CSV 被根目录 `.dockerignore` 排除了，`ensure_game_index()` 找不到源目录就记一条 INFO 走人。所以容器的用法是**在宿主机跑一次 `make index`**——数据根取自 `.env` 的 `STORAGE_HOST_DIR`，与容器挂的是同一个宿主目录，构建完容器立刻能读到，不用重建镜像、也不用重启 api。
+- **宿主机与容器都能补建**：CSV 随 `backend/` 一起进 api 镜像（根目录 `.dockerignore` **没有**排除它），所以容器启动时也能自建一次。两边写的是**同一个数据目录**（bind 进去的），所以在哪边建都一样：宿主机 `make index` 建出来的库容器立刻能读到，不用重建镜像、也不用重启 api。
 - **索引缺失/损坏时的表现**：没有文件 → 接口返回 `indexed:false` + 空列表（200，**不是错误**），页面给中文引导；文件在但打不开 / `meta.schema_version` 不匹配 → 503 + 中文提示（`IndexUnavailableError`）。**接口永不建它**——只有 `build_index()` 那两个触发口（启动补建、`make index`）会。
-- **`make index` 只能在宿主机跑**：CSV 被根目录 `.dockerignore` 排除了，镜像里没有。数据根取自 `.env` 的 `STORAGE_HOST_DIR`（与容器挂的是同一个宿主目录），所以构建完 api 立刻能读到。**数据根若是 Docker 以 root 建的**（默认的 `./data/storage` 跑过一次 compose 之后就是这样），宿主用户写不进去（服务启动时的自动补建也会因此失败、只记一条 warning），`make index` 会先 `test -w` 预检并提示 `sudo chown -R "$USER" "$STORAGE_HOST_DIR"`。
+- **写权限是唯一的拦路虎**：数据根若是 Docker 以 root 建的（默认的 `./data/storage` 跑过一次 compose 之后就是这样），**宿主用户**写不进去（容器里跑的是 root，不受影响）。此时宿主机直跑服务时的自动补建会失败（只记一条 warning，检索页提示尚未构建），`make index` 也会先 `test -w` 预检并提示 `sudo chown -R "$USER" "$STORAGE_HOST_DIR"`。
 - **分词选型（别「优化」掉）。** FTS5 用 `unicode61 remove_diacritics 2` + **汉字逐字拆开**：裸 `unicode61` 会把整串中文当一个 token（搜任何子串都 0 命中），`trigram` 少于 3 字全废。所以 `backend/games/search_text.py` 的 `index_text()` 把每个汉字变成独立 token，查询时把词包成**短语**（`"马 里 奥"` ⇒ 子串语义），词间用 `AND`（整句拼一个短语会让 `final fantasy vii` 搜不到 `Final Fantasy VII`）。**索引期与查询期只有这一份实现**（`search_index.py` 与 `search_service.py` 都调它），任一处漏调中文就搜不到。顺带做 NFKC（全角字母/数字与半角互搜）。
 - **结尾的地区/语言/版本标签不进索引**：`(Japan)`、`(En,Ja)`、`(Rev A)`、`[a1]`、`（日版）`、`(美版, 欧版)`、`[PS2]` 都在建库时由 `strip_tags()` 剥掉（名录里 76% 的英文名、38% 的中文名带这种后缀，不剥的话搜 `japan` 命中一万多条）。**落库与展示仍是原文**，剥的只有喂 FTS 的两列；整串都是标签的行回退成保留原串。
 - **按三元组去重**：`(机种, 中文, 英文)` 完全一致才合并（含跨源文件；52,611 → 51,359 行）。只中文或只英文相同的必须都留着——那是同款游戏的不同地区版本。
@@ -336,8 +336,8 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 - `python:3.12.15-slim-trixie`，工作目录 `/app`
 - 安装根目录 `requirements.txt`，仅复制 `backend/` 包，给 `backend/entrypoint.sh` 加执行位
 - `EXPOSE 8910`
-- **`backend/search/csv/`（游戏检索的 CSV 名录）不在镜像里**：根目录 `.dockerignore` 明确排除了它。
-  那 4MB 只给宿主机上的 `make index` 用，容器里既不构建索引也读不到源（跑了会得到一条中文错误）。
+- 游戏检索的 CSV 名录（`backend/search/csv/`，约 4MB）**随镜像一起走**：`COPY backend/ ./backend/`
+  把它带进 api 镜像，容器启动时才能在缺索引时自建一次。换名录数据要重建镜像。
 - `ENTRYPOINT` 是 `/app/backend/entrypoint.sh`：先调 `backend/mount_guard.py::require_mounted()`（**数据根在 Windows 盘挂载前缀下**——按 compose 传进来的宿主路径 `STORAGE_HOST_DIR` 判断，前缀可配、默认 `/mnt`——而容器里缺 `.mounted` 哨兵时，打中文日志 → 等 5 秒 → 以非零码退出，退的是**容器主进程**，compose 的 `api.restart: unless-stopped` 随即把容器重新拉起，循环重试直到哨兵出现；宿主数据目录不在那个前缀下就直接放行），再 `exec "$@"` 跑 CMD。判断与日志只有 `mount_guard.py` 一份，脚本不重复实现
 - `CMD`：`gunicorn backend.asgi:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8910 --workers 1 --threads 8 --timeout 300`（300s 是为了长上传/流式下载不被 worker 超时杀）
 

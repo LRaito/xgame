@@ -36,7 +36,7 @@ backend/
   games/importer.py       # 搬运（7k7k / 4399 / flash.homes）
   games/remote.py         # 网络上传（http/https 直链）
   games/search_*.py       # 游戏检索：text（归一化，索引期与查询期共用）/ index（建库，唯一写入方：启动补建 + make index）/ service（只读查询）/ router
-  search/csv/             # 游戏检索的 37 个中英文名录 CSV（纯数据，只被 make index 读；被 .dockerignore 排除、不进镜像）
+  search/csv/             # 游戏检索的 37 个中英文名录 CSV（纯数据，只被建索引读；随 backend/ 进 api 镜像）
 scripts/gen-certs.sh      # 重新生成自签名证书
 certs/                    # 证书，随仓库提交（cert.pem / cert.key）
 tests/                    # pytest
@@ -249,9 +249,9 @@ make index        # = STORAGE_ROOT=${STORAGE_HOST_DIR:-./data/storage} python -m
   每请求一条短连接；没有第三条路径会写它。
 - **不参与月度备份**（`backend/backup.py` 只备份 `app.db`）——它随时能从 CSV 重建。
 - **重建后不用重启 api**：`os.replace` 之后，已经打开的连接继续读旧 inode，新请求自动拿新库。
-- **只能在宿主机跑**：CSV 被根目录 `.dockerignore` 排除了，镜像里没有这份数据，容器里的自动
-  补建必然跳过（只记一条 INFO）。数据根取自 `.env` 的 `STORAGE_HOST_DIR`，与容器挂的是同一个
-  宿主目录，所以宿主机建完容器立刻能读到。
+- **宿主机与容器都能跑**：CSV 随 `backend/` 进 api 镜像，容器里的自动补建正常工作（写的是
+  bind 进去的宿主数据目录）。反过来也一样：宿主机 `make index` 建出来的库，容器立刻能读到
+  ——两边用的是同一个文件。
 
 ### 自动补建没成功（PermissionError / 「数据根不可写」）
 

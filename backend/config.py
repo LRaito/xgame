@@ -47,7 +47,7 @@ DB_FILENAME = "app.db"
 GAME_INDEX_FILENAME = "game.db"
 
 # 生成游戏检索索引的 CSV 名录（`机种,中文,英文` 三列）。这份数据只在仓库/宿主机上存在——
-# `.dockerignore` 刻意排除了它，所以镜像里没有，`make index` 只能在宿主机跑。
+# 它随 backend/ 一起进 api 镜像，所以容器里也能在启动时自动补建。
 SEARCH_CSV_DIR = BASE_DIR / "backend" / "search" / "csv"
 
 

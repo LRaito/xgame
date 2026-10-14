@@ -244,7 +244,7 @@ def test_ensure_game_index_skips_when_testing(tmp_path):
 
 
 def test_ensure_game_index_tolerates_missing_csv(tmp_path):
-    """容器里就是这样：CSV 被 .dockerignore 排除。跳过并记一条日志，不建文件、不抛异常。"""
+    """名录被人删掉/挪走时跳过并记一条日志，不建文件、不抛异常。"""
     assert ensure_game_index(_settings(tmp_path), csv_dir=tmp_path / "nope") is None
     assert not (tmp_path / "storage" / "db" / "game.db").exists()
 

@@ -42,7 +42,6 @@ test:
 
 # 构建「游戏检索」用的索引库（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。
 # 服务启动时若发现索引不存在，会自动补建一次；这个 target 用于手动重建/更新（换了名录之后）。
-# 只能在宿主机跑：CSV 名录被 .dockerignore 排除，镜像里没有（见 backend/search/csv/）。
 # 数据根取自 .env 的 STORAGE_HOST_DIR，与容器挂的是同一个宿主目录，所以构建完 api 立刻能读到。
 index:
 	@test -d "$${STORAGE_HOST_DIR:-./data/storage}" && ! test -w "$${STORAGE_HOST_DIR:-./data/storage}" \
