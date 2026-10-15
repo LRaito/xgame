@@ -129,7 +129,6 @@ backend/deps.py              # 依赖注入：session、登录态、各 service 
 backend/csrf.py              # CSRF 中间件
 backend/cli.py               # init-db / index（构建游戏检索索引）/ serve（本机直跑生产形态，可选托管前端）
 backend/static_site.py       # 可选：后端托管前端 dist（只有 Windows 包设 STATIC_DIR 时生效，行为对齐 nginx.conf.template）
-backend/local_control.py     # 可选：本机专用关机口 POST /api/local/shutdown（Windows 包的升级脚本用）
 backend/request_limit.py     # 请求体上限中间件（顶替 nginx 的 client_max_body_size）
 backend/entrypoint.sh        # api 容器的 ENTRYPOINT：先过哨兵检查，再 exec CMD 里的 gunicorn
 backend/Dockerfile           # api 镜像（ENV STORAGE_ROOT=/data + ENTRYPOINT entrypoint.sh + gunicorn）
@@ -142,10 +141,11 @@ packaging/windows/           # 「解压即用」Windows 包：Dockerfile.build�
                              #   + build-in-docker.sh（make win 入口）+ build-win-dist.sh（组装）
                              #   + runtime.env（Windows 版 CPython 钉版）+ fetch-runtime.sh（下载+校验）
                              #   + launcher.py（启动器）+ winops.py（外壳操作）
-                             #   + upgrade.ps1/升级.bat（自动升级）+ allow-lan.ps1/允许局域网访问.bat + 启动游戏平台.cmd
-                             #   + smoke_win.py（自检）+ requirements-win.txt + 说明.txt + README.md
+                             #   + allow-lan.ps1/允许局域网访问.bat + 启动游戏平台.cmd
+                             #   + smoke_win.py（自检）+ make_zip.py（打包，UTF-8 文件名）+ requirements-win.txt
+                             #   + 说明.txt + README.md
                              #   + xgame.png（快捷方式图标的源图，随仓库提交；换图标 = 替换它再跑 make_icon.py 生成 xgame.ico）
-tests/                       # pytest（test_auth / test_backup / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats / game_search / static_site / request_limit / local_control / win_launcher）
+tests/                       # pytest（test_auth / test_backup / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats / game_search / static_site / request_limit / win_launcher）
 docker-compose.yml           # web + api（宿主数据根目录 bind：STORAGE_HOST_DIR → /data）
 requirements.txt
 .env.example
@@ -401,8 +401,9 @@ Alpine（musl）**，才能让容器里装的前端依赖（rolldown 之类是�
 （唯一的供应链入口，升级时只改它）。
 
 **版本号只有一个出处：`scripts/version.sh`**（Docker 路线与 Windows 包共用）。HEAD 停在最新 tag
-上就是 `v1.0.0`，在 tag 之后的提交上则是 `v1.0.0-<HEAD 提交时间毫秒>`；比较时先比 tag 再比这串
-数字。前端在构建期拿到它显示在侧栏标题后，同时写进 `web/version.txt` 供已打开的页面探测更新。
+上就是 `v1.0.0`，在 tag 之后的提交上则是 `v1.0.0-<HEAD 提交时间毫秒>`。前端在构建期拿到它显示在
+侧栏标题后，同时写进 `web/version.txt` 供已打开的页面探测更新，也进 zip 的文件名。包里**不做版本
+比较**（没有自动升级，谁新谁旧看文件名就行）。
 
 这条路线与 Docker 的差异，逐条都是被逼的，改动时要一起考虑：
 
@@ -417,11 +418,14 @@ Alpine（musl）**，才能让容器里装的前端依赖（rolldown 之类是�
   （`SESSION_COOKIE_SECURE`），http 下浏览器不保存它、登录会静默失效，所以启动器把它设成 false。
 - **没有 `client_max_body_size`**：`backend/request_limit.py` 顶上（超限 413、分块传输 411），
   两条路线都挂，Docker 上 nginx 先拦。
-- **多一个本地控制口**：`POST /api/local/shutdown`（`backend/local_control.py`），给升级脚本停服务用。
-  三重设防：`LOCAL_CONTROL` 开关、只认回环地址、`X-XGame-Token` 常量时间比较；Docker 路线不注册。
-- **升级是包内的**：`升级.bat` + `upgrade.ps1` 把新 zip 换上，**数据目录原地不动**。
-  脚本必须复制到 `%TEMP%` 再执行（它要改名整个 `xgame` 目录，而 Windows 不允许改名含已打开
-  文件的目录），也必须先让服务优雅退出再动文件。
+- **升级是手动的，包里一行自动升级的代码都没有**（曾经有过 `升级.bat` + `upgrade.ps1`，删了）：
+  关窗口 → 解压新包到新目录 → 把 `data` 搬过去。自动升级要停下来改自己的目录，于是每一步都在
+  跟 Windows 的文件锁较劲（脚本得先复制到 `%TEMP%` 再执行、服务得先优雅退出、旧目录可能删不掉），
+  换来的只是少点几下鼠标。**别再把它加回来。**
+- **打 zip 用 `packaging/windows/make_zip.py`，不用命令行的 `zip`**：条目直接躺在压缩包根上
+  （不套一层目录），且非 ASCII 名字必须带 UTF-8 标记位（bit 11）——Info-ZIP 不设它，Windows
+  资源管理器就按 OEM 代码页解释，中文文件名全成乱码（WinRAR 会自己猜 UTF-8，所以预解压窗口里
+  看着正常，最容易骗过构建者）。
 
 包内脚本的编码约定：`.cmd`/`.bat` **内容纯 ASCII**（cmd 按 OEM 代码页解析批处理，中文混进去
 是乱码与解析出错的经典来源），面向用户的中文一律由 Python 或 PowerShell 输出；`.ps1` 存成

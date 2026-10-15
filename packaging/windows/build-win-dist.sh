@@ -3,7 +3,7 @@
 # 组装「解压即用」的 Windows 包。**整个组装过程都在 WSL / Linux 上跑**，不需要 Windows。
 #
 # 产物：dist-win/xgame_v<版本>.zip
-#   解压出来是一个 xgame/ 目录，双击里面的「启动游戏平台.cmd」就能玩。
+#   压缩包里没有多余的一层目录：解压到哪，哪就是包本体，双击「启动游戏平台.cmd」就能玩。
 #
 # 依赖从哪来：优先用构建环境镜像里预置的那份（/opt/winbuild，见 Dockerfile.build）——
 # 前端依赖、EmulatorJS 资产、Windows 轮子、Windows 版 CPython 全在里面，
@@ -37,14 +37,14 @@ FE_BUILD="${FE_BUILD_DIR:-/tmp/xgame-fe}"
 say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 
-for tool in curl zip python3; do
+for tool in curl python3; do
     command -v "$tool" >/dev/null 2>&1 || { say "缺少命令：$tool"; exit 1; }
 done
 
 # ---------- 版本号 ----------
 # 默认由 scripts/version.sh 从 git tag 算：
 #   HEAD 正好在最新 tag 上 → v1.0.0；在 tag 之后的提交上 → v1.0.0-<HEAD 提交时间毫秒>
-# （升级时先比 tag 再比那串时间戳，见 launcher.py 的 _version_key）。
+# （后一段是提交时间，越晚越大，所以看文件名就知道谁新）。
 # 也可以直接指定：APP_VERSION=v9.9.9 make win
 VERSION="${APP_VERSION:-$(bash "$REPO/scripts/version.sh")}"
 ZIP_NAME="xgame_${VERSION}.zip"
@@ -156,8 +156,8 @@ else
 fi
 test -d "$PKG/backend/search/csv" || { say "！backend/search/csv 没带上，检索索引建不出来"; exit 1; }
 
-for name in launcher.py winops.py smoke_win.py upgrade.ps1 allow-lan.ps1 xgame.ico \
-            启动游戏平台.cmd 升级.bat 允许局域网访问.bat \
+for name in launcher.py winops.py smoke_win.py allow-lan.ps1 xgame.ico \
+            启动游戏平台.cmd 允许局域网访问.bat \
             创建桌面快捷方式.bat 设置开机自启.bat 解除锁定.bat 说明.txt; do
     cp -a "$HERE/$name" "$PKG/$name"
 done
@@ -176,8 +176,7 @@ if [ "$HERE/xgame.png" -nt "$HERE/xgame.ico" ]; then
 fi
 [ -f "$PKG/xgame.ico" ] || { say "！缺少 xgame.ico（跑 python3 packaging/windows/make_icon.py 生成）"; exit 1; }
 
-# 版本文件：包内升级逻辑拿它跟新包的文件名比大小；前端也用同一个值，
-# 所以「服务端换了新构建」的提示照常工作。
+# 版本文件：前端拿它探测「服务端换了新构建」，启动器把它打在启动横幅上。
 printf '%s' "$VERSION" > "$PKG/version.txt"
 
 # 包内默认配置由 launcher.py 的模板生成，保证只有一份定义
@@ -187,14 +186,6 @@ sys.path.insert(0, r'$HERE')
 import launcher
 sys.stdout.write(launcher._INI_TEMPLATE)
 " > "$PKG/xgame.ini"
-
-mkdir -p "$PKG/updates"
-cat > "$PKG/updates/说明.txt" <<'TXT'
-把新版本的安装包（xgame_v*.zip）放进这个文件夹，下次启动时会自动升级。
-
-升级过程：停服务 → 解压 → 替换程序文件 → 重新启动。数据目录原地不动，
-账号、存档、截图、游戏本体都不受影响。启动器里也可以关掉自动升级（xgame.ini 的 auto_update）。
-TXT
 
 # ---------- 5. 自检（WSL interop 可用时直接跑包里那份 python.exe）----------
 step "5/6 自检"
@@ -208,7 +199,6 @@ fi
 
 # ---------- 6. 打包 ----------
 step "6/6 打包"
-rm -f "$OUT/$ZIP_NAME"
-( cd "$OUT" && zip -qr "$ZIP_NAME" xgame -x '*/__pycache__/*' )
-say "完成：$OUT/$ZIP_NAME（$(du -sh "$OUT/$ZIP_NAME" | cut -f1)）"
-say "解压出来是 xgame/ 目录，双击「启动游戏平台.cmd」即可。"
+# 用 make_zip.py 而不是命令行的 zip：条目直接躺在压缩包根上（不再套一层 xgame/），
+# 且中文文件名带 UTF-8 标记位——否则 Windows 资源管理器会把 启动游戏平台.cmd 显示成乱码。
+python3 "$HERE/make_zip.py" "$PKG" "$OUT/$ZIP_NAME"

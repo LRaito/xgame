@@ -1,15 +1,15 @@
 """xgame 启动器：解压即用包的双击入口。
 
-它做四件事，按顺序：
+它做三件事，按顺序：
 
 1. **自检**（缺 MSVC 运行库、SQLite 没有 FTS5、数据目录被 Docker 路线用过）；
-2. **看有没有新版本**（`updates/xgame_v*.zip`），有就交给 `升级.bat` 并退出；
-3. **起服务**：进程内跑 uvicorn（不起子进程——Windows 上硬杀进程会把 SQLite 留在半路，
-   而进程内跑时关窗口 / 收到关机请求都能走优雅退出），顺带按环境变量让后端托管前端 dist；
-4. **等它就绪**再打开浏览器，并打印本机与局域网两个地址。
+2. **起服务**：进程内跑 uvicorn（不起子进程——Windows 上硬杀进程会把 SQLite 留在半路，
+   而进程内跑时关窗口 / Ctrl+C 都能走优雅退出），顺带按环境变量让后端托管前端 dist；
+3. **等它就绪**再打开浏览器，并打印本机与局域网两个地址。
 
 配置文件是旁边的 `xgame.ini`（没有就用默认值建一份）。整个包不写注册表、不装服务、
-不碰系统目录，删掉文件夹就算卸载。
+不碰系统目录，删掉文件夹就算卸载。**包里没有任何自动升级的代码**：升级是手动的
+（关窗口 → 解压新包 → 把 data 目录搬过去），步骤见 README.md 与 说明.txt。
 
 这个文件在包里位于 `xgame/launcher.py`，与 `backend/`、`web/`、`python/` 同级。
 """
@@ -21,13 +21,9 @@ import ctypes
 import logging
 import logging.handlers
 import os
-import re
-import secrets
 import socket
 import sqlite3
-import subprocess
 import sys
-import tempfile
 import threading
 import time
 import urllib.error
@@ -52,7 +48,6 @@ _DEFAULTS = {
     "host": "0.0.0.0",
     "port": str(DEFAULT_PORT),
     "open_browser": "yes",
-    "auto_update": "yes",
 }
 
 _INI_TEMPLATE = """\
@@ -73,10 +68,6 @@ port = 8910
 
 # 启动后自动打开浏览器：yes / no
 open_browser = yes
-
-# 启动时发现 updates 目录（或包目录、上一层目录）里有更新的 xgame_v*.zip 就自动升级：
-# yes / no。升级会先停服务、替换程序文件后重新启动，数据目录原地不动。
-auto_update = yes
 """
 
 
@@ -87,7 +78,6 @@ class Config:
         self.host = (section.get("host") or _DEFAULTS["host"]).strip()
         self.port = self._port(section.get("port", _DEFAULTS["port"]))
         self.open_browser = self._flag(section.get("open_browser", _DEFAULTS["open_browser"]))
-        self.auto_update = self._flag(section.get("auto_update", _DEFAULTS["auto_update"]))
 
     @staticmethod
     def _path(raw: str) -> Path:
@@ -189,69 +179,16 @@ def check_data_dir(data_dir: Path) -> None:
         say("!" * 62)
 
 
-# ---------- 更新包 ----------
-
-
-def _version_key(text: str) -> tuple[int, ...]:
-    """把版本号拆成可比较的数字段。
-
-    `v1.0.0` → `(1, 0, 0)`；`v1.0.0-1792042865000` → `(1, 0, 0, 1792042865000)`。
-    元组比较天然就是「先比 tag 部分、再比后面那串提交时间戳」，而短的更小——于是
-    tag 之后的构建（带时间戳）判为比 tag 本身更新，正是升级想要的语义。
-    """
-    numbers = re.findall(r"\d+", text)
-    return tuple(int(item) for item in numbers) if numbers else (0,)
+# ---------- 版本 ----------
 
 
 def current_version() -> str:
+    """包里那份 `version.txt`（构建时由 scripts/version.sh 写入），只用来在启动横幅上显示。"""
     path = ROOT / "version.txt"
     try:
         return path.read_text(encoding="utf-8").strip()
     except OSError:
         return "v0.0.0"
-
-
-def find_update() -> tuple[Path, str] | None:
-    """找有没有比当前版本更新的安装包。
-
-    找三个地方：包的 `updates/`（推荐）、包目录本身、包目录的上一层
-    （很多人习惯把新 zip 解压/下载到 xgame 旁边）。版本按数字段比大小，不按字符串比。
-    """
-    current = _version_key(current_version())
-    found: tuple[Path, str] | None = None
-    candidates: list[Path] = []
-    for folder in (ROOT / "updates", ROOT, ROOT.parent):
-        if folder.is_dir():
-            candidates.extend(sorted(folder.glob("xgame_v*.zip")))
-    for path in candidates:
-        match = re.search(r"xgame_(v[\w.\-]+)\.zip$", path.name, re.IGNORECASE)
-        if not match:
-            continue
-        version = match.group(1)
-        if _version_key(version) <= current:
-            continue
-        if found is None or _version_key(version) > _version_key(found[1]):
-            found = (path, version)
-    return found
-
-
-def run_updater(update: tuple[Path, str]) -> None:
-    path, version = update
-    say()
-    say(f"发现新版本 {version}（当前 {current_version()}），正在交给升级程序……")
-    say("升级过程中浏览器会短暂打不开，完成后会自动重新启动。")
-    bat = ROOT / "升级.bat"
-    if not bat.is_file():
-        fatal(f"发现新版本 {version}，但包里找不到「升级.bat」，请手动解压新包。")
-    creation_flags = 0x00000010 if os.name == "nt" else 0  # CREATE_NEW_CONSOLE
-    # cwd 刻意不放包目录：升级最后要把整个 xgame 改名，而任何进程的当前目录会让这次改名失败。
-    # `/auto` 告诉升级脚本「是启动器调起来的」，跑完不要 pause。
-    subprocess.Popen(  # noqa: S603 - 路径来自包内固定文件名
-        ["cmd", "/c", str(bat), "/auto"] if os.name == "nt" else [str(bat)],
-        cwd=tempfile.gettempdir(),
-        creationflags=creation_flags,
-        close_fds=True,
-    )
 
 
 # ---------- 单实例 ----------
@@ -367,22 +304,25 @@ def say_addresses(config: Config) -> None:
     say("  手机打不开就先双击一次「允许局域网访问.bat」（会弹一次权限确认）。")
 
 
-def write_runtime_files(port: int, token: str) -> None:
+def write_runtime_files(port: int) -> None:
+    """记下正在用的端口。
+
+    唯一的用途是「端口被占用」时判断：端口上有人应答、`runtime/port.txt` 又还在，
+    那多半是另一个副本 / 另一个用户的会话在跑，而不是别的程序占了端口——两种情况给用户的
+    提示完全不一样。正常退出会删掉它，硬杀（直接关窗口）会留下它。
+    """
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     (RUNTIME_DIR / "port.txt").write_text(str(port), encoding="utf-8")
-    (RUNTIME_DIR / "control.token").write_text(token, encoding="utf-8")
-    (RUNTIME_DIR / "xgame.pid").write_text(str(os.getpid()), encoding="utf-8")
 
 
 def clear_runtime_files() -> None:
-    for name in ("port.txt", "control.token", "xgame.pid"):
-        try:
-            (RUNTIME_DIR / name).unlink(missing_ok=True)
-        except OSError:
-            pass
+    try:
+        (RUNTIME_DIR / "port.txt").unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
-def serve(config: Config, token: str) -> int:
+def serve(config: Config) -> int:
     import uvicorn
 
     os.environ["STORAGE_ROOT"] = str(config.data_dir)
@@ -390,9 +330,6 @@ def serve(config: Config, token: str) -> int:
     # 局域网走 http（自签证书对手机/平板等于没有），cookie 不能带 Secure，
     # 否则浏览器不保存它，表现是「登录看着成功、下一个请求就 401」。
     os.environ["SESSION_COOKIE_SECURE"] = "false"
-    # 本地关机口：升级脚本靠它让服务优雅退出，token 每次启动重新生成
-    os.environ["LOCAL_CONTROL"] = "1"
-    os.environ["LOCAL_CONTROL_TOKEN"] = token
 
     # 必须在这里才 import：backend.asgi 在导入时就 create_app()，配置是那一刻读的。
     # 也正是这次导入在建目录、建表、做月度备份、建检索索引，首次启动会明显卡一下。
@@ -406,10 +343,9 @@ def serve(config: Config, token: str) -> int:
     server = uvicorn.Server(
         uvicorn.Config(app, host=config.host, port=config.port, log_config=None, access_log=False)
     )
-    app.state.request_shutdown = lambda: setattr(server, "should_exit", True)
 
     # 进程内跑，不起子进程：Windows 上 terminate 是硬杀，SQLite 可能被留在半路；
-    # 进程内跑时关窗口、Ctrl+C、升级脚本的关机请求都能走优雅退出。
+    # 进程内跑时 Ctrl+C 能走优雅退出（关窗口是硬杀，但 SQLite 有日志、不会坏库）。
     thread = threading.Thread(target=server.run, name="uvicorn", daemon=True)
     thread.start()
 
@@ -422,7 +358,7 @@ def serve(config: Config, token: str) -> int:
 
     say()
     say("=" * 62)
-    say("  XGame 已经跑起来了")
+    say(f"  XGame {current_version()} 已经跑起来了")
     say_addresses(config)
     if config.host == "0.0.0.0":
         say("  同一个账号在不同地址下算两个站点，本地存档不互通，建议固定用一个地址。")
@@ -485,11 +421,11 @@ _ACTIONS = {
     "--unlock": "unlock",
 }
 
-_USAGE = "可用参数：" + " / ".join([*_ACTIONS, "--quiet", "--no-browser", "--no-update"])
+_USAGE = "可用参数：" + " / ".join([*_ACTIONS, "--quiet", "--no-browser"])
 
 
 def parse_args(argv: list[str]) -> dict:
-    options = {"quiet": False, "no_browser": False, "no_update": False, "action": None}
+    options = {"quiet": False, "no_browser": False, "action": None}
     for item in argv:
         if item in _ACTIONS:
             options["action"] = _ACTIONS[item]
@@ -497,8 +433,6 @@ def parse_args(argv: list[str]) -> dict:
             options["quiet"] = True
         elif item == "--no-browser":
             options["no_browser"] = True
-        elif item == "--no-update":
-            options["no_update"] = True
         else:
             raise SystemExit(f"未知参数：{item}（{_USAGE}）")
     return options
@@ -535,22 +469,13 @@ def main(argv: list[str] | None = None) -> int:
     # 同一个 SQLite 更容易出事）：这里只把地址告诉用户、顺手把浏览器打开。
     instance = SingleInstance(f"Local\\xgame-port-{config.port}")
     if not instance.acquire():
-        pending = find_update() if (config.auto_update and not options["no_update"]) else None
         say()
         say("XGame 已经在运行了，不用再开一个。")
         say_addresses(config)
-        if pending is not None:
-            say(f"  顺带一提：这里有更新的版本 {pending[1]}，下次启动会自动升级。")
         say()
         if config.open_browser:
             webbrowser.open(f"http://127.0.0.1:{config.port}")
         return 0
-
-    if config.auto_update and not options["no_update"]:
-        update = find_update()
-        if update is not None:
-            run_updater(update)
-            return 0
 
     if port_in_use(config.host, config.port):
         hint = ""
@@ -563,11 +488,9 @@ def main(argv: list[str] | None = None) -> int:
             "换端口相当于换了站点，浏览器里的本地存档不会跟着走）。"
         )
 
-    # 关机口令每次启动重新生成：升级脚本从 runtime/control.token 读它（见 local_control.py）
-    token = secrets.token_urlsafe(32)
-    write_runtime_files(config.port, token)
+    write_runtime_files(config.port)
     try:
-        return serve(config, token)
+        return serve(config)
     finally:
         clear_runtime_files()
 

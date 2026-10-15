@@ -1,8 +1,8 @@
-"""Windows「解压即用」包里启动器的纯逻辑测试。
+"""Windows「解压即用」包里的纯逻辑测试：启动器、版本号脚本、运行时钉版文件、图标脚本。
 
-启动器本身是打包脚本（`packaging/windows/launcher.py`），不是后端服务的一部分，
-但它有两段逻辑错了会很难发现：**版本比较**（错了要么升不了级、要么反复升降级）
-与**局域网地址排序**（错了用户照着打出来的地址连不上）。这两段是纯函数，直接钉住。
+启动器本身是打包脚本（`packaging/windows/launcher.py`），不是后端服务的一部分，但它有两段
+逻辑错了会很难发现：**局域网地址排序**（错了用户照着打出来的地址连不上）与**包内默认配置**
+（`xgame.ini` 的模板坏了等于包一启动就崩）。这些是纯函数，直接钉住。
 """
 
 import configparser
@@ -28,38 +28,6 @@ def launcher():
 def _write_package(root: Path, version: str) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "version.txt").write_text(version, encoding="utf-8")
-
-
-def _touch_zip(folder: Path, name: str) -> Path:
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / name
-    path.write_bytes(b"PK\x05\x06" + b"\0" * 18)  # 空 zip 的文件头，这里只关心文件名
-    return path
-
-
-# ---------- 版本比较 ----------
-
-
-@pytest.mark.parametrize(
-    ("newer", "older"),
-    [
-        ("v1.0.1", "v1.0.0"),
-        ("v1.10.0", "v1.9.0"),  # 按数字段比，不是按字符串比
-        ("v2.0", "v1.9.9"),
-        ("v1.0.0.1", "v1.0.0"),
-        # tag 之后的构建带一串提交时间戳：先比 tag，再比这串数字
-        ("v1.0.0-1792042865000", "v1.0.0"),
-        ("v1.0.0-1792042865001", "v1.0.0-1792042865000"),
-        ("v1.0.1-1000", "v1.0.0-9999999999999"),
-    ],
-)
-def test_version_key_orders_by_number(launcher, newer, older):
-    assert launcher._version_key(newer) > launcher._version_key(older)
-
-
-def test_version_key_ignores_non_numeric_suffix(launcher):
-    """带非数字后缀的版本号按数字段比较（`-dirty` 之类不会把它算成新版本）。"""
-    assert launcher._version_key("v1.0.0-dirty") == launcher._version_key("v1.0.0")
 
 
 # ---------- 版本号脚本（Docker 路线与 Windows 包共用同一份）----------
@@ -122,39 +90,7 @@ def test_runtime_env_pins_one_consistent_runtime():
     assert re.fullmatch(r"[0-9a-f]{64}", env["PBS_SHA256"])
 
 
-# ---------- 找升级包 ----------
-
-
-def test_find_update_picks_highest_newer_package(launcher, tmp_path, monkeypatch):
-    root = tmp_path / "xgame"
-    _write_package(root, "v1.0.0")
-    monkeypatch.setattr(launcher, "ROOT", root)
-
-    assert launcher.find_update() is None
-
-    _touch_zip(root / "updates", "xgame_v1.0.1.zip")
-    _touch_zip(root / "updates", "xgame_v1.2.0.zip")
-    _touch_zip(root, "xgame_v0.9.0.zip")  # 更旧，忽略
-    _touch_zip(root, "xgame_v1.0.0.zip")  # 同版本，忽略
-    _touch_zip(root, "xgame_v1.0.0-dirty.zip")  # 同版本，忽略
-    _touch_zip(root, "别的文件.zip")  # 名字不匹配，忽略
-    (root / "updates" / "notes.txt").write_text("x", encoding="utf-8")
-
-    found = launcher.find_update()
-    assert found is not None
-    assert found[1] == "v1.2.0"
-    assert found[0].name == "xgame_v1.2.0.zip"
-
-
-def test_find_update_looks_next_to_the_package_too(launcher, tmp_path, monkeypatch):
-    """新包放在包目录旁边（很多人的习惯）也要能找到。"""
-    root = tmp_path / "xgame"
-    _write_package(root, "v1.0.0")
-    monkeypatch.setattr(launcher, "ROOT", root)
-    _touch_zip(tmp_path, "xgame_v3.1.4.zip")
-
-    found = launcher.find_update()
-    assert found is not None and found[1] == "v3.1.4"
+# ---------- 包内版本号 ----------
 
 
 def test_current_version_reads_package_file(launcher, tmp_path, monkeypatch):
@@ -201,7 +137,6 @@ def test_ini_template_parses_to_expected_defaults(launcher, monkeypatch):
     assert config.port == 8910
     assert config.host == "0.0.0.0"
     assert config.open_browser is True
-    assert config.auto_update is True
     assert config.data_dir == Path("/opt/xgame/data")
 
 

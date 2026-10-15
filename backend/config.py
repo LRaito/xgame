@@ -11,8 +11,8 @@
 `.env` 因此变成可选的：不建它，compose 就用这两个键的默认值。
 
 **例外是「解压即用」的 Windows 包**（`packaging/windows/`）：那条路线没有 nginx，由启动器
-（`launcher.py`）设几个环境变量再把 uvicorn 拉起来，所以多出来 `STATIC_DIR`、`LOCAL_CONTROL`
-等几个只会由启动器设置的字段。它们的默认值保证 Docker 路线行为一字不变。
+（`launcher.py`）设几个环境变量再把 uvicorn 拉起来，所以多出来 `STATIC_DIR`
+这种只会由启动器设置的字段。它们的默认值保证 Docker 路线行为一字不变。
 
 改配置就是改这个文件。
 """
@@ -91,12 +91,6 @@ class Settings(BaseSettings):
     # 默认取得比 nginx 的 128MB 宽松，是为了让「攻略 256MB 总量」这个应用层上限真正可达——
     # nginx 那条 128m 本来就和它对不上。Docker 路线上 nginx 先拦，这个值只是兜底。
     MAX_REQUEST_BODY_BYTES: int = 512 * 1024 * 1024
-
-    # 本地控制口（POST /api/local/shutdown，给包内自动升级脚本停服务用）。三重设防：
-    # 只在这两个字段到位时注册路由、只认来自 127.0.0.1/::1 的请求、且必须带对 token。
-    # Docker 路线永远不设，所以那条路线上这个接口根本不存在。
-    LOCAL_CONTROL: bool = False
-    LOCAL_CONTROL_TOKEN: str | None = None
 
     @property
     def database_path(self) -> Path:

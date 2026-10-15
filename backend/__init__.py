@@ -85,13 +85,10 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.include_router(game_settings_router)
     app.include_router(game_stats_router)
 
-    # 「解压即用」的 Windows 包专用，两条都靠环境变量开关，Docker 路线默认关闭：
-    # 静态站（没有 nginx 时由后端托管 dist）与本地控制口（升级脚本停服务）。
-    # 静态站是 catch-all 路由，必须注册在所有 API 路由之后。
-    from backend.local_control import mount_local_control
+    # 「解压即用」的 Windows 包专用，靠环境变量开关，Docker 路线默认关闭：
+    # 静态站（没有 nginx 时由后端托管 dist）。它是 catch-all 路由，必须注册在所有 API 路由之后。
     from backend.static_site import mount_static_site
 
     mount_static_site(app, settings)
-    mount_local_control(app, settings)
 
     return app

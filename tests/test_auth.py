@@ -225,14 +225,10 @@ def test_csrf_token_available(client):
 
 @pytest.mark.parametrize(
     "path",
-    ["/api/login", "/api/register", "/api/csrf", "/health", "/api/local/shutdown"],
+    ["/api/login", "/api/register", "/api/csrf", "/health"],
 )
 def test_csrf_exempt_paths(path):
-    """注册与登录在 CSRF 白名单里（登录页此时还没拿到 token）；其余写接口仍要校验。
-
-    本地关机口也在白名单里：调用方是包内的升级脚本而不是浏览器，拿不到 CSRF token，
-    它自带 token + 回环地址守卫（见 backend/local_control.py）。
-    """
+    """注册与登录在 CSRF 白名单里（登录页此时还没拿到 token）；其余写接口仍要校验。"""
     from starlette.requests import Request
 
     from backend.config import Settings

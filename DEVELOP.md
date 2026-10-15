@@ -29,7 +29,6 @@ backend/
   backup.py               # SQLite 月度备份
   mount_guard.py          # 启动前的数据根目录哨兵检查（数据根在 Windows 盘挂载路径下时缺 .mounted 就退出）
   static_site.py          # 可选：后端顺带托管前端 dist（只有 Windows 包设 STATIC_DIR 时生效）
-  local_control.py        # 可选：本机专用的关机口，给 Windows 包的升级脚本停服务用
   request_limit.py        # 请求体上限中间件，顶替 nginx 的 client_max_body_size
   entrypoint.sh           # api 容器的 ENTRYPOINT：先过哨兵检查，再 exec gunicorn
   database.py             # 引擎、建表、_ensure_columns() 补列（无迁移框架）
@@ -40,7 +39,7 @@ backend/
   games/remote.py         # 网络上传（http/https 直链）
   games/search_*.py       # 游戏检索：text（归一化，索引期与查询期共用）/ index（建库，唯一写入方：启动补建 + make index）/ service（只读查询）/ router
   search/csv/             # 游戏检索的 37 个中英文名录 CSV（纯数据，只被建索引读；随 backend/ 进 api 镜像）
-packaging/windows/        # 「解压即用」Windows 包：组装脚本 + 启动器 + 升级脚本 + 包内脚本与说明
+packaging/windows/        # 「解压即用」Windows 包：构建环境镜像 + 组装脚本 + 启动器 + 包内脚本与说明
 scripts/gen-certs.sh      # 重新生成自签名证书
 certs/                    # 证书，随仓库提交（cert.pem / cert.key）
 tests/                    # pytest
@@ -204,10 +203,10 @@ make win          # 1) 构建环境镜像没有就先建一次；2) 在容器里
 make win-image    # 只构建/更新那个构建环境镜像，不出包
 ```
 
-**整个组装在容器里跑，宿主机只要有 Docker**（不需要 node / python / curl / zip，换台机器也出同一个包）：
+**整个组装在容器里跑，宿主机只要有 Docker**（不需要 node / python / curl，换台机器也出同一个包）：
 
 - **构建环境镜像** = `packaging/windows/Dockerfile.build`：工具链（node / python / git / curl /
-  zip / rsync / Pillow）**加上所有能固定的依赖**，都预置在镜像的 `/opt/winbuild` 下——
+  rsync / Pillow）**加上所有能固定的依赖**，都预置在镜像的 `/opt/winbuild` 下——
   Windows 版 CPython（`runtime.env` 钉死 release + sha256）、包的 win_amd64 轮子
   （`requirements-win.txt`，传递依赖也一起冻住）、前端 `node_modules`（按 `package-lock.json` 装）、
   EmulatorJS 引擎资产（版本钉在 `fetch-emulatorjs.mjs` 的 `EJS_VERSION`）。
@@ -236,23 +235,26 @@ make win-image    # 只构建/更新那个构建环境镜像，不出包
 | 一个 tag 都没有，或不在 git 仓库里 | `v0.0.0-<时间戳>` |
 
 后一段取提交时间而不是构建时刻，有两个原因：同一个提交反复构建得到同一个号（否则每次重建都会
-让已经打开的页面平白弹一次「有新版本」），而且越靠后的提交数字越大——正好就是「谁更新」。
-比较时**先比 tag 部分、再比这串数字**（`packaging/windows/launcher.py` 的 `_version_key`
-把版本号拆成数字段做元组比较，短的更小，于是「tag 之后的构建」比 tag 本身新）。
+让已经打开的页面平白弹一次「有新版本」），而且越靠后的提交名字更大——一眼能看出谁更新。
 
-这个值进两处：前端构建期注入（侧栏标题后面显示，见 `frontend/src/constants/version.js`），
-以及 `web/version.txt`（已经打开的页面靠它探测更新）。想手动指定：`make win APP_VERSION=v9.9.9`。
+这个值进三处：前端构建期注入（侧栏标题后面显示，见 `frontend/src/constants/version.js`）、
+`web/version.txt`（已经打开的页面靠它探测更新）、以及 zip 的文件名。
+想手动指定：`make win APP_VERSION=v9.9.9`。
+
+**包里不做版本比较、也没有自动升级**：升级是手动三步（关窗口 → 解压新包 → 搬 `data`），
+所以「谁的版本号更大」由人看文件名判断就够了。见
+[`packaging/windows/README.md`](packaging/windows/README.md) 的「升级」。
 
 包里的东西与分工：
 
 | 文件 | 作用 |
 |---|---|
-| `python/` | python-build-standalone 的可重定位 CPython（release 与 sha256 钉死在构建脚本里） |
+| `python/` | python-build-standalone 的可重定位 CPython（release 与 sha256 钉死在 `runtime.env`） |
 | `backend/` `web/` | 后端源码与前端产物；静态站由后端托管（`backend/static_site.py`） |
-| `launcher.py` | 启动器：自检 → 查更新 → 进程内跑 uvicorn → 等 `/health` → 开浏览器 |
+| `launcher.py` | 启动器：自检 → 进程内跑 uvicorn → 等 `/health` → 开浏览器 |
 | `winops.py` | 桌面快捷方式 / 开机自启 / 解除 MOTW（都通过 PowerShell 调系统能力） |
-| `升级.bat` + `upgrade.ps1` | 自动升级：停服务 → 解压 → 搬数据 → 换目录 → 重启 |
-| `xgame.ini` | 数据目录、监听地址、端口、是否自动升级 |
+| `xgame.ini` | 数据目录、监听地址、端口、是否开浏览器 |
+| `version.txt` | 构建版本号（启动横幅上显示） |
 
 与 Docker 路线的差异，以及为什么这么选，见 [`packaging/windows/README.md`](packaging/windows/README.md)。
 关键几条：没有 nginx 于是后端自己托管前端（行为对着 `frontend/nginx.conf.template` 复刻，

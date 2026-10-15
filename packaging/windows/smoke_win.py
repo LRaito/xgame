@@ -31,7 +31,6 @@ REQUIRED_MODULES = [
     "click",
     "werkzeug",
     "backend.static_site",
-    "backend.local_control",
     "backend.games.search_index",
     "backend.asgi",
 ]
