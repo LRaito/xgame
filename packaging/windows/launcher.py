@@ -179,6 +179,32 @@ def check_data_dir(data_dir: Path) -> None:
         say("!" * 62)
 
 
+# ---------- 「来自 Internet」标记 ----------
+
+
+def still_locked() -> bool:
+    """包里那几个双击入口是否还带着「来自 Internet」标记（MOTW）。
+
+    带标记时，**每双击一次 `.cmd`/`.bat`**，Windows 都会先弹一次「打开文件 - 安全警告：
+    无法验证发布者」（点「运行」能继续，但每次都要点一次）。原因是这个 zip 从网上下载、
+    被浏览器打了标记，解压工具又把标记复制给里面每一个文件——用户在解压**之前**右键 zip
+    勾了「解除锁定」就不会这样。
+
+    这件事只能提醒、不能替用户做：清标记要跑 PowerShell，而任何一个包内脚本自己就是
+    被弹窗拦的那个。见 说明.txt 第一节与「解除锁定.bat」。
+    """
+    if os.name != "nt":
+        return False
+    for name in ("启动游戏平台.cmd", "解除锁定.bat"):
+        try:
+            # NTFS 备用数据流：带标记的文件都有它，没有就抛 FileNotFoundError
+            os.stat(f"{ROOT / name}:Zone.Identifier")
+        except OSError:
+            continue
+        return True
+    return False
+
+
 # ---------- 版本 ----------
 
 
@@ -464,6 +490,11 @@ def main(argv: list[str] | None = None) -> int:
     check_runtime()
     check_data_dir(config.data_dir)
     setup_logging(config.data_dir)
+
+    if still_locked():
+        say()
+        say("提示：这一份还带着「来自 Internet」标记，双击 .bat / .cmd 时 Windows 会先弹一次")
+        say("      「无法验证发布者」。双击一次「解除锁定.bat」（只需一次）以后就不再弹了。")
 
     # 先确认没有第二个实例在跑。双击第二次不该起第二个服务（除了白占资源，两个进程打开
     # 同一个 SQLite 更容易出事）：这里只把地址告诉用户、顺手把浏览器打开。

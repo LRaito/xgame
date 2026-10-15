@@ -431,6 +431,13 @@ Alpine（musl）**，才能让容器里装的前端依赖（rolldown 之类是�
 是乱码与解析出错的经典来源），面向用户的中文一律由 Python 或 PowerShell 输出；`.ps1` 存成
 **UTF-8 带 BOM**（否则 PowerShell 5.1 按 ANSI 读，中文乱码）；`说明.txt` 也带 BOM（记事本）。
 
+**「来自 Internet」标记（MOTW）**：从网上下载的 zip 解压出来的每个文件都带它，于是**每双击
+一次 `.cmd`/`.bat`**，Windows 都先弹一次「打开文件 - 安全警告：无法验证发布者」（点「运行」
+能继续，所以不致命，但每次都得点）。没有代码签名、没有安装程序就绕不过去——只能让用户
+**解压之前**右键 zip 勾「解除锁定」（`说明.txt` 第一节第 1 步），或者解压后跑一次
+`解除锁定.bat` 补上。启动器 `still_locked()` 启动时探一下自己那几个 `.cmd` 的
+`:Zone.Identifier` 数据流，还在就提醒一句。
+
 ## 实现时要生成的配置文件
 
 - `.env.example` — 全部键（只有 `STORAGE_HOST_DIR` 与 `WEB_HTTPS_PORT`）、默认值、**中文注释**

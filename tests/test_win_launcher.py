@@ -7,6 +7,7 @@
 
 import configparser
 import importlib.util
+import os
 import re
 import subprocess
 from pathlib import Path
@@ -88,6 +89,15 @@ def test_runtime_env_pins_one_consistent_runtime():
     assert env["PBS_ASSET"].endswith(".tar.gz")
     assert env["PBS_URL"].endswith(f"/{env['PBS_RELEASE']}/{env['PBS_ASSET']}")
     assert re.fullmatch(r"[0-9a-f]{64}", env["PBS_SHA256"])
+
+
+# ---------- 「来自 Internet」标记 ----------
+
+
+def test_still_locked_is_windows_only(launcher):
+    """非 Windows 上直接返回 False：那里没有 NTFS 数据流，也不该去 stat 带冒号的路径。"""
+    if os.name != "nt":
+        assert launcher.still_locked() is False
 
 
 # ---------- 包内版本号 ----------
