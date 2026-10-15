@@ -28,6 +28,9 @@ backend/
   asgi.py                 # 生产 ASGI 入口（gunicorn 用）
   backup.py               # SQLite 月度备份
   mount_guard.py          # 启动前的数据根目录哨兵检查（数据根在 Windows 盘挂载路径下时缺 .mounted 就退出）
+  static_site.py          # 可选：后端顺带托管前端 dist（只有 Windows 包设 STATIC_DIR 时生效）
+  local_control.py        # 可选：本机专用的关机口，给 Windows 包的升级脚本停服务用
+  request_limit.py        # 请求体上限中间件，顶替 nginx 的 client_max_body_size
   entrypoint.sh           # api 容器的 ENTRYPOINT：先过哨兵检查，再 exec gunicorn
   database.py             # 引擎、建表、_ensure_columns() 补列（无迁移框架）
   storage/                # types（协议）/ local（LocalStorage）/ access（流式下载响应）
@@ -37,6 +40,7 @@ backend/
   games/remote.py         # 网络上传（http/https 直链）
   games/search_*.py       # 游戏检索：text（归一化，索引期与查询期共用）/ index（建库，唯一写入方：启动补建 + make index）/ service（只读查询）/ router
   search/csv/             # 游戏检索的 37 个中英文名录 CSV（纯数据，只被建索引读；随 backend/ 进 api 镜像）
+packaging/windows/        # 「解压即用」Windows 包：组装脚本 + 启动器 + 升级脚本 + 包内脚本与说明
 scripts/gen-certs.sh      # 重新生成自签名证书
 certs/                    # 证书，随仓库提交（cert.pem / cert.key）
 tests/                    # pytest
@@ -190,6 +194,47 @@ docker compose restart web
 
 改完证书浏览器仍可能缓存旧的那张，必要时清一下站点数据或换个标签页。
 
+## Windows 解压即用包
+
+除了 Docker，还能打成一份「解压就能玩」的 Windows 包：不用装 Python、不用装 Docker、
+不需要管理员权限，双击 `启动游戏平台.cmd` 就在浏览器里跑起来，局域网里手机/平板也能连。
+
+```bash
+make win        # = bash packaging/windows/build-win-dist.sh
+# 产物：dist-win/xgame_v<最新 tag>.zip（解压出来是 xgame/ 目录）
+```
+
+**整个组装都在 WSL 里完成，不需要 Windows 机器**。首次构建要联网（npm 依赖、
+EmulatorJS 引擎资产、Windows 版 Python），之后会走缓存。构建完会自动跑一次自检
+（`smoke_win.py`，借 WSL interop 直接执行包里那份 `python.exe`），验证 FTS5、依赖、
+没有混进 gunicorn/uvloop、MSVC 运行库在位。
+
+包里的东西与分工：
+
+| 文件 | 作用 |
+|---|---|
+| `python/` | python-build-standalone 的可重定位 CPython（release 与 sha256 钉死在构建脚本里） |
+| `backend/` `web/` | 后端源码与前端产物；静态站由后端托管（`backend/static_site.py`） |
+| `launcher.py` | 启动器：自检 → 查更新 → 进程内跑 uvicorn → 等 `/health` → 开浏览器 |
+| `winops.py` | 桌面快捷方式 / 开机自启 / 解除 MOTW（都通过 PowerShell 调系统能力） |
+| `升级.bat` + `upgrade.ps1` | 自动升级：停服务 → 解压 → 搬数据 → 换目录 → 重启 |
+| `xgame.ini` | 数据目录、监听地址、端口、是否自动升级 |
+
+与 Docker 路线的差异，以及为什么这么选，见 [`packaging/windows/README.md`](packaging/windows/README.md)。
+关键几条：没有 nginx 于是后端自己托管前端（行为对着 `frontend/nginx.conf.template` 复刻，
+有 `tests/test_static_site.py` 钉住）；没有 gunicorn 于是单进程 uvicorn；局域网走 http
+于是启动器把 `SESSION_COOKIE_SECURE` 设成 false；nginx 的 `client_max_body_size` 由
+`backend/request_limit.py` 顶上。
+
+### 本机直跑一份「生产形态」（排查用）
+
+```bash
+STORAGE_ROOT=/tmp/x STATIC_DIR=frontend/dist python -m backend.cli serve --port 8910
+# 或者：python -m backend.cli serve --static-dir frontend/dist --storage-root /tmp/x
+```
+
+不设 `STATIC_DIR` 时后端一条静态路由都不注册，Docker 路线行为不变。
+
 ## 数据与磁盘布局
 
 数据根目录（`STORAGE_ROOT`）里的一切都是普通文件，**没有任何对象存储、也没有 docker 具名卷**：
@@ -306,6 +351,16 @@ Docker 守护进程可能先于 WSL 发行版起来，bind 把宿主的空目录
 （如 `8443`），然后用 `https://localhost:8443` 访问。
 
 **浏览器的证书警告。** 自签名证书的正常表现，见上面「证书」。
+
+**用网盘备份数据目录时，报「SQLite 文件复制失败 / 文件被占用」。** 数据目录挂在 WSL 下的
+Windows 盘（`/mnt/x/…`）、而 api 容器一直开着 `<根>/db/app.db` 时，Windows 侧的网盘客户端拷不动
+这个被占用的文件，于是备份任务报错。**不影响数据安全**：每月会自动往同一个 `db/` 里备一份
+`<年>-<月>.db`，那份写完就不再变，网盘能正常备份走，元数据一直有兜底。非要拷最新的 `app.db`，
+先 `docker compose stop api`，拷完再 `docker compose start api`。
+
+**卡片封面在 GBC / GBA 上画法不统一（已知不足）。** 卡片封面按游戏类型分支渲染：GB/GBC 有整张
+卡带素材（`gbc-cart.png`），封面要按贴纸窗的像素几何合成进去；GBA 没有对应的卡带素材，只能落到
+「普通封面」那条分支，于是两者的观感与代码路径都不一样。后续给 GBA 补一张卡带素材统一画法。
 
 ## 文档索引
 

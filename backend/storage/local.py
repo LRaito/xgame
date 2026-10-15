@@ -1,6 +1,8 @@
 import mimetypes
 import os
 import shutil
+import stat
+import sys
 import uuid
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
@@ -10,6 +12,32 @@ from backend.storage.types import StoredObject, StoredObjectStream
 
 _CHUNK_SIZE = 256 * 1024
 _DEFAULT_MIME = "application/octet-stream"
+
+
+def _rmtree(path: Path) -> None:
+    """递归删除目录，并处理 Windows 的「只读文件删不掉」。
+
+    Windows 上带只读属性的文件 `os.unlink` 会直接失败（POSIX 只看父目录的写权限，不看文件
+    自己的位），这里在失败时去掉只读位再试一次。`onerror` 在 3.12 起标记为过时、改名 `onexc`，
+    两者回调签名只差一个参数，所以同一个函数能同时喂给它们。
+    """
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_retry_without_readonly)
+    else:
+        shutil.rmtree(path, onerror=_retry_without_readonly)
+
+
+def _retry_without_readonly(func, path, *_exc) -> None:
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _remove_tree_quietly(path: Path) -> None:
+    """尽力删除（挪开的旧目录用）：删不掉就算了，反正它已经不在使用中。"""
+    try:
+        _rmtree(path)
+    except OSError:
+        pass
 
 
 class LocalStorage:
@@ -130,7 +158,7 @@ class LocalStorage:
                 os.replace(stale, target)  # 尽力还原旧目录
             raise StorageError("移动目录失败，请检查存储目录权限。") from exc
         if stale is not None:
-            shutil.rmtree(stale, ignore_errors=True)
+            _remove_tree_quietly(stale)
         return True
 
     def remove_tree(self, key: str) -> None:
@@ -139,7 +167,7 @@ class LocalStorage:
         if not path.exists():
             return
         try:
-            shutil.rmtree(path)
+            _rmtree(path)
         except OSError as exc:
             raise StorageError("删除目录失败，请检查存储目录权限。") from exc
 
@@ -168,7 +196,7 @@ class LocalStorage:
                 os.replace(stale, target)  # 尽力还原旧目录
             raise StorageError("替换目录失败，请检查存储目录权限。") from exc
         if stale is not None:
-            shutil.rmtree(stale, ignore_errors=True)
+            _remove_tree_quietly(stale)
 
     def _resolve(self, key: str) -> Path:
         parts = PurePosixPath(self._normalize(key)).parts

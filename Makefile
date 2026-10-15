@@ -1,4 +1,4 @@
-.PHONY: all build up certs test index
+.PHONY: all build up certs test index win
 
 COMPOSE ?= docker compose
 
@@ -39,6 +39,11 @@ all: build up
 test:
 	python3 -m pytest $(ARGS)
 	cd frontend && npm run lint
+
+# 组装 Windows「解压即用」包：产物 dist-win/xgame_v<最新 tag>.zip，解压后双击即玩。
+# 整个组装在 WSL 里完成，不需要 Windows 机器；首次构建要联网（见 packaging/windows/README.md）。
+win:
+	bash packaging/windows/build-win-dist.sh
 
 # 构建「游戏检索」用的索引库（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。
 # 服务启动时若发现索引不存在，会自动补建一次；这个 target 用于手动重建/更新（换了名录之后）。

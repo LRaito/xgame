@@ -6,9 +6,13 @@
 - `STORAGE_HOST_DIR`：宿主侧数据目录，compose 把它挂到容器的 `/data`；
 - `WEB_HTTPS_PORT`：对外发布的 HTTPS 端口。
 
-后端自己只认一个环境变量 `STORAGE_ROOT`（容器里由 `backend/Dockerfile` 固定成 `/data`，
-本机直接跑 uvicorn 时退化成仓库下的 `data/storage`）。测试用临时目录覆盖它。
+后端自己认的环境变量只有下面 `Settings` 里那几个（容器里 `STORAGE_ROOT` 由 `backend/Dockerfile`
+固定成 `/data`，本机直接跑 uvicorn 时退化成仓库下的 `data/storage`）。测试用临时目录覆盖它。
 `.env` 因此变成可选的：不建它，compose 就用这两个键的默认值。
+
+**例外是「解压即用」的 Windows 包**（`packaging/windows/`）：那条路线没有 nginx，由启动器
+（`launcher.py`）设几个环境变量再把 uvicorn 拉起来，所以多出来 `STATIC_DIR`、`LOCAL_CONTROL`
+等几个只会由启动器设置的字段。它们的默认值保证 Docker 路线行为一字不变。
 
 改配置就是改这个文件。
 """
@@ -23,9 +27,6 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # session cookie 的签名密钥，写死在这里。改它会让所有已登录会话失效。
 # 这是个人自托管平台，密钥跟仓库一起走，不从环境变量读、也不做轮换。
 SECRET_KEY = "7DRuoN-aQgNE7vuHsHQ-UGXt2RleZFT2gRJrjKzTtNv9wRuB9CthMDMpPz5M_3hWQOzOadOnupsUW3kpO5Mp7Q"
-
-# 固定应用配置（按需改代码）
-SESSION_COOKIE_SECURE = True
 
 # 日志格式：`create_app()` 与启动前的哨兵检查（`backend/mount_guard.py`）各配一次日志，
 # 后者跑在入口脚本里、早于 `create_app()`，所以两处共用这一个常量。
@@ -64,6 +65,12 @@ class Settings(BaseSettings):
     SESSION_COOKIE_HTTPONLY: bool = True
     SESSION_COOKIE_SAMESITE: str = "lax"
 
+    # session cookie 的 Secure 标记。Docker 路线全程 HTTPS，必须是 True。
+    # 「解压即用」的 Windows 包走 http（局域网里手机/平板也要能连，自签证书对它们等于没有），
+    # 此时必须由启动器设成 False，否则浏览器根本不保存这个 cookie——症状是「登录看着成功、
+    # 下一个请求就 401、在登录页来回跳」。
+    SESSION_COOKIE_SECURE: bool = True
+
     # 项目文件根目录：游戏本体/封面/H5 资源/攻略、云端存档、截图与 SQLite 库都在它下面。
     # 容器里由 backend/Dockerfile 固定为 /data，宿主目录经 compose 挂到该路径。
     STORAGE_ROOT: str = default_storage_root()
@@ -74,6 +81,23 @@ class Settings(BaseSettings):
     # 业务代码不读它，`.env` 文件本身后端仍然不读。
     STORAGE_HOST_DIR: str | None = None
 
+    # 前端构建产物（dist）的目录。**只有「解压即用」的 Windows 包会设它**：那条路线没有 nginx，
+    # 由后端顺带托管静态站（见 backend/static_site.py）。为空时一条静态路由都不注册，Docker
+    # 路线（nginx 托管）行为完全不变。
+    STATIC_DIR: str | None = None
+
+    # 请求体上限，替代 nginx 的 client_max_body_size（撤掉 nginx 后没有任何全局闸门：
+    # Starlette 的 max_part_size 只管非文件字段，文件部分是不设上限的）。
+    # 默认取得比 nginx 的 128MB 宽松，是为了让「攻略 256MB 总量」这个应用层上限真正可达——
+    # nginx 那条 128m 本来就和它对不上。Docker 路线上 nginx 先拦，这个值只是兜底。
+    MAX_REQUEST_BODY_BYTES: int = 512 * 1024 * 1024
+
+    # 本地控制口（POST /api/local/shutdown，给包内自动升级脚本停服务用）。三重设防：
+    # 只在这两个字段到位时注册路由、只认来自 127.0.0.1/::1 的请求、且必须带对 token。
+    # Docker 路线永远不设，所以那条路线上这个接口根本不存在。
+    LOCAL_CONTROL: bool = False
+    LOCAL_CONTROL_TOKEN: str | None = None
+
     @property
     def database_path(self) -> Path:
         """SQLite 文件路径：根路径/db/app.db。"""
@@ -81,7 +105,10 @@ class Settings(BaseSettings):
 
     @property
     def database_url(self) -> str:
-        return f"sqlite:///{self.database_path}"
+        # 用 as_posix()：Windows 下 str(Path) 是反斜杠，且路径里出现 `#` `?` `%` 时会被当成
+        # URL 的一部分解析坏掉。检索索引那边（search_service.py）早就用 as_uri() 绕这个坑了，
+        # 这里取同样的原则。
+        return f"sqlite:///{self.database_path.as_posix()}"
 
     @property
     def game_index_path(self) -> Path:

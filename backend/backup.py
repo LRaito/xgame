@@ -24,9 +24,9 @@ def monthly_backup_path(db_path: Path, moment: datetime) -> Path:
 def backup_database(settings: Settings, *, now: datetime | None = None) -> Path | None:
     """当月还没备份过就备一份，返回备份文件路径；已有（或不是文件型 SQLite）返回 None。
 
-    用 sqlite3 的 backup API 而不是拷文件：库在 WAL 模式下随时可能被写，直接拷 `app.db`
-    会拿到撕裂、或落后于 `-wal` 的副本。备份先写 `.tmp` 再改名，中途失败不会留下一个
-    半截的同名文件挡着后面几个月的备份。
+    用 sqlite3 的 backup API 而不是拷文件：服务一直在跑、随时可能有人写入，直接拷 `app.db`
+    会拿到撕裂的副本（哪怕没开 WAL，写到一半的页也会被拷进去）。备份先写 `.tmp` 再改名，
+    中途失败不会留下一个半截的同名文件挡着后面几个月的备份。
     """
     source = settings.database_path
     if not source.is_file():

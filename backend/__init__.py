@@ -7,12 +7,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth.router import router as auth_router
 from backend.backup import backup_database
-from backend.config import (
-    LOG_FORMAT,
-    SECRET_KEY,
-    SESSION_COOKIE_SECURE,
-    settings_from_overrides,
-)
+from backend.config import LOG_FORMAT, SECRET_KEY, settings_from_overrides
 from backend.csrf import CSRFMiddleware
 from backend.database import ensure_data_dir, init_db, make_engine
 from backend.games.gallery_router import router as game_gallery_router
@@ -25,6 +20,7 @@ from backend.games.settings_router import router as game_settings_router
 from backend.games.stats_router import router as game_stats_router
 from backend.http import json_err
 from backend.mount_guard import require_mounted
+from backend.request_limit import RequestBodyLimitMiddleware
 from backend.storage.local import LocalStorage
 from backend.tools.router import router as tools_router
 
@@ -64,9 +60,12 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.add_middleware(
         SessionMiddleware,
         secret_key=SECRET_KEY,
-        https_only=SESSION_COOKIE_SECURE and not settings.TESTING,
+        https_only=settings.SESSION_COOKIE_SECURE and not settings.TESTING,
         same_site=settings.SESSION_COOKIE_SAMESITE,
     )
+    # 顶替 nginx 的 client_max_body_size（见 backend/request_limit.py）：Docker 路线上 nginx 先拦，
+    # 这里只是兜底；「解压即用」的 Windows 包没有 nginx，就靠它当唯一的全局上传闸门。
+    app.add_middleware(RequestBodyLimitMiddleware, max_bytes=settings.MAX_REQUEST_BODY_BYTES)
 
     @app.exception_handler(HTTPException)
     async def handle_http_exception(_request, exc: HTTPException):
@@ -85,5 +84,14 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.include_router(game_gallery_router)
     app.include_router(game_settings_router)
     app.include_router(game_stats_router)
+
+    # 「解压即用」的 Windows 包专用，两条都靠环境变量开关，Docker 路线默认关闭：
+    # 静态站（没有 nginx 时由后端托管 dist）与本地控制口（升级脚本停服务）。
+    # 静态站是 catch-all 路由，必须注册在所有 API 路由之后。
+    from backend.local_control import mount_local_control
+    from backend.static_site import mount_static_site
+
+    mount_static_site(app, settings)
+    mount_local_control(app, settings)
 
     return app

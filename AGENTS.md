@@ -8,6 +8,9 @@
 
 前后端分离已落地：Vue 3 SPA + FastAPI JSON API。只做游戏：游戏中心（Flash + HTML5 + 8/16-bit 主机 ROM，浏览器内 Ruffle/EmulatorJS/沙箱 iframe 游玩，Flash 与模拟器都支持按账号云端存档，H5 仅游玩）、游戏管理与游戏检索（外部中英文名录的只读全文检索）。SQLite 与文件存储结构以 `docs/data_dict.md` 为 schema 权威。实现时以本文件「目标约定」为准。
 
+两条交付路线并存：Docker（正式运行，nginx + gunicorn + HTTPS）与「解压即用」的 Windows 包
+（`packaging/windows/`，后端自己托管前端 + 单进程 uvicorn + http，见下面那一节）。
+
 若用户请求会违反本文件（不做 Docker、用 React 替换已选定的 Vue、把游戏文件整读进内存再中转），先停下来说明冲突，再写代码。
 
 ---
@@ -124,7 +127,10 @@ backend/backup.py            # 启动时的 SQLite 月度备份（当月一份�
 backend/mount_guard.py       # 启动前的数据根目录哨兵检查（数据根在 Windows 盘挂载前缀下时才查：缺 .mounted 就打日志、等 5 秒、退出）
 backend/deps.py              # 依赖注入：session、登录态、各 service 依赖
 backend/csrf.py              # CSRF 中间件
-backend/cli.py               # init-db / index（构建游戏检索索引）
+backend/cli.py               # init-db / index（构建游戏检索索引）/ serve（本机直跑生产形态，可选托管前端）
+backend/static_site.py       # 可选：后端托管前端 dist（只有 Windows 包设 STATIC_DIR 时生效，行为对齐 nginx.conf.template）
+backend/local_control.py     # 可选：本机专用关机口 POST /api/local/shutdown（Windows 包的升级脚本用）
+backend/request_limit.py     # 请求体上限中间件（顶替 nginx 的 client_max_body_size）
 backend/entrypoint.sh        # api 容器的 ENTRYPOINT：先过哨兵检查，再 exec CMD 里的 gunicorn
 backend/Dockerfile           # api 镜像（ENV STORAGE_ROOT=/data + ENTRYPOINT entrypoint.sh + gunicorn）
 backend/auth/                # 注册/登录/退出（密码 + 失败锁定）
@@ -132,7 +138,11 @@ backend/tools/registry.py    # 功能列表（给 /api/tools）
 backend/games/               # 游戏 router/service/paths + 云端存档 save_* + 游戏截图 screenshot_* + 游戏图集 gallery_* + 模拟器设置 settings_* + 游玩统计 stats_* + 检索 search_*(text/index/service/router) + 搬运 importer + 网络上传 remote
 backend/search/csv/          # 游戏检索的 37 个中英文名录 CSV（纯数据目录，只被建索引读；随 backend/ 进 api 镜像）
 backend/storage/             # 跨模块：types(协议与 StoredObject) / local(LocalStorage) / access(流式下载响应)
-tests/                       # pytest（test_auth / test_backup / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats / game_search）
+packaging/windows/           # 「解压即用」Windows 包：build-win-dist.sh（组装）+ launcher.py（启动器）+ winops.py（外壳操作）
+                             #   + upgrade.ps1/升级.bat（自动升级）+ allow-lan.ps1/允许局域网访问.bat + 启动游戏平台.cmd
+                             #   + smoke_win.py（自检）+ requirements-win.txt + 说明.txt + README.md
+                             #   + xgame.png（快捷方式图标的源图，随仓库提交；换图标 = 替换它再跑 make_icon.py 生成 xgame.ico）
+tests/                       # pytest（test_auth / test_backup / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats / game_search / static_site / request_limit / local_control / win_launcher）
 docker-compose.yml           # web + api（宿主数据根目录 bind：STORAGE_HOST_DIR → /data）
 requirements.txt
 .env.example
@@ -365,6 +375,44 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 本地开发：`uvicorn backend.asgi:app --reload --port 8910` + `cd frontend && npm run dev`。本机数据根默认是仓库下的 `data/storage`，不在 `/mnt` 下、**不需要哨兵文件**；只有你把数据根指到 WSL 的 Windows 盘（如 `STORAGE_ROOT=/mnt/x/xgame`）时才要先 `touch /mnt/x/xgame/.mounted`，否则 uvicorn 起来就打一条日志、等 5 秒退出。测试不受影响（`TESTING` 下跳过检查）。
 
 **游戏检索要先建索引**：在项目根目录跑一次 `make index`，它会在 `<数据根>/db/game.db` 生成只读名录索引（可重复执行、直接覆盖）。没建时页面会提示、接口返回 `indexed:false`，不会报错。数据根若是 Docker 以 root 建的（默认 `./data/storage` 跑过一次 compose 之后就是），先 `sudo chown -R "$USER" ./data/storage`——`make index` 也会自己提示这一步。
+
+## Windows 解压即用包（第二条交付路线，与 Docker 并存）
+
+Docker 是正式运行方式；「解压即用」包是给**一台 Windows、用户不懂命令行**的场景。两者
+**数据格式完全一致**（同一份数据目录两边都能读），但**绝不允同时打开同一份数据目录**：
+Windows 侧与 WSL/容器侧的文件锁互相看不见，同时写就是坏库。
+
+```bash
+make win        # = bash packaging/windows/build-win-dist.sh
+# 产物 dist-win/xgame_v<最新 git tag>.zip，解压出来是 xgame/ 目录，双击「启动游戏平台.cmd」
+```
+
+**组装全部在 WSL/Linux 完成**（前端产物平台无关；Windows 版 Python 与依赖轮子都在 Linux 上下载），
+不需要 Windows 机器。运行时是 python-build-standalone 的可重定位 CPython，**release 与 sha256
+钉死在 `build-win-dist.sh` 顶部**（唯一的供应链入口，升级时三个值一起改）。
+
+这条路线与 Docker 的差异，逐条都是被逼的，改动时要一起考虑：
+
+- **没有 nginx**：前端 dist 由后端托管（`backend/static_site.py`），**只在 `STATIC_DIR` 非空时注册**，
+  Docker 路线一条静态路由都没有。它的行为规范是 `frontend/nginx.conf.template`，七条语义
+  （SPA 回落、`/version.txt` 缺失即 404、三个 immutable 前缀未命中即 404、两个入口文件 no-cache、
+  **MIME 用显式表不用 `mimetypes`**、路径安全）由 `tests/test_static_site.py` 钉住。
+  改 nginx 配置时**必须同步改这个模块**。
+- **没有 gunicorn**：Windows 上跑不了（依赖 fork/fcntl），改单进程 uvicorn，由启动器**进程内**跑
+  （不起子进程：Windows 上 terminate 是硬杀，SQLite 会留在半路）。`--workers 1` 的语义靠单进程满足。
+- **走 http 不走 https**：局域网里手机/平板不会信任自签证书。但 session cookie 默认带 `Secure`
+  （`SESSION_COOKIE_SECURE`），http 下浏览器不保存它、登录会静默失效，所以启动器把它设成 false。
+- **没有 `client_max_body_size`**：`backend/request_limit.py` 顶上（超限 413、分块传输 411），
+  两条路线都挂，Docker 上 nginx 先拦。
+- **多一个本地控制口**：`POST /api/local/shutdown`（`backend/local_control.py`），给升级脚本停服务用。
+  三重设防：`LOCAL_CONTROL` 开关、只认回环地址、`X-XGame-Token` 常量时间比较；Docker 路线不注册。
+- **升级是包内的**：`升级.bat` + `upgrade.ps1` 把新 zip 换上，**数据目录原地不动**。
+  脚本必须复制到 `%TEMP%` 再执行（它要改名整个 `xgame` 目录，而 Windows 不允许改名含已打开
+  文件的目录），也必须先让服务优雅退出再动文件。
+
+包内脚本的编码约定：`.cmd`/`.bat` **内容纯 ASCII**（cmd 按 OEM 代码页解析批处理，中文混进去
+是乱码与解析出错的经典来源），面向用户的中文一律由 Python 或 PowerShell 输出；`.ps1` 存成
+**UTF-8 带 BOM**（否则 PowerShell 5.1 按 ANSI 读，中文乱码）；`说明.txt` 也带 BOM（记事本）。
 
 ## 实现时要生成的配置文件
 

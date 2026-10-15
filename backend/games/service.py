@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import tempfile
 import unicodedata
@@ -118,6 +119,14 @@ _H5_MAX_RATIO = 200
 _H5_RATIO_MIN_SIZE = 1024 * 1024
 _ASSET_MAX_PATH_LENGTH = 512
 _ASSET_MAX_PATH_SEGMENTS = 32
+
+# 当前平台是不是 Windows。写成模块级变量而不是到处 os.name，是为了让测试能翻它——
+# 「解压即用」的 Windows 包跑在 Windows 上，而测试跑在 Linux 上，不翻就永远测不到那条分支。
+_IS_WINDOWS = os.name == "nt"
+
+# Windows 的完整路径上限是 260（MAX_PATH）。这里留出余量：写盘时同目录会先落一个
+# `.{文件名}.tmp-{8位随机}` 的临时文件（比最终名字长），H5 解包还有 `.h5-{12位}` 暂存目录。
+_WINDOWS_PATH_BUDGET = 240
 _H5_SKIP_NAMES = frozenset({"__MACOSX", ".DS_Store"})
 _ASSET_DEFAULT_MIME = "application/octet-stream"
 
@@ -221,6 +230,9 @@ _WINDOWS_RESERVED_NAMES = frozenset(
     | {f"COM{i}" for i in range(10)}
     | {f"LPT{i}" for i in range(10)}
 )
+# 包内路径（H5/攻略）用的非法字符集：与游戏名同一套，但去掉两个路径分隔符——
+# `\` 由路径校验单独拒掉，`/` 是分隔符本身、每段都有。
+_ASSET_ILLEGAL_CHARS = _NAME_ILLEGAL_CHARS - {"/", "\\"}
 
 
 _CARTRIDGE_ID_RE = re.compile(CARTRIDGE_ID_PATTERN)
@@ -326,6 +338,13 @@ def _normalize_asset_path(raw: str, *, where: str) -> str:
         raise ValidationError(f"{where}含非法路径（控制字符）。")
     if any(ch in text for ch in "?#%"):
         raise ValidationError(f"{where}含非法路径（? # %）。")
+    # 与游戏名同一套 Windows 规则：ZIP 里这些字符完全合法，解到 NTFS 上却会直接抛异常
+    # （`a:b.png` 会被当成数据流、`x?.png` 干脆建不出来），解包到一半失败最难排查。
+    # 刻意不分平台：在 Linux 上也一并拒掉，同一个包在哪都能用。
+    # 去掉两个路径分隔符：`\` 上面已经单独拒过，`/` 是包内路径的分隔符本身。
+    illegal = sorted({ch for ch in text if ch in _ASSET_ILLEGAL_CHARS})
+    if illegal:
+        raise ValidationError(f"{where}含非法路径（{' '.join(illegal)}）。")
     posix = PurePosixPath(text)
     if posix.is_absolute():
         raise ValidationError(f"{where}含绝对路径。")
@@ -337,7 +356,51 @@ def _normalize_asset_path(raw: str, *, where: str) -> str:
         raise ValidationError(f"{where}含非法路径。")
     if len(normalized) > _ASSET_MAX_PATH_LENGTH or len(parts) > _ASSET_MAX_PATH_SEGMENTS:
         raise ValidationError(f"{where}含过长路径。")
+    for part in parts:
+        # Windows 会静默丢掉结尾的点和空格，留着会让「库里的名字」与「磁盘上的名字」对不上
+        if part.endswith(".") or part.endswith(" "):
+            raise ValidationError(f"{where}含非法路径（名字以点或空格结尾）。")
+        if part.split(".", 1)[0].strip().upper() in _WINDOWS_RESERVED_NAMES:
+            raise ValidationError(f"{where}含 Windows 保留设备名。")
     return normalized
+
+
+def _ensure_path_fits(root: str | None, relative: str, *, where: str) -> None:
+    """在 Windows 上卡一下「数据根 + 相对路径」的总长度。
+
+    `_ASSET_MAX_PATH_LENGTH`（512）是**相对**上限，保证不了叠加数据根前缀之后仍在 260 以内。
+    超限的后果不是一条干净的报错，而是解包写到一半失败、或者后面某次读文件莫名「找不到」，
+    所以在收下之前按实际的数据根长度算一遍。其它平台没有这个上限，直接放行。
+    """
+    if not _IS_WINDOWS or not root:
+        return
+    if len(os.path.join(root, relative)) > _WINDOWS_PATH_BUDGET:
+        raise ValidationError(
+            f"{where}存在过长的路径：Windows 下完整路径不能超过 {_WINDOWS_PATH_BUDGET} 个字符，"
+            "请把数据目录放到更浅的位置（如 D:\\xgame），或减少包内的目录层级。"
+        )
+
+
+def _zip_entry_name(info: zipfile.ZipInfo) -> str:
+    """ZIP 条目名，尽量还原成原本的样子。
+
+    `zipfile` 只在条目带了 UTF-8 标志位（`0x800`）时才按 UTF-8 解码，否则一律按 cp437。
+    用资源管理器或老压缩工具打出来的中文包多半是 GBK 且不带那个标志位，于是解出来是一串乱码
+    ——不报错，但文件名全错。这里按 cp437 把原始字节还原回来再试常见编码。
+    """
+    name = info.filename
+    if info.flag_bits & 0x800:
+        return name
+    try:
+        raw = name.encode("cp437")
+    except UnicodeEncodeError:
+        return name
+    for codec in ("gbk", "utf-8"):
+        try:
+            return raw.decode(codec)
+        except UnicodeDecodeError:
+            continue
+    return name
 
 
 def _h5_skip_entry(name: str) -> bool:
@@ -487,6 +550,15 @@ class GameService:
     def __init__(self, session: Session, storage: StorageBackend) -> None:
         self._session = session
         self._storage = storage
+
+    def _storage_root(self) -> str | None:
+        """数据根的绝对路径，只用来算 Windows 的完整路径长度（见 `_ensure_path_fits`）。
+
+        `StorageBackend` 协议没有 `root` 这一项（远端实现未必要落到本地目录），所以取不到就
+        返回 None、跳过长度检查——宁可少一道检查，也不要为一个可选能力把协议撑大。
+        """
+        root = getattr(self._storage, "root", None)
+        return str(root) if root is not None else None
 
     def list_center(self) -> list[GameItem]:
         rows = self._session.exec(
@@ -1024,6 +1096,11 @@ class GameService:
         has_entry = False
         for upload in uploads:
             path = normalize_guide_path(upload.path)
+            _ensure_path_fits(
+                self._storage_root(),
+                paths.guide_asset_path(row.game_type, row.cartridge_id, path),
+                where="攻略内",
+            )
             if path.lower() in _GUIDE_ENTRY_NAMES:
                 # 大小写不敏感识别入口，落盘统一成小写，入口地址才固定
                 path = GUIDE_ENTRY_PATH
@@ -1159,11 +1236,12 @@ class GameService:
         total = 0
         with archive:
             for info in archive.infolist():
-                if info.is_dir() or _h5_skip_entry(info.filename):
+                name = _zip_entry_name(info)
+                if info.is_dir() or _h5_skip_entry(name):
                     continue
                 if info.flag_bits & 0x1:
                     raise ValidationError("压缩包包含加密文件，无法解包。")
-                normalized = normalize_h5_path(info.filename)
+                normalized = normalize_h5_path(name)
                 size = int(info.file_size)
                 if size > _H5_MAX_ENTRY_SIZE:
                     raise ValidationError("压缩包内单个文件过大。")
@@ -1214,6 +1292,12 @@ class GameService:
         entries = self._read_h5_manifest(stream)
         game_type = row.game_type
         cartridge_id = row.cartridge_id
+        for path, _info in entries:
+            _ensure_path_fits(
+                self._storage_root(),
+                paths.h5_asset_path(game_type, cartridge_id, path),
+                where="压缩包内",
+            )
         temp_dir = paths.h5_temp_dir(game_type, cartridge_id, uuid4().hex[:12])
         h5_dir = paths.h5_dir(game_type, cartridge_id)
         zip_path = paths.body_path(game_type, cartridge_id, ".zip")

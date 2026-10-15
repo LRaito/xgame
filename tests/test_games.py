@@ -1025,6 +1025,118 @@ def test_h5_rejects_zip_slip(logged_in_games, storage_root, bad_name):
     assert _files(storage_root) == before
 
 
+@pytest.mark.parametrize(
+    "bad_name",
+    [
+        "a:b.png",  # NTFS 上会被当成数据流
+        "x?.png",
+        "star*.png",
+        'quote".png',
+        "less<.png",
+        "pipe|.png",
+        "trailing./a.png",  # Windows 静默丢掉结尾的点
+        "trailing /a.png",  # 结尾空格同理
+        "sub/NUL.png",  # 保留设备名（带扩展名也算）
+        "sub/com1.txt",
+    ],
+)
+def test_h5_rejects_windows_illegal_entry_names(logged_in_games, storage_root, bad_name):
+    """ZIP 里合法、NTFS 上非法的条目名要在收下之前就拒掉。
+
+    这些名字在 Linux 上能正常落盘，在 Windows 上却会解包到一半抛异常——所以刻意不分平台，
+    两边用同一套规则拒。
+    """
+    game_id = _upload_h5(logged_in_games)
+    before = _files(storage_root)
+    response = logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={
+            "file": (
+                "g.zip",
+                _make_zip({"index.html": b"ok", bad_name: b"x"}),
+                "application/zip",
+            )
+        },
+    )
+    assert response.status_code == 400
+    assert _files(storage_root) == before
+
+
+class _RawFilename(str):
+    """把「原始字节」当文件名交给 zipfile。
+
+    `zipfile` 写包时会先试 `filename.encode("ascii")`：成功就当普通名字写出去、不置
+    UTF-8 标志位（0x800），失败才改用 UTF-8 并置上标志位。这里让 ascii 那一步直接返回
+    我们想要的 GBK 字节，就造出了「老工具打的包」——名字是 GBK、且不带标志位。
+    """
+
+    def __new__(cls, text: str, raw: bytes):
+        instance = super().__new__(cls, text)
+        instance._raw = raw
+        return instance
+
+    def encode(self, encoding="utf-8", errors="strict"):
+        if encoding == "ascii":
+            return self._raw
+        return super().encode(encoding, errors)
+
+
+def _make_legacy_gbk_zip(files: dict[str, bytes]) -> bytes:
+    """造一个「老压缩工具打的中文包」：条目名是 GBK 字节、且不带 UTF-8 标志位。"""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name, data in files.items():
+            archive.writestr(zipfile.ZipInfo(_RawFilename(name, name.encode("gbk"))), data)
+    return buffer.getvalue()
+
+
+def test_h5_decodes_gbk_entry_names(logged_in_games, storage_root):
+    """不带 UTF-8 标志位的中文条目名按 GBK 还原，而不是留一串 cp437 乱码。"""
+    payload = _make_legacy_gbk_zip({"index.html": b"ok", "素材/图.png": b"png"})
+    game_id = _upload_h5(logged_in_games)
+    response = logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={"file": ("g.zip", payload, "application/zip")},
+    )
+    assert response.status_code == 201, response.text
+    assert [row.path for row in _h5_rows(logged_in_games.app, game_id)] == [
+        "index.html",
+        "素材/图.png",
+    ]
+
+
+def test_h5_rejects_paths_too_long_for_windows(logged_in_games, storage_root, monkeypatch):
+    """Windows 上「数据根 + 相对路径」越界要在收下之前报错（其它平台不受影响）。"""
+    from backend.games import service as games_service
+
+    game_id = _upload_h5(logged_in_games)
+    before = _files(storage_root)
+    # 相对路径本身合法（约 380 字符、19 段，都没到 512 / 32 的上限），
+    # 但叠加数据根前缀后在 Windows 上必然超过 240
+    deep = "/".join(["d" * 20] * 18 + ["a.js"])
+    payload = _make_zip({"index.html": b"ok", deep: b"x"})
+
+    # Linux 上不检查：同样的包能收下
+    ok = logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={"file": ("g.zip", payload, "application/zip")},
+    )
+    assert ok.status_code == 201, ok.text
+    assert _files(storage_root) != before
+
+    monkeypatch.setattr(games_service, "_IS_WINDOWS", True)
+    rejected = logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={"file": ("g.zip", payload, "application/zip")},
+    )
+    assert rejected.status_code == 400
+    assert "过长" in rejected.json()["message"]
+
+
 def test_h5_rejects_duplicate_paths_case_insensitive(logged_in_games, storage_root):
     game_id = _upload_h5(logged_in_games)
     before = _files(storage_root)

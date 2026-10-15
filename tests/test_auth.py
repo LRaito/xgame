@@ -102,20 +102,53 @@ def test_register_rejects_bad_password(client, password):
     assert "密码" in response.json()["message"]
 
 
-def test_username_is_case_sensitive(client):
-    """用户名大小写不折叠：Alice 与 alice 是两个账号（磁盘目录名也区分）。"""
+def test_username_rejects_case_insensitive_duplicate(client):
+    """用户名查重按小写比：Alice 与 alice 只允许存在一个。
+
+    用户名是存档与截图目录的目录名（`save/{用户名}/…`、`image/{用户名}/…`），而 Windows
+    与 macOS 的文件系统不区分大小写——两个账号会落到同一个目录里，存档与截图互相串。
+    """
     assert (
         client.post(
             "/api/register", json={"username": "Alice", "password": "secret123"}
         ).status_code
         == 200
     )
-    assert (
-        client.post(
-            "/api/register", json={"username": "alice", "password": "secret123"}
-        ).status_code
-        == 200
+    duplicate = client.post(
+        "/api/register", json={"username": "alice", "password": "secret123"}
     )
+    assert duplicate.status_code == 409
+    assert "已被占用" in duplicate.json()["message"]
+
+
+def test_session_cookie_secure_flag_follows_settings(tmp_path):
+    """session cookie 的 Secure 标记由配置决定。
+
+    默认（Docker 路线，全程 HTTPS）必须是 Secure；「解压即用」的 Windows 包走 http、
+    由启动器关掉它——不关掉浏览器根本不保存这个 cookie，表现是「登录看着成功、
+    下一个请求就 401、在登录页来回跳」。
+    """
+    from fastapi.testclient import TestClient
+
+    from backend import create_app
+
+    def set_cookie_of(secure: bool, name: str) -> str:
+        # 刻意不传 TESTING：它会无条件关掉 Secure，就测不到这个开关了
+        app = create_app(
+            {"STORAGE_ROOT": str(tmp_path / name), "SESSION_COOKIE_SECURE": secure}
+        )
+        response = TestClient(app).post(
+            "/api/register", json={"username": "alice", "password": "secret123"}
+        )
+        return response.headers["set-cookie"]
+
+    # 只看属性段（分号之后），免得把 cookie 值里碰巧出现的字串当成标记
+    def attributes(secure: bool, name: str) -> str:
+        _, _, rest = set_cookie_of(secure, name).partition(";")
+        return rest.lower()
+
+    assert "secure" in attributes(True, "secure")
+    assert "secure" not in attributes(False, "plain")
 
 
 def test_validate_username_and_password_helpers():
@@ -190,9 +223,16 @@ def test_csrf_token_available(client):
     assert response.json()["data"]["csrf_token"]
 
 
-@pytest.mark.parametrize("path", ["/api/login", "/api/register", "/api/csrf", "/health"])
+@pytest.mark.parametrize(
+    "path",
+    ["/api/login", "/api/register", "/api/csrf", "/health", "/api/local/shutdown"],
+)
 def test_csrf_exempt_paths(path):
-    """注册与登录在 CSRF 白名单里（登录页此时还没拿到 token）；其余写接口仍要校验。"""
+    """注册与登录在 CSRF 白名单里（登录页此时还没拿到 token）；其余写接口仍要校验。
+
+    本地关机口也在白名单里：调用方是包内的升级脚本而不是浏览器，拿不到 CSRF token，
+    它自带 token + 回环地址守卫（见 backend/local_control.py）。
+    """
     from starlette.requests import Request
 
     from backend.config import Settings

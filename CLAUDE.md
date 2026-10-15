@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 本仓库是什么
 
-个人自托管的**游戏平台**。Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`），ORM 用 SQLModel + SQLite。三块内容：**游戏中心**（Flash 用 Ruffle、HTML5 上传 ZIP 解包后用沙箱 iframe、8/16-bit 主机 ROM 用 EmulatorJS 浏览器内游玩；Flash 与模拟器含本地与云端存档，主机另有按账号的游玩截图图库，H5 仅游玩）、**游戏管理**（上传/直链/搬运、卡带 ID 与元数据、整目录上传**攻略**）与**游戏检索**（外部中英文名录的只读全文检索，数据由 `make index` 构建）。账号开放注册，只用于隔离各人的模拟器配置与存档。
+个人自托管的**游戏平台**。Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`），ORM 用 SQLModel + SQLite。两条交付路线并存：**Docker**（正式运行，nginx + gunicorn + HTTPS）与 **Windows「解压即用」包**（`packaging/windows/`，后端自己托管前端 + 单进程 uvicorn + http，解压后双击即玩、局域网可访问）。两条路的数据格式一致，但**不能同时打开同一份数据目录**。三块内容：**游戏中心**（Flash 用 Ruffle、HTML5 上传 ZIP 解包后用沙箱 iframe、8/16-bit 主机 ROM 用 EmulatorJS 浏览器内游玩；Flash 与模拟器含本地与云端存档，主机另有按账号的游玩截图图库，H5 仅游玩）、**游戏管理**（上传/直链/搬运、卡带 ID 与元数据、整目录上传**攻略**）与**游戏检索**（外部中英文名录的只读全文检索，数据由 `make index` 构建）。账号开放注册，只用于隔离各人的模拟器配置与存档。
 
 **编码约定以 [`AGENTS.md`](AGENTS.md) 为准**——写代码、改代码前先读它。人读的设计文档在 [`docs/architecture.md`](docs/architecture.md)；SQLite 表与文件路径规则的完整结构在 [`docs/data_dict.md`](docs/data_dict.md)。
 
@@ -35,6 +35,8 @@ npm run dev        # Vite :5173，/api 与 /health 代理到 :8910
 
 ```bash
 make test                   # 等价于 python -m pytest + cd frontend && npm run lint，本机跑，不动 Docker
+make win                    # 组装 Windows「解压即用」包：dist-win/xgame_v<最新 tag>.zip
+                            #   （整个组装在 WSL 里跑，不需要 Windows 机器；首次要联网，见 packaging/windows/README.md）
 make index                  # 构建「游戏检索」的只读索引 <数据根>/db/game.db（可重复执行、直接覆盖；
                             #   服务启动时会自动补建（不存在才建），这个命令用于手动重建/更新索引。
                             #   数据根是 Docker 以 root 建的时先 sudo chown）
@@ -74,7 +76,8 @@ make all                    # 等价 docker compose build && up -d
 - **数据根目录哨兵（`.mounted`）。** **只当数据根落在 Windows 盘挂载前缀下**（`backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，可改，默认 `/mnt`；设成 `/` = 对所有路径都要求）才检查：`create_app()` 在 `ensure_data_dir()` **之前**调 `backend/mount_guard.py::require_mounted()`，那种目录里没有**人工创建**的空文件 `.mounted`（代码只检查、绝不代建）就只 stat 一下、不建目录不建库，打一条中文日志（含 `touch` 到哪）→ 等 5 秒 → `sys.exit(3)`；**不在这个前缀下的数据根（普通 Linux 目录，含本机默认的 `data/storage`）直接放行**，`TESTING` 下同样跳过。判断用的是「数据根路径」：容器里 `STORAGE_ROOT` 固定是 bind 目标 `/data`、看不出宿主路径，所以 compose 把 `.env` 的 `STORAGE_HOST_DIR` 也传进 api 容器（`Settings.STORAGE_HOST_DIR`，**只给这一处判断用**，业务代码不碰），本机直跑退回 `STORAGE_ROOT`；**查的文件**始终是 `<STORAGE_ROOT>/.mounted`。容器里的退出由入口脚本 `backend/entrypoint.sh`（`backend/Dockerfile` 的 `ENTRYPOINT`，CMD 仍是那条 gunicorn）在 `exec gunicorn` 之前触发——退出的是**容器主进程**，compose 的 `api.restart: unless-stopped` 随即把容器重新拉起，循环到哨兵出现（退出码 3 = gunicorn 的 `WORKER_BOOT_ERROR`，万一有人绕过入口脚本直接跑 gunicorn，master 也会跟着退出；换别的码只会 fork 新 worker 重试、容器不重启）。**它不是「待配置」开关**：storage 照旧永远可用，哨兵只拦启动。
 - **游戏检索。** 第三个页面（`/games/search`，侧栏第 3 项）。数据是一份**与平台游戏库无关**的外部中英文名录：`backend/search/csv/` 下 37 个 `机种,中文,英文` 三列 CSV（5 万余行、36 个机种），**不与 `games` 表比对/联动**。索引是**独立的只读库** `<STORAGE_ROOT>/db/game.db`（`config.py` 的 `GAME_INDEX_FILENAME`），写入方**只有 `backend/games/search_index.py::build_index()` 一处**，两个触发口：**服务启动自动补建**（`create_app()` 调 `ensure_game_index()`，不存在才建、`TESTING` 跳过、失败只记 warning 不拦启动）与 `make index`（手动重建/更新；`backend/cli.py` 的 `index` 命令；`Makefile` 的 `index` 目标），运行期经 `search_service.py` 的 `GameSearchService` 以 `Path.as_uri()` + `?mode=ro` + `PRAGMA query_only=1` 打开、每请求一条短连接、**绝不写**；**不参与月度备份**（可从 CSV 重建）。构建是整库重建 + 原子替换（`os.replace`，**不开 WAL**），所以重建后**不用重启 api**。CSV 随 `backend/` 进 api 镜像，所以容器里启动时也能自动补建（两边写的是同一个 bind 进来的数据目录）。索引缺失时接口返回 `indexed:false` + 空列表（200，页面给「执行 make index」的中文引导）；坏库/`meta.schema_version` 不符 → 503 中文。**分词**：FTS5 `unicode61 remove_diacritics 2` + 汉字逐字拆 token（裸 `unicode61` 搜不到中文子串、`trigram` 少于 3 字全废），查询把词包成短语、词间 AND；**索引期与查询期共用 `search_text.py` 的 `index_text()` 一份实现**，任一处漏调中文就搜不到。**中英文名结尾的地区/语言/版本标签不进索引**（`(Japan)`、`（日版）`、`[PS2]` …，`strip_tags()` 剥掉，落库与展示仍是原文），**按 `(机种,中文,英文)` 三元组去重**。SQL 四条硬约束：**FTS 表不能起别名**（`f MATCH` 报 `no such column`）、`bm25()` 权重顺序 = 列顺序、**不能用 `COUNT(*) OVER ()` 配 bm25 排序**（报错，total 单独查）、`ORDER BY` 末尾必须有 `g.id` 兜排序（否则翻页重复/丢行）；机种过滤按有无拼 `AND g.console_id = :cid`，**不写 `:cid IS NULL OR`**（会让 SQLite 弃用索引）。高亮在前端把片段切成数组渲染 `<mark>`（contentless 表没有 `snippet()`，**不用 `v-html`**）。接口 `GET /api/games/search`（`q`/`console_id`/`page`/`page_size`）与 `GET /api/games/search/consoles`，都要登录。
 - **会话签名密钥写死。** `SECRET_KEY` 在 `backend/config.py` 里写成一个常量（session cookie 签名用），跟仓库一起走、不从环境变量读；换值使所有已登录会话失效。
-- **明确不做。** React、TypeScript、i18n、OAuth/邮箱验证码/找回密码、对象存储（MinIO/S3）、JWT、WebSocket、Redis/PostgreSQL/Celery、把密钥写进前端或 git；也**不自动创建/自动修复 `.mounted`**（必须人工建，否则它就失去了「这个目录确实已挂载」的意义）。
+- **Windows「解压即用」包。** 第二条路线的三块后端代码都**默认关闭、靠环境变量开关**，Docker 路线行为一字不变：`backend/static_site.py`（后端托管前端 dist，仅 `STATIC_DIR` 非空时注册，**行为规范是 `frontend/nginx.conf.template`，改一边必须改另一边**，由 `tests/test_static_site.py` 钉住七条语义：SPA 回落、`/version.txt` 缺失即 404、三个 immutable 前缀未命中即 404、两个入口文件 no-cache、**MIME 用显式表不用 `mimetypes`**（Windows 上 `mimetypes` 读注册表，`.js` 被注册成 `text/plain` 的机器会整站白屏）、路径安全）、`backend/local_control.py`（本机专用关机口，升级脚本停服务用，三重设防：开关 + 回环地址 + token）、`backend/request_limit.py`（顶替 nginx 的 `client_max_body_size`，超限 413、分块传输 411）。启动器 `packaging/windows/launcher.py` 是**进程内**跑 uvicorn（Windows 上 terminate 是硬杀、会留半截 SQLite），并把 `SESSION_COOKIE_SECURE` 设成 false（局域网走 http，否则登录静默失效）。升级靠 `升级.bat` + `upgrade.ps1`：**必须先复制到 `%TEMP%` 再执行**（它要改名整个包目录，而 Windows 不允许改名含已打开文件的目录），先停服务再换文件，**数据目录原地不动**。包内 `.cmd`/`.bat` **内容纯 ASCII**（cmd 按 OEM 代码页解析批处理），`说明.txt` 与 `.ps1` 存 UTF-8 **带 BOM**。
+- **明确不做。** React、TypeScript、i18n、OAuth/邮箱验证码/找回密码、对象存储（MinIO/S3）、JWT、WebSocket、Redis/PostgreSQL/Celery、把密钥写进前端或 git；也**不自动创建/自动修复 `.mounted`**（必须人工建，否则它就失去了「这个目录确实已挂载」的意义）；Windows 包**不做安装向导（无 setup.exe / Inno Setup），只做解压即用**。
 
 ## 目录结构（约定，只建这些）
 
@@ -85,11 +88,17 @@ backend/__init__.py       # create_app() 工厂
 backend/{auth,games,tools,storage}/  # auth 与 games 各有 router.py + service.py；games 另有 paths.py、save_*（云端存档）、screenshot_*（截图）、gallery_*（图集）、settings_*、stats_*、search_*（检索：text/index/service/router）、importer.py、remote.py
 backend/search/csv/       # 游戏检索的 37 个中英文名录 CSV（纯数据目录，只被建索引读）
 backend/storage/          # 跨模块：types（协议与 StoredObject）、local（LocalStorage）、access（流式下载响应）
-backend/cli.py            # python -m backend.cli（init-db / index）
+backend/cli.py            # python -m backend.cli（init-db / index / serve）
 backend/mount_guard.py    # 数据根目录哨兵检查（数据根在 /mnt 这类 Windows 盘路径下、又缺 .mounted 时等 5 秒退出，让容器重启）
+backend/static_site.py    # 可选：后端托管前端 dist（只有 Windows 包设 STATIC_DIR 时生效）
+backend/local_control.py  # 可选：本机专用关机口（Windows 包的升级脚本停服务用）
+backend/request_limit.py  # 请求体上限中间件（顶替 nginx 的 client_max_body_size）
 backend/entrypoint.sh     # api 容器入口：先调上面的检查，再 exec CMD 里的 gunicorn
+packaging/windows/        # Windows「解压即用」包：build-win-dist.sh（组装）+ launcher.py（启动器）+ winops.py +
+                          #   upgrade.ps1/升级.bat（自动升级）+ allow-lan.ps1/允许局域网访问.bat + 启动游戏平台.cmd +
+                          #   说明.txt + xgame.png（图标源图，换图标=替换它再跑 make_icon.py 生成 xgame.ico）
 docs/                     # architecture.md（设计源）+ data_dict.md（数据字典）
-tests/                    # pytest（test_auth / test_local_storage / test_games / test_game_saves / test_game_screenshots / test_game_emulator_settings / test_game_recent / test_game_stats / test_game_search）
+tests/                    # pytest（test_auth / test_local_storage / test_games / test_game_saves / test_game_screenshots / test_game_emulator_settings / test_game_recent / test_game_stats / test_game_search / test_static_site / test_request_limit / test_local_control / test_win_launcher）
 ```
 
 ## Git 约定

@@ -26,7 +26,9 @@ def validate_csrf(request: Request, settings: Settings) -> None:
     if request.method in CSRF_SAFE_METHODS:
         return
     path = request.url.path
-    if path in ("/health", "/api/csrf", "/api/register", "/api/login"):
+    # 本地关机口（只有「解压即用」的 Windows 包会注册它）自带 token + 回环地址守卫，
+    # 且调用方是升级脚本而不是浏览器，拿不到 CSRF token——见 backend/local_control.py。
+    if path in ("/health", "/api/csrf", "/api/register", "/api/login", "/api/local/shutdown"):
         return
     session_token = request.session.get(CSRF_SESSION_KEY)
     header_token = request.headers.get(CSRF_HEADER)
