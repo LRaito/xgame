@@ -1,4 +1,4 @@
-.PHONY: all build up certs test index win
+.PHONY: all build up certs test index win win-image
 
 COMPOSE ?= docker compose
 
@@ -7,13 +7,11 @@ COMPOSE ?= docker compose
 -include .env
 export
 
-# 构建版本号：git 短 sha，工作区有未提交改动时加 -dirty（否则「改了没提交就重建」会与上一版同号，
-# 老页面收不到更新提示）。不在 git 环境时退化为 UTC 时间戳。
-# 刻意不用「sha + 每次构建都带时间戳」：那会让任何一次无意义重建都给所有打开的页面弹提示。
+# 构建版本号：取仓库最新 tag；HEAD 停在 tag 之后的提交上时再补一段提交时间戳
+# （v1.0.0 或 v1.0.0-1792042865000，规则与比较方式见 scripts/version.sh）。
+# 前端把它显示在侧栏标题后、并写进 /version.txt 供已经打开的页面探测新版本。
 # 上面那行裸 export 会把它一并导出，docker compose build 能读到（web 镜像的 APP_VERSION 构建参数）。
-GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null)
-GIT_DIRTY := $(shell git status --porcelain 2>/dev/null | head -1)
-APP_VERSION ?= $(if $(GIT_SHA),$(GIT_SHA)$(if $(GIT_DIRTY),-dirty),$(shell date -u +%Y%m%d%H%M%S))
+APP_VERSION ?= $(shell bash scripts/version.sh)
 
 # 重新生成 HTTPS 自签名证书（写进仓库的 certs/，已存在则跳过）。
 # 证书已随仓库提供，只有换主机名/IP 时才需要跑：make certs ARGS="192.168.1.10"
@@ -40,10 +38,18 @@ test:
 	python3 -m pytest $(ARGS)
 	cd frontend && npm run lint
 
-# 组装 Windows「解压即用」包：产物 dist-win/xgame_v<最新 tag>.zip，解压后双击即玩。
-# 整个组装在 WSL 里完成，不需要 Windows 机器；首次构建要联网（见 packaging/windows/README.md）。
+# 组装 Windows「解压即用」包：产物 dist-win/xgame_v<版本>.zip，解压后双击「启动游戏平台.cmd」即玩。
+# 整个组装在容器里跑（构建环境镜像不存在就先建一次），宿主机只要有 Docker，
+# 不需要 node / python / curl / zip。版本号取 scripts/version.sh。
+# 依赖都预置在构建环境镜像里（Windows 运行时 / win 轮子 / 前端 node_modules / 引擎资产），
+# 所以只有建镜像那一次要联网，之后每次出包都是离线的。
 win:
-	bash packaging/windows/build-win-dist.sh
+	bash packaging/windows/build-in-docker.sh
+
+# 只构建（或更新）那个构建环境镜像，不出包。镜像 tag 是「Dockerfile + 它 COPY 的输入文件」的哈希，
+# 改了任一处会自动重建，一般不用手动跑。WINBUILD_NO_CACHE=1 时忽略缓存重建（拿依赖的安全更新）。
+win-image:
+	bash packaging/windows/build-in-docker.sh --image-only
 
 # 构建「游戏检索」用的索引库（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。
 # 服务启动时若发现索引不存在，会自动补建一次；这个 target 用于手动重建/更新（换了名录之后）。

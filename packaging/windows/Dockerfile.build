@@ -1,0 +1,67 @@
+# 「解压即用」Windows 包的构建环境：**工具链与所有能固定的依赖都在这里固定**。
+#
+# 为什么要有这个镜像：这条链路要 node 打前端、python 下 Windows 版运行时并往里装 win 轮子、
+# 还要 curl / zip / git / Pillow……在宿主机上凑齐这些版本很烦，换台机器就得重来一遍。
+# 钉在一个镜像里之后，`make win` 在谁的机器上跑都出同一个包。
+#
+# 镜像里预置（都在 /opt/winbuild 下，组装时只从这些目录里取，**组装那一步不再联网**）：
+#   runtime/                  Windows 版 CPython（release 与 sha256 钉死在 runtime.env）
+#   wheels/                   requirements-win.txt 的 win_amd64 轮子（含全部传递依赖）
+#   frontend/node_modules/    前端依赖（按 package-lock.json 装）
+#   frontend/public/emulatorjs/  EmulatorJS 引擎资产（版本钉在 fetch-emulatorjs.mjs 的 EJS_VERSION）
+#
+# 镜像 tag 里带着这些输入文件的哈希（见 build-in-docker.sh）：Dockerfile、runtime.env、
+# requirements-win.txt、frontend 的 package.json / package-lock.json / fetch-emulatorjs.mjs。
+# 任何一处改了 tag 就变、自动重建；没改就一直复用。想强制刷新（比如拿传递依赖的安全更新）：
+#   WINBUILD_NO_CACHE=1 make win-image
+#
+# 基础镜像同样固定到「补丁版本 + 发行版代号」，别用浮动标签（同 backend/frontend 的 Dockerfile）。
+#
+# 为什么是 Debian 而不是 Alpine（前端镜像用的是 alpine）：前端构建在容器里跑，而 vite 8 的
+# rolldown 之类是按平台编译的原生二进制；glibc 的 bookworm 与宿主机（也是 glibc）一致，
+# 换 musl 的 Alpine 就得为容器单独维护一套依赖，构建产物也就没法在宿主机上直接跑。
+FROM node:22.23.3-bookworm-slim
+
+# bash         build-win-dist.sh 是 bash 脚本
+# python3/pip  取 Windows 版 CPython、预置 win 轮子、组装时往包里装、跑 smoke_win.py 自检
+# python3-pil  从 xgame.png 生成 xgame.ico
+# git          算版本号（scripts/version.sh 要读 tag 与提交时间）
+# curl         取运行时（只有这一步联网，之后组装全离线）
+# zip          打最后的 zip 包
+# rsync        组装时同步前端源码与 backend/
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        bash python3 python3-pip python3-pil git curl zip rsync ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# 挂进来的仓库属主是宿主机用户、和容器里的 root 对不上，git 会以 "dubious ownership" 拒绝读它
+RUN git config --system --add safe.directory '*'
+
+WORKDIR /repo
+
+# ---------- 1. Windows 版 CPython 运行时 ----------
+# 下载与 sha256 校验都发生在建镜像时，组装时直接用镜像里这份（那一步就不碰外网了）。
+COPY packaging/windows/runtime.env packaging/windows/fetch-runtime.sh /opt/winbuild/
+RUN bash /opt/winbuild/fetch-runtime.sh /opt/winbuild/runtime
+
+# ---------- 2. 前端依赖 ----------
+# 只 COPY 清单文件：源码变了不会让这一层失效（源码在组装时才从挂进来的仓库里拷）。
+COPY frontend/package.json frontend/package-lock.json /opt/winbuild/frontend/
+RUN cd /opt/winbuild/frontend && npm ci
+
+# ---------- 3. EmulatorJS 引擎资产 ----------
+# 脚本按自身位置决定输出目录（<脚本目录>/../public/emulatorjs），所以放在
+# /opt/winbuild/frontend/scripts/ 下，资产正好落进上面那棵前端目录，连同 .emulatorjs.done
+# 版本标记一起——组装时拷进构建目录，`npm run build` 的前置脚本走离线快路径直接跳过下载。
+# 版本就是脚本里的 EJS_VERSION；那个文件也在镜像 tag 的哈希里，改了会自动重建。
+COPY frontend/scripts/fetch-emulatorjs.mjs /opt/winbuild/frontend/scripts/
+RUN cd /opt/winbuild/frontend && node scripts/fetch-emulatorjs.mjs
+
+# ---------- 4. Windows 版依赖（win_amd64 轮子）----------
+# 先下成一个「轮子仓库」，组装时用 --no-index --find-links 离线装进包里。
+# 顺带把传递依赖也冻在这一层：同一个镜像永远出同一套依赖，不会因为上游发新版而悄悄变。
+COPY packaging/windows/requirements-win.txt /opt/winbuild/
+RUN python3 -m pip download --quiet --dest /opt/winbuild/wheels \
+        --platform win_amd64 --python-version 3.12 --implementation cp --abi cp312 \
+        --only-binary=:all: -r /opt/winbuild/requirements-win.txt \
+    && ls /opt/winbuild/wheels

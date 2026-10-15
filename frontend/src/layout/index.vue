@@ -9,6 +9,7 @@
             <div class="brand">
                 <span class="brand-mark">X</span>
                 <span class="brand-name">GAME</span>
+                <span class="brand-version" :title="`构建版本 ${APP_VERSION}`">{{ APP_VERSION }}</span>
             </div>
             <nav class="nav">
                 <router-link
@@ -42,6 +43,7 @@
 <script setup>
 import { computed, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import { APP_VERSION } from "@/constants/version";
 import { buildMenuFromRoutes } from "@/router";
 import { useAuthStore } from "@/store/auth";
 
@@ -124,7 +126,6 @@ async function onLogout() {
 .brand {
     display: flex;
     align-items: center;
-    gap: 12px;
     padding: 0 10px 28px;
 }
 
@@ -140,6 +141,8 @@ async function onLogout() {
     font-size: 20px;
     font-weight: 700;
     letter-spacing: -0.02em;
+    flex-shrink: 0;
+    margin-right: 12px;
 }
 
 .brand-name {
@@ -147,6 +150,20 @@ async function onLogout() {
     font-weight: 600;
     letter-spacing: 0.04em;
     color: #f8fafc;
+    flex-shrink: 0;
+}
+
+/* 标题后面的构建版本号：窄侧栏里放不下就省略，完整值在 title 提示里（也见 /version.txt） */
+.brand-version {
+    margin-left: 6px;
+    min-width: 0;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.02em;
+    color: rgba(148, 163, 184, 0.95);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
 }
 
 /* 菜单多了就在侧栏内部滚动，不撑高侧栏、也不影响底部退出按钮 */

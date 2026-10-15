@@ -2,13 +2,19 @@
 #
 # 组装「解压即用」的 Windows 包。**整个组装过程都在 WSL / Linux 上跑**，不需要 Windows。
 #
-# 产物：dist-win/xgame_v<最新 tag>.zip
+# 产物：dist-win/xgame_v<版本>.zip
 #   解压出来是一个 xgame/ 目录，双击里面的「启动游戏平台.cmd」就能玩。
 #
+# 依赖从哪来：优先用构建环境镜像里预置的那份（/opt/winbuild，见 Dockerfile.build）——
+# 前端依赖、EmulatorJS 资产、Windows 轮子、Windows 版 CPython 全在里面，
+# 于是**这一步完全不联网**，宿主机也不需要 node / npm。没有那个目录时（直接在本机 Linux 上跑）
+# 退回联网下载 / 宿主机自己的 node_modules。
+#
 # 用法：
-#   bash packaging/windows/build-win-dist.sh              # 完整组装（首次要联网）
-#   SKIP_FRONTEND=1 bash .../build-win-dist.sh            # 复用已有的 frontend/dist
-#   APP_VERSION=v1.2.3 bash .../build-win-dist.sh         # 指定版本号（默认取最新 git tag）
+#   make win                                     # 正常路径：在容器里跑本脚本
+#   bash packaging/windows/build-win-dist.sh     # 直接在本机 Linux 上跑（要自备 node/python/curl/zip）
+#   SKIP_FRONTEND=1 bash .../build-win-dist.sh   # 复用已有的 frontend/dist，跳过前端构建（迭代时快很多）
+#   APP_VERSION=v1.2.3 bash .../build-win-dist.sh  # 指定版本号（默认由 scripts/version.sh 从 git tag 算）
 #
 set -euo pipefail
 
@@ -18,12 +24,15 @@ OUT="${OUT_DIR:-$REPO/dist-win}"
 PKG="$OUT/xgame"
 CACHE="$OUT/cache"
 
-# Python 运行时：python-build-standalone 的可重定位 CPython，小版本与 api 镜像（python:3.12.15）对齐。
-# 这是整份包唯一的供应链入口，所以 release 与 sha256 都钉死；升级时三个值一起改。
-PBS_RELEASE="20261013"
-PBS_ASSET="cpython-3.12.15+${PBS_RELEASE}-x86_64-pc-windows-msvc-install_only.tar.gz"
-PBS_SHA256="bbc902d4d187ac4914915bf538196a064b49109a33a104965b5164ced5b80a1e"
-PBS_URL="https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_RELEASE}/${PBS_ASSET}"
+# 构建环境镜像里预置依赖的位置；不在容器里跑时这个目录不存在，各处会自己退到联网那条路。
+WINBUILD="${WINBUILD_DIR:-/opt/winbuild}"
+# 前端在容器里的临时构建目录：源码拷进来、node_modules 从镜像里拿，
+# 于是宿主机既不用装 node，它自己的 frontend/node_modules 也一点不被碰。
+FE_BUILD="${FE_BUILD_DIR:-/tmp/xgame-fe}"
+
+# Windows 版 Python 运行时的版本与 sha256 在 runtime.env（唯一出处，镜像构建也读它）
+# shellcheck source=runtime.env
+. "$HERE/runtime.env"
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
@@ -32,20 +41,12 @@ for tool in curl zip python3; do
     command -v "$tool" >/dev/null 2>&1 || { say "缺少命令：$tool"; exit 1; }
 done
 
-# ---------- 版本号：默认取当前项目最新 tag ----------
-VERSION="${APP_VERSION:-}"
-if [ -z "$VERSION" ]; then
-    tag="$(git -C "$REPO" describe --tags --abbrev=0 2>/dev/null || true)"
-    if [ -z "$tag" ]; then
-        say "！仓库里还没有任何 tag，先用 v0.0.0 兜底（正式发包前记得打个 tag）。"
-        tag="v0.0.0"
-    fi
-    VERSION="$tag"
-    if [ -n "$(git -C "$REPO" status --porcelain 2>/dev/null | head -1)" ]; then
-        VERSION="${tag}-dirty"
-        say "！工作区有未提交改动，版本号记作 ${VERSION}（这类包不会被包内升级逻辑当成新版本）。"
-    fi
-fi
+# ---------- 版本号 ----------
+# 默认由 scripts/version.sh 从 git tag 算：
+#   HEAD 正好在最新 tag 上 → v1.0.0；在 tag 之后的提交上 → v1.0.0-<HEAD 提交时间毫秒>
+# （升级时先比 tag 再比那串时间戳，见 launcher.py 的 _version_key）。
+# 也可以直接指定：APP_VERSION=v9.9.9 make win
+VERSION="${APP_VERSION:-$(bash "$REPO/scripts/version.sh")}"
 ZIP_NAME="xgame_${VERSION}.zip"
 
 step "组装 xgame ${VERSION}"
@@ -61,10 +62,27 @@ mkdir -p "$PKG"
 step "1/6 前端"
 if [ "${SKIP_FRONTEND:-0}" = "1" ] && [ -d "$REPO/frontend/dist" ]; then
     say "SKIP_FRONTEND=1，复用已有的 frontend/dist"
+elif [ -d "$WINBUILD/frontend/node_modules" ]; then
+    # 构建环境镜像里那份依赖：源码拷到容器内的临时目录里构建（不碰宿主机的 node_modules），
+    # 前端依赖、Ruffle（从 node_modules 拷）、EmulatorJS 资产全都来自镜像，全程离线。
+    say "用构建环境里的前端依赖构建（源码拷到 $FE_BUILD）"
+    rm -rf "$FE_BUILD"
+    mkdir -p "$FE_BUILD"
+    rsync -a --delete \
+        --exclude node_modules --exclude dist \
+        --exclude public/emulatorjs --exclude public/ruffle \
+        "$REPO/frontend/" "$FE_BUILD/"
+    cp -a "$WINBUILD/frontend/node_modules" "$FE_BUILD/node_modules"
+    # EmulatorJS 资产（含 .emulatorjs.done 标记）：给了标记，构建时的 fetch 脚本就走离线快路径
+    cp -a "$WINBUILD/frontend/public/emulatorjs" "$FE_BUILD/public/emulatorjs"
+    ( cd "$FE_BUILD" && APP_VERSION="$VERSION" npm run build )
+    # 产物同步回仓库一份：本机调试（STATIC_DIR=frontend/dist）与 SKIP_FRONTEND 迭代都用得上
+    rm -rf "$REPO/frontend/dist"
+    cp -a "$FE_BUILD/dist" "$REPO/frontend/dist"
+    rm -rf "$FE_BUILD"
 else
-    # 首次构建要联网：fetch-emulatorjs.mjs 从 cdn.emulatorjs.org 拉 6 个平台的内核，
-    # copy-ruffle.mjs 从 node_modules 拷。脚本是幂等的（带 .emulatorjs.done 标记），
-    # 重复构建不会重下。
+    # 没在构建环境镜像里跑：退回宿主机自己的 node_modules（首次构建要联网，脚本幂等、重复构建不重下）
+    say "没有构建环境镜像，用宿主机的 node_modules 构建"
     if [ ! -d "$REPO/frontend/node_modules" ]; then
         ( cd "$REPO/frontend" && npm ci )
     fi
@@ -80,32 +98,44 @@ say "前端产物：$(du -sh "$PKG/web" | cut -f1)，版本 $(cat "$PKG/web/vers
 
 # ---------- 2. Windows 版 Python ----------
 step "2/6 Windows 版 Python（$PBS_ASSET）"
-if [ ! -f "$CACHE/$PBS_ASSET" ]; then
-    say "下载中……"
-    curl -fSL --retry 3 -o "$CACHE/$PBS_ASSET.part" "$PBS_URL"
-    mv "$CACHE/$PBS_ASSET.part" "$CACHE/$PBS_ASSET"
+if [ -f "$WINBUILD/runtime/$PBS_ASSET" ]; then
+    say "用构建环境里预置的运行时"
+    RUNTIME="$WINBUILD/runtime/$PBS_ASSET"
+else
+    say "构建环境里没有预置运行时，改用 $CACHE（那儿没有就联网取一份）"
+    bash "$HERE/fetch-runtime.sh" "$CACHE"
+    RUNTIME="$CACHE/$PBS_ASSET"
 fi
-echo "$PBS_SHA256  $CACHE/$PBS_ASSET" | sha256sum -c - >/dev/null || {
-    say "！运行时压缩包的 sha256 与钉死的值不符，已中止。"
+# 无论来自镜像还是刚下的，都再校一次：镜像层被换掉、文件被截断都在这里拦住
+echo "$PBS_SHA256  $RUNTIME" | sha256sum -c - >/dev/null || {
+    say "！运行时压缩包的 sha256 与 runtime.env 里钉死的不符，已中止。"
     exit 1
 }
 say "sha256 校验通过"
-tar -xzf "$CACHE/$PBS_ASSET" -C "$PKG"
+tar -xzf "$RUNTIME" -C "$PKG"
 [ -x "$PKG/python/python.exe" ] || { say "！解出来的运行时里没有 python.exe"; exit 1; }
 
 # 瘦身：调试符号（*.pdb）与用不到的 tkinter/tcl 占了差不多一半体积，删掉不影响运行。
 # 刻意**保留** Lib/site-packages/pip：哪天用户要自救（补装个包）还能用。
 find "$PKG/python" -name '*.pdb' -delete
 rm -rf "$PKG/python/tcl" "$PKG/python/Lib/tkinter" "$PKG/python/Lib/test" \
-       "$PKG/python/DLLs/_tkinter.pyd" "$PKG/python/DLLs/tcl86t.dll" "$PKG/python/DLLs/tk86t.dll"
+       "$PKG/python/DLLs/_tkinter.pyd" "$PKG/python/DLLs/tk86t.dll" "$PKG/python/DLLs/tcl86t.dll"
 say "运行时：$(du -sh "$PKG/python" | cut -f1)"
 
 # ---------- 3. Windows 依赖 ----------
 step "3/6 依赖（win_amd64 轮子）"
-# 在 Linux 上直接下 Windows 轮子：--only-binary 是 --platform 的硬要求，
+# 在 Linux 上直接装 Windows 轮子：--only-binary 是 --platform 的硬要求，
 # 三个 --python-version/--implementation/--abi 不能省，否则会被当前解释器的 tag 带偏。
+if [ -d "$WINBUILD/wheels" ]; then
+    say "从构建环境里的轮子仓库离线安装（$(ls "$WINBUILD/wheels" | wc -l) 个）"
+    PIP_SOURCE=(--no-index --find-links "$WINBUILD/wheels")
+else
+    say "构建环境里没有轮子仓库，联网从 PyPI 取"
+    PIP_SOURCE=()
+fi
 python3 -m pip install --quiet --upgrade \
     --target "$PKG/python/Lib/site-packages" \
+    "${PIP_SOURCE[@]}" \
     --platform win_amd64 \
     --python-version 3.12 \
     --implementation cp \
@@ -166,12 +196,14 @@ cat > "$PKG/updates/说明.txt" <<'TXT'
 账号、存档、截图、游戏本体都不受影响。启动器里也可以关掉自动升级（xgame.ini 的 auto_update）。
 TXT
 
-# ---------- 5. 自检（不用碰 Windows：WSL interop 直接跑 python.exe）----------
+# ---------- 5. 自检（WSL interop 可用时直接跑包里那份 python.exe）----------
 step "5/6 自检"
 if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ]; then
     ( cd "$PKG" && ./python/python.exe -X utf8 smoke_win.py )
 else
-    say "本机 WSL interop 不可用，跳过自检（到 Windows 上可以手动跑 python\\python.exe smoke_win.py）"
+    # 在容器里构建就是这条路：容器里没有 binfmt_misc，跑不了 Windows 的 python.exe。
+    # 交给 build-in-docker.sh 在宿主机上补一次（那儿才有 interop）。
+    say "本机（或本容器）跑不了 Windows 的 python.exe，跳过自检。"
 fi
 
 # ---------- 6. 打包 ----------

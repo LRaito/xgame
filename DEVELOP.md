@@ -200,14 +200,48 @@ docker compose restart web
 不需要管理员权限，双击 `启动游戏平台.cmd` 就在浏览器里跑起来，局域网里手机/平板也能连。
 
 ```bash
-make win        # = bash packaging/windows/build-win-dist.sh
-# 产物：dist-win/xgame_v<最新 tag>.zip（解压出来是 xgame/ 目录）
+make win          # 1) 构建环境镜像没有就先建一次；2) 在容器里组装出 dist-win/xgame_v<版本>.zip
+make win-image    # 只构建/更新那个构建环境镜像，不出包
 ```
 
-**整个组装都在 WSL 里完成，不需要 Windows 机器**。首次构建要联网（npm 依赖、
-EmulatorJS 引擎资产、Windows 版 Python），之后会走缓存。构建完会自动跑一次自检
-（`smoke_win.py`，借 WSL interop 直接执行包里那份 `python.exe`），验证 FTS5、依赖、
-没有混进 gunicorn/uvloop、MSVC 运行库在位。
+**整个组装在容器里跑，宿主机只要有 Docker**（不需要 node / python / curl / zip，换台机器也出同一个包）：
+
+- **构建环境镜像** = `packaging/windows/Dockerfile.build`：工具链（node / python / git / curl /
+  zip / rsync / Pillow）**加上所有能固定的依赖**，都预置在镜像的 `/opt/winbuild` 下——
+  Windows 版 CPython（`runtime.env` 钉死 release + sha256）、包的 win_amd64 轮子
+  （`requirements-win.txt`，传递依赖也一起冻住）、前端 `node_modules`（按 `package-lock.json` 装）、
+  EmulatorJS 引擎资产（版本钉在 `fetch-emulatorjs.mjs` 的 `EJS_VERSION`）。
+  于是**组装那一步完全不联网**，也不看宿主机装了什么、更不碰宿主机自己的 `frontend/node_modules`
+  （前端在容器内的临时目录里构建，产物再同步回 `frontend/dist` 一份供本机调试）。
+- **镜像 tag = 上面那几个输入文件的哈希**（Dockerfile + `runtime.env` + `requirements-win.txt` +
+  `package.json` / `package-lock.json` / `fetch-emulatorjs.mjs`）：改了任一处自动重建，没改一直复用。
+  要强制刷新（拿传递依赖的安全更新）：`WINBUILD_NO_CACHE=1 make win-image`。
+  它用 Debian（glibc）而不是 Alpine（musl），是为了让容器里装的前端依赖（vite 8 的 rolldown
+  是平台相关的原生二进制）与宿主机同一套，不会退化成「一次构建两套依赖」。
+- **容器**以宿主机用户身份跑、`HOME=/tmp`，所以 `dist-win/` 与前端产物的属主正常（不会变成 root
+  所有）。
+- **只有建镜像那一次要联网**（apt / npm / PyPI / GitHub / EmulatorJS CDN），之后每次出包都是离线的。
+- **包内自检挪到宿主机上跑**：容器里没有 binfmt_misc，执行不了包里那份 Windows 的 `python.exe`；
+  宿主机是 WSL 时由 `build-in-docker.sh` 在构建后补跑 `smoke_win.py`（验证 FTS5、依赖 import、
+  没有混进 gunicorn/uvloop、MSVC 运行库在位），不是 WSL 就跳过、并提示到 Windows 上手动跑。
+
+### 版本号
+
+`scripts/version.sh` 是唯一出处，Docker 路线（Makefile 的 `APP_VERSION`）与 Windows 包共用同一份：
+
+| 情形 | 版本号 |
+| --- | --- |
+| HEAD 正好停在最新 tag 上 | `v1.0.0` |
+| HEAD 在 tag 之后的提交上 | `v1.0.0-1792042105000`（后一段是 HEAD 的**提交时间**毫秒） |
+| 一个 tag 都没有，或不在 git 仓库里 | `v0.0.0-<时间戳>` |
+
+后一段取提交时间而不是构建时刻，有两个原因：同一个提交反复构建得到同一个号（否则每次重建都会
+让已经打开的页面平白弹一次「有新版本」），而且越靠后的提交数字越大——正好就是「谁更新」。
+比较时**先比 tag 部分、再比这串数字**（`packaging/windows/launcher.py` 的 `_version_key`
+把版本号拆成数字段做元组比较，短的更小，于是「tag 之后的构建」比 tag 本身新）。
+
+这个值进两处：前端构建期注入（侧栏标题后面显示，见 `frontend/src/constants/version.js`），
+以及 `web/version.txt`（已经打开的页面靠它探测更新）。想手动指定：`make win APP_VERSION=v9.9.9`。
 
 包里的东西与分工：
 

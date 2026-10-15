@@ -193,6 +193,12 @@ def check_data_dir(data_dir: Path) -> None:
 
 
 def _version_key(text: str) -> tuple[int, ...]:
+    """把版本号拆成可比较的数字段。
+
+    `v1.0.0` → `(1, 0, 0)`；`v1.0.0-1792042865000` → `(1, 0, 0, 1792042865000)`。
+    元组比较天然就是「先比 tag 部分、再比后面那串提交时间戳」，而短的更小——于是
+    tag 之后的构建（带时间戳）判为比 tag 本身更新，正是升级想要的语义。
+    """
     numbers = re.findall(r"\d+", text)
     return tuple(int(item) for item in numbers) if numbers else (0,)
 

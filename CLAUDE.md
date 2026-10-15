@@ -35,8 +35,11 @@ npm run dev        # Vite :5173，/api 与 /health 代理到 :8910
 
 ```bash
 make test                   # 等价于 python -m pytest + cd frontend && npm run lint，本机跑，不动 Docker
-make win                    # 组装 Windows「解压即用」包：dist-win/xgame_v<最新 tag>.zip
-                            #   （整个组装在 WSL 里跑，不需要 Windows 机器；首次要联网，见 packaging/windows/README.md）
+make win                    # 组装 Windows「解压即用」包：dist-win/xgame_v<版本>.zip
+                            #   在容器里跑（构建环境镜像没有就先建一次），宿主机只要有 Docker；
+                            #   依赖（Windows 运行时 / win 轮子 / 前端依赖 / 引擎资产）都预置在镜像里，
+                            #   所以只有建镜像那次要联网；版本号取 git tag（见 scripts/version.sh）
+make win-image              # 只构建/更新那个构建环境镜像，不出包
 make index                  # 构建「游戏检索」的只读索引 <数据根>/db/game.db（可重复执行、直接覆盖；
                             #   服务启动时会自动补建（不存在才建），这个命令用于手动重建/更新索引。
                             #   数据根是 Docker 以 root 建的时先 sudo chown）
@@ -94,9 +97,13 @@ backend/static_site.py    # 可选：后端托管前端 dist（只有 Windows �
 backend/local_control.py  # 可选：本机专用关机口（Windows 包的升级脚本停服务用）
 backend/request_limit.py  # 请求体上限中间件（顶替 nginx 的 client_max_body_size）
 backend/entrypoint.sh     # api 容器入口：先调上面的检查，再 exec CMD 里的 gunicorn
-packaging/windows/        # Windows「解压即用」包：build-win-dist.sh（组装）+ launcher.py（启动器）+ winops.py +
-                          #   upgrade.ps1/升级.bat（自动升级）+ allow-lan.ps1/允许局域网访问.bat + 启动游戏平台.cmd +
-                          #   说明.txt + xgame.png（图标源图，换图标=替换它再跑 make_icon.py 生成 xgame.ico）
+packaging/windows/        # Windows「解压即用」包：Dockerfile.build（构建环境镜像，预置运行时/轮子/前端依赖/引擎资产）+
+                          #   build-in-docker.sh（make win 入口）+ build-win-dist.sh（组装）+
+                          #   runtime.env（Windows 版 CPython 钉版）+ fetch-runtime.sh（下载+校验）+
+                          #   launcher.py（启动器）+ winops.py + upgrade.ps1/升级.bat（自动升级）+
+                          #   allow-lan.ps1/允许局域网访问.bat + 启动游戏平台.cmd + 说明.txt +
+                          #   xgame.png（图标源图，换图标=替换它再跑 make_icon.py 生成 xgame.ico）
+scripts/version.sh        # 版本号唯一出处（git tag；HEAD 不在 tag 上时补提交时间戳），Docker 与 Windows 包共用
 docs/                     # architecture.md（设计源）+ data_dict.md（数据字典）
 tests/                    # pytest（test_auth / test_local_storage / test_games / test_game_saves / test_game_screenshots / test_game_emulator_settings / test_game_recent / test_game_stats / test_game_search / test_static_site / test_request_limit / test_local_control / test_win_launcher）
 ```

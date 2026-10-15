@@ -138,7 +138,10 @@ backend/tools/registry.py    # 功能列表（给 /api/tools）
 backend/games/               # 游戏 router/service/paths + 云端存档 save_* + 游戏截图 screenshot_* + 游戏图集 gallery_* + 模拟器设置 settings_* + 游玩统计 stats_* + 检索 search_*(text/index/service/router) + 搬运 importer + 网络上传 remote
 backend/search/csv/          # 游戏检索的 37 个中英文名录 CSV（纯数据目录，只被建索引读；随 backend/ 进 api 镜像）
 backend/storage/             # 跨模块：types(协议与 StoredObject) / local(LocalStorage) / access(流式下载响应)
-packaging/windows/           # 「解压即用」Windows 包：build-win-dist.sh（组装）+ launcher.py（启动器）+ winops.py（外壳操作）
+packaging/windows/           # 「解压即用」Windows 包：Dockerfile.build（构建环境镜像，预置运行时/轮子/前端依赖/引擎资产）
+                             #   + build-in-docker.sh（make win 入口）+ build-win-dist.sh（组装）
+                             #   + runtime.env（Windows 版 CPython 钉版）+ fetch-runtime.sh（下载+校验）
+                             #   + launcher.py（启动器）+ winops.py（外壳操作）
                              #   + upgrade.ps1/升级.bat（自动升级）+ allow-lan.ps1/允许局域网访问.bat + 启动游戏平台.cmd
                              #   + smoke_win.py（自检）+ requirements-win.txt + 说明.txt + README.md
                              #   + xgame.png（快捷方式图标的源图，随仓库提交；换图标 = 替换它再跑 make_icon.py 生成 xgame.ico）
@@ -383,13 +386,23 @@ Docker 是正式运行方式；「解压即用」包是给**一台 Windows、用
 Windows 侧与 WSL/容器侧的文件锁互相看不见，同时写就是坏库。
 
 ```bash
-make win        # = bash packaging/windows/build-win-dist.sh
-# 产物 dist-win/xgame_v<最新 git tag>.zip，解压出来是 xgame/ 目录，双击「启动游戏平台.cmd」
+make win        # 在容器里组装（构建环境镜像没有就先建一次）：dist-win/xgame_v<版本>.zip
+make win-image  # 只构建/更新那个构建环境镜像
 ```
 
-**组装全部在 WSL/Linux 完成**（前端产物平台无关；Windows 版 Python 与依赖轮子都在 Linux 上下载），
-不需要 Windows 机器。运行时是 python-build-standalone 的可重定位 CPython，**release 与 sha256
-钉死在 `build-win-dist.sh` 顶部**（唯一的供应链入口，升级时三个值一起改）。
+**整个组装在容器里跑**（`packaging/windows/Dockerfile.build`），宿主机只要有 Docker——不需要
+node / python / curl / zip，也不碰宿主机自己的 `frontend/node_modules`。**能固定的依赖全预置在
+镜像的 `/opt/winbuild` 下**（Windows 版 CPython、win 轮子、前端 node_modules、EmulatorJS 资产），
+所以组装那一步不联网；镜像 tag =「Dockerfile + 它 COPY 的那些输入文件」的哈希，改了自动重建、
+没改一直复用（`WINBUILD_NO_CACHE=1 make win-image` 强制刷新）。构建环境用 **Debian（glibc）而不是
+Alpine（musl）**，才能让容器里装的前端依赖（rolldown 之类是平台相关二进制）与宿主机同一套。
+容器以宿主机用户身份跑；包内自检（`smoke_win.py`）由宿主机在构建后补跑（容器里没有 binfmt_misc）。
+运行时是 python-build-standalone 的可重定位 CPython，**release 与 sha256 钉死在 `runtime.env`**
+（唯一的供应链入口，升级时只改它）。
+
+**版本号只有一个出处：`scripts/version.sh`**（Docker 路线与 Windows 包共用）。HEAD 停在最新 tag
+上就是 `v1.0.0`，在 tag 之后的提交上则是 `v1.0.0-<HEAD 提交时间毫秒>`；比较时先比 tag 再比这串
+数字。前端在构建期拿到它显示在侧栏标题后，同时写进 `web/version.txt` 供已打开的页面探测更新。
 
 这条路线与 Docker 的差异，逐条都是被逼的，改动时要一起考虑：
 
