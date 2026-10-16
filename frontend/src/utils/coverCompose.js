@@ -5,16 +5,15 @@
  * 载入原封面、预览与上传。几何常量在 constants/coverStyles.js。
  *
  * 两种合成：
- *   - flash：**程序化绘制**，没有底图。照抄原先卡片上那套「实体光盘」的 CSS 渲染
- *            （圆形裁切 + 盘面贴封面 + 盘心 Flash 标志 + 三层反光），逐条换算成 canvas。
- *   - 卡带：**先把封面缩放到洞口的宽高比，再与底图合并**。底图是成品素材，
- *            中间的贴纸窗已经挖空，封面直接贴进洞口位置即可。
+ *   - flash：**程序化绘制**，没有底图——圆形裁切 + 盘面贴封面 + 盘心 Flash 标志 + 三层反光。
+ *   - 卡带：**先把封面缩放到洞口的宽高比，再与底图合并**。底图是成品素材——一张
+ *            没贴过贴纸的原始卡带，封面直接盖到洞口位置即可。
  *
- * 输出的 PNG **必须带 Alpha**：光盘圆外、卡带洞口圆角之外都要透明
- * （卡带那边尤其重要——底图在圆角外还留着机身像素与凹槽阴影，要透出来接缝才自然）。
+ * 输出的 PNG **必须带 Alpha**：光盘圆外、卡带轮廓之外（缺口与四角）都要透明，
+ * 不然摆到卡片上就是一块方形底。
  */
 
-import { CART_STYLES, FLASH_DISC } from "@/constants/coverStyles";
+import { CART_STYLES, FLASH_DISC, cornerRadii } from "@/constants/coverStyles";
 
 // 素材图（卡带底图、Flash 标志）按 URL 缓存，同一张只解码一次。
 // 值存的是 Promise：并发调用不会各下载一遍。
@@ -67,18 +66,19 @@ export async function composeCover(styleId, sourceImg) {
  * 卡带：底图铺满 → 把封面**拉伸填满**洞口（`object-fit: fill` 的做法，不改比例地
  * 拉成洞口的长宽比，不裁切也不留边）→ 与底图合成。
  *
- * 贴之前一定要按洞口的圆角裁一刀：底图的洞口是按圆角挖的，圆角之外仍是机身像素
- * （GBA 是不透明的机身灰、GBC 是半透明的凹槽阴影），不裁的话矩形封面会把这圈盖掉。
+ * 贴之前一定要按洞口的圆角裁一刀：底图洞口是按圆角填的，圆角之外仍是机身像素
+ * （GBA 是机身灰、GBC 是贴纸凹槽的阴影），不裁的话矩形封面会把这圈盖掉。
+ * 圆角**按角给**：美版 FC 的洞口上边就是画布顶边，上面两角是直角（见 constants/coverStyles.js）。
  */
 async function composeCartridge(cart, sourceImg) {
-    const { image, hole, radius } = cart;
+    const { image, hole } = cart;
     const base = await loadImage(cart.url);
     const ctx = makeContext(image.width, image.height);
 
     ctx.drawImage(base, 0, 0, image.width, image.height);
 
     ctx.save();
-    roundRectPath(ctx, hole.x, hole.y, hole.width, hole.height, radius);
+    roundRectPath(ctx, hole.x, hole.y, hole.width, hole.height, cornerRadii(cart.radius));
     ctx.clip();
     // 没有源矩形：整张封面直接拉伸到洞口大小
     ctx.drawImage(sourceImg, hole.x, hole.y, hole.width, hole.height);
@@ -110,7 +110,7 @@ async function composeFlashDisc(sourceImg) {
 
     // 1. 盘面底色。有封面时基本被盖住，只有封面自己带透明像素才看得见，
     //    但照画——没封面时它就是那张「空白盘」的金属感
-    const base = cssAngleGradient(ctx, 0, 0, d, d, 135);
+    const base = angleGradient(ctx, 0, 0, d, d, 135);
     base.addColorStop(0, "#f8fafc");
     base.addColorStop(0.42, "#cbd5e1");
     base.addColorStop(0.58, "#eef2f7");
@@ -134,12 +134,12 @@ async function composeFlashDisc(sourceImg) {
     );
 
     // 3. 盘心那枚 Flash 标志，正好盖住盘中心那一圈。
-    //    hub 的基准是**盘直径**（CSS 里 width: 15% 相对的是盘那个正方形）
+    //    hub 的基准是**盘直径**（与反光那几层占半径不同）
     const hub = d * hubRatio;
     ctx.drawImage(logo, (d - hub) / 2, (d - hub) / 2, hub, hub);
 
-    // 4. 反光三层。CSS 的 background 里**第一条在最上**，canvas 没有多背景，
-    //    所以在这里必须倒着画：先 linear，再外圈暗调，最后盘心环
+    // 4. 反光三层，**由底到顶**依次画：先斜向高光，再外圈暗调与塑料边，最后盘心积层环。
+    //    顺序反了上面那层会把下面的盖掉
     drawGloss(ctx, d, r);
     drawRim(ctx, r);
     drawHubRing(ctx, r);
@@ -151,9 +151,9 @@ async function composeFlashDisc(sourceImg) {
 /** 透明色（三层反光里到处在用） */
 const CLEAR = "rgba(255, 255, 255, 0)";
 
-/** 斜向高光：`linear-gradient(118deg, …)`，压在最底下 */
+/** 斜向高光，压在最底下 */
 function drawGloss(ctx, d, r) {
-    const gloss = cssAngleGradient(ctx, 0, 0, d, d, 118);
+    const gloss = angleGradient(ctx, 0, 0, d, d, 118);
     gloss.addColorStop(0, "rgba(255, 255, 255, 0.42)");
     gloss.addColorStop(0.24, "rgba(255, 255, 255, 0.06)");
     gloss.addColorStop(0.3, CLEAR);
@@ -165,11 +165,11 @@ function drawGloss(ctx, d, r) {
 }
 
 /**
- * 外圈弧度暗调 + 透明塑料边：`radial-gradient(circle closest-side, …)`。
+ * 外圈弧度暗调 + 透明塑料边。
  *
- * 百分比基准是**盘半径**（正方形盒上 closest-side 的半径就是 r），不是盘直径——
- * 这是整套换算里最容易搞错的一处。CSS 的双位置 stop（`A 91% 92.5%`）在 canvas 里
- * 必须拆成两条同色 stop，因为 addColorStop 一次只吃一个 offset。
+ * 径向渐变的百分比基准是**盘半径**，不是盘直径——这是整套几何里最容易搞错的一处
+ * （盘心标志那个 hubRatio 是占直径的，见 constants/coverStyles.js）。同色双位置
+ * stop（`91%` 与 `92.5%` 之间没有过渡）要写成两条同色 stop，`addColorStop` 一次只吃一个 offset。
  */
 function drawRim(ctx, r) {
     const rim = ctx.createRadialGradient(r, r, 0, r, r, r);
@@ -189,7 +189,7 @@ function drawRim(ctx, r) {
 }
 
 /**
- * 盘心外围那圈积层环：`radial-gradient(circle closest-side, …)`，压在最上层。
+ * 盘心外围那圈积层环，压在最上层。
  *
  * 起始位置 0.16 与盘心标志的边缘 0.15（同样占半径）之间**刻意留一道缝**，
  * 封面从缝里透出来——这就是「孔外一圈积层环」的观感，别把 0.16 改成 0.15。
@@ -207,16 +207,13 @@ function drawHubRing(ctx, r) {
 /* ------------------------------------------------------------------ 通用 ---- */
 
 /**
- * CSS 的 `linear-gradient(θdeg, …)` 换算成 canvas 的 `createLinearGradient`。
- *
- * CSS 的角度是 0deg 朝上、顺时针增大；canvas 的 y 轴朝下，所以方向向量是
- * (sinθ, −cosθ)。渐变线过盒心，长度取盒子在渐变方向上的投影
- * `|W·sinθ| + |H·cosθ|`。
+ * 按角度建一条线性渐变：角度 0 朝上、顺时针增大（canvas 的 y 轴朝下，所以方向向量是
+ * `(sinθ, −cosθ)`）。渐变线过盒心，长度取盒子在渐变方向上的投影 `|W·sinθ| + |H·cosθ|`。
  *
  * 别图省事拿 (x,y)→(x+w,y+h) 当端点：那只在 45° 的整数倍上碰巧对。
  * 自检：正方形上 135deg 应得左上角 → 右下角。
  */
-function cssAngleGradient(ctx, x, y, w, h, deg) {
+function angleGradient(ctx, x, y, w, h, deg) {
     const rad = (deg * Math.PI) / 180;
     const dx = Math.sin(rad);
     const dy = -Math.cos(rad);
@@ -232,16 +229,21 @@ function cssAngleGradient(ctx, x, y, w, h, deg) {
 }
 
 /**
- * 圆角矩形路径。不用 `ctx.roundRect`：那个 Chrome 99+ / Safari 16+ 才有，
- * 这几行 arcTo 到处都能跑。
+ * 圆角矩形路径，**四角半径可以各不相同**（`{ tl, tr, br, bl }`，0 = 直角）。
+ * 不用 `ctx.roundRect`：那个 Chrome 99+ / Safari 16+ 才有，而且只吃一个统一半径。
+ * `arcTo` 半径 0 是退化情形，这里干脆跳过它——上面那句 lineTo 已经走到角上了。
  */
 function roundRectPath(ctx, x, y, w, h, r) {
     ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
+    ctx.moveTo(x + r.tl, y);
+    ctx.lineTo(x + w - r.tr, y);
+    if (r.tr) ctx.arcTo(x + w, y, x + w, y + r.tr, r.tr);
+    ctx.lineTo(x + w, y + h - r.br);
+    if (r.br) ctx.arcTo(x + w, y + h, x + w - r.br, y + h, r.br);
+    ctx.lineTo(x + r.bl, y + h);
+    if (r.bl) ctx.arcTo(x, y + h, x, y + h - r.bl, r.bl);
+    ctx.lineTo(x, y + r.tl);
+    if (r.tl) ctx.arcTo(x, y, x + r.tl, y, r.tl);
     ctx.closePath();
 }
 

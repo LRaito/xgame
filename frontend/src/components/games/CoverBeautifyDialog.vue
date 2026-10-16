@@ -1,18 +1,35 @@
 <template>
     <!-- 美化封面：左边原封面、右边合成结果，确认就把合成图存成该游戏的新封面。
-         弹出即自动合成（没有「制作」这一步），样式由游戏类型决定，用户不用选 —— 见
-         constants/coverStyles.js 的 beautifyStyleFor()。
+         弹出即自动合成（没有「制作」这一步）。**样式由游戏类型给一组**（见
+         constants/coverStyles.js 的 beautifyStylesFor），第一个是默认样式；
+         多于一个样式时标题右边出现方框单选，切换只重新合成、不重新下载原封面。
 
          入口是游戏管理页编辑弹框「游戏封面」那行的「美化封面」按钮，只在
-         支持美化的类型（flash / gb / gba）且该游戏已有封面时可用。 -->
+         类型支持美化且该游戏已有封面时可用。 -->
     <app-dialog
         :model-value="modelValue"
         title="美化封面"
         width="720px"
         @update:model-value="emit('update:modelValue', $event)"
     >
+        <template #header>
+            <!-- 只有一个样式的类型（flash / gba）不出这排单选 -->
+            <el-radio-group
+                v-if="styles.length > 1"
+                v-model="styleId"
+                class="cover-beautify__styles"
+                size="small"
+                @change="compose"
+            >
+                <el-radio-button v-for="item in styles" :key="item.id" :value="item.id">
+                    {{ item.label }}
+                </el-radio-button>
+            </el-radio-group>
+        </template>
+
         <div class="cover-beautify">
-            <!-- 建议尺寸按样式取：三种样式的输入比例差别很大（GBA 洞口是 1.97:1 的横版） -->
+            <!-- 建议尺寸按样式取：各样式洞口的比例差得很远（GBA 是 1.97:1 的横版，
+                 FC 美版是 0.61:1 的竖版） -->
             <p class="cover-beautify__hint">{{ styleHint }}</p>
 
             <div class="cover-beautify__panes">
@@ -26,7 +43,7 @@
 
                 <section class="cover-beautify__pane">
                     <h3 class="cover-beautify__pane-title">美化后</h3>
-                    <!-- 棋盘格底：光盘圆外与卡带圆角外的透明区一眼可见 -->
+                    <!-- 棋盘格底：光盘圆外与卡带轮廓外的透明区一眼可见 -->
                     <div
                         v-loading="status === 'working'"
                         class="cover-beautify__stage cover-beautify__stage--checker"
@@ -64,7 +81,7 @@ import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import AppDialog from "@components/common/AppDialog.vue";
 import { gameCoverPath } from "@/api/games";
-import { beautifyStyleFor } from "@/constants/coverStyles";
+import { beautifyStylesFor } from "@/constants/coverStyles";
 import { composeCover, loadImage } from "@/utils/coverCompose";
 
 const props = defineProps({
@@ -84,12 +101,19 @@ const resultUrl = ref("");
 const resultMeta = ref("");
 const blob = ref(null);
 
-const styleHint = computed(
-    () => beautifyStyleFor(props.game?.game_type)?.hint || "该游戏类型暂不支持封面美化。"
+/** 这个游戏类型可用的样式（空数组 = 不支持，正常走不到这儿） */
+const styles = computed(() => beautifyStylesFor(props.game?.game_type));
+/** 当前选中的样式 id（打开时重置成列表第一个，也就是默认样式） */
+const styleId = ref("");
+const style = computed(
+    () => styles.value.find((item) => item.id === styleId.value) || styles.value[0] || null
 );
+const styleHint = computed(() => style.value?.hint || "该游戏类型暂不支持封面美化。");
 
-// 每轮合成发一个号：弹框关掉或重开时号会变，在途的那次回来发现号对不上就丢弃，
-// 免得它把结果写进下一次打开的弹框里
+// 已经载入好的原封面：切样式时直接拿它重合成，不再走一次网络
+let sourceImage = null;
+// 每轮合成发一个号：弹框关掉、重开或又切了样式时号会变，
+// 在途的那次回来发现号对不上就丢弃，免得它把结果写进下一次的预览里
 let runToken = 0;
 
 function releaseResult() {
@@ -107,34 +131,26 @@ function reset() {
     status.value = "idle";
     sourceUrl.value = "";
     sourceMeta.value = "";
+    sourceImage = null;
 }
 
-/** 弹出即合成。原封面走 gameCoverPath（同源直连后端），不走 Service Worker——少一层缓存。 */
-async function run() {
-    reset();
-    const style = beautifyStyleFor(props.game?.game_type);
-    const gameId = props.game?.id;
-    if (!style || !gameId || !props.game?.cover_path) {
+/** 合成当前样式。只用已经载入好的原封面（切样式走这条）。 */
+async function compose() {
+    const current = style.value;
+    if (!current || !sourceImage) {
         return;
     }
     const token = ++runToken;
+    releaseResult();
     status.value = "working";
     try {
-        const src = gameCoverPath(gameId, props.game.updated_at);
-        const image = await loadImage(src);
-        if (token !== runToken) {
-            return;
-        }
-        sourceUrl.value = src;
-        sourceMeta.value = `原封面 ${image.naturalWidth} × ${image.naturalHeight}`;
-
-        const composed = await composeCover(style.id, image);
+        const composed = await composeCover(current.id, sourceImage);
         if (token !== runToken) {
             return;
         }
         blob.value = composed;
         resultUrl.value = URL.createObjectURL(composed);
-        resultMeta.value = `美化后 ${style.output.width} × ${style.output.height}`;
+        resultMeta.value = `美化后 ${current.output.width} × ${current.output.height}`;
         status.value = "ready";
     } catch (err) {
         if (token !== runToken) {
@@ -143,6 +159,44 @@ async function run() {
         status.value = "error";
         ElMessage.error(err?.message || "美化失败，请重试。");
     }
+}
+
+/** 弹出时跑一次：载入原封面 → 合成默认样式。
+ *  原封面走 gameCoverPath（同源直连后端），不走 Service Worker——少一层缓存。 */
+async function run() {
+    reset();
+    const list = styles.value;
+    const gameId = props.game?.id;
+    if (!list.length || !gameId || !props.game?.cover_path) {
+        return;
+    }
+    // 默认样式：游戏自己是日版/美版时就选对应的那个（FC 的两种卡带壳靠 cartridge_type 区分，
+    // 见 constants/coverStyles.js 的 cartridgeType），其余类型就是列表第一个
+    const preferred = list.find(
+        (item) => item.cartridgeType && item.cartridgeType === props.game?.cartridge_type
+    );
+    styleId.value = (preferred || list[0]).id;
+    const token = ++runToken;
+    status.value = "working";
+    try {
+        const src = gameCoverPath(gameId, props.game.updated_at);
+        const image = await loadImage(src);
+        if (token !== runToken) {
+            return;
+        }
+        sourceImage = image;
+        sourceUrl.value = src;
+        sourceMeta.value = `原封面 ${image.naturalWidth} × ${image.naturalHeight}`;
+    } catch (err) {
+        if (token !== runToken) {
+            return;
+        }
+        status.value = "error";
+        ElMessage.error(err?.message || "原封面加载失败。");
+        return;
+    }
+    // 这里是直接赋 styleId，不走单选的 change 事件，所以只会合成一次
+    await compose();
 }
 
 function onConfirm() {
@@ -169,6 +223,13 @@ onBeforeUnmount(reset);
 </script>
 
 <style scoped>
+/* 标题右边那排方框单选：跟着标题的基线走，别把标题挤下去 */
+.cover-beautify__styles {
+    display: inline-flex;
+    margin-left: 16px;
+    vertical-align: middle;
+}
+
 /* 建议尺寸：一行说明，压在两个预览区上面 */
 .cover-beautify__hint {
     margin: 0 0 14px;

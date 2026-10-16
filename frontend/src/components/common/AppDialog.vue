@@ -8,6 +8,13 @@
         destroy-on-close
         @close="emit('update:modelValue', false)"
     >
+        <!-- 标题右边还想放东西（比如美化封面的样式单选）就走这个插槽：
+             el-dialog 的 header 插槽只替换标题那一段，右上角的关闭按钮不受影响 -->
+        <template v-if="$slots.header" #header>
+            <span class="el-dialog__title">{{ title }}</span>
+            <slot name="header" />
+        </template>
+
         <slot />
         <template #footer>
             <slot name="footer">

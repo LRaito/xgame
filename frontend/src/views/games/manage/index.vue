@@ -452,7 +452,7 @@ import {
     cartridgeTypesFor,
     sortedCartridgeTypes,
 } from "@/constants/cartridgeTypes";
-import { beautifyStyleFor } from "@/constants/coverStyles";
+import { beautifyStylesFor } from "@/constants/coverStyles";
 import {
     ALL_GAME_EXTENSIONS,
     gameTypeByExtension,
@@ -495,13 +495,15 @@ const form = reactive({
 // 图集管理弹框（编辑弹框里的「图集 → 管理」打开；按游戏共享，保存即生效）
 const galleryManagerVisible = ref(false);
 
-// 美化封面弹框：把当前封面合成成光盘 / 卡带外观后存回去。样式由游戏类型决定
-// （constants/coverStyles.js），不支持的类型整条不显示按钮
+// 美化封面弹框：把当前封面合成成光盘 / 卡带外观后存回去。可用样式由游戏类型给
+// （constants/coverStyles.js，有的类型不止一种样式，在弹框里选），不支持的类型整条不显示按钮
 const beautifyVisible = ref(false);
 const beautifySaving = ref(false);
-const beautifyStyle = computed(() => beautifyStyleFor(editingItem.value?.game_type));
+const beautifyStyles = computed(() => beautifyStylesFor(editingItem.value?.game_type));
 // 新建时游戏还没落库、也没有封面，不出现（图集、攻略两项同样是编辑专属）
-const canShowBeautify = computed(() => formMode.value === "edit" && Boolean(beautifyStyle.value));
+const canShowBeautify = computed(
+    () => formMode.value === "edit" && beautifyStyles.value.length > 0
+);
 // 支持美化的类型但还没有封面 → 按钮在、但点不动（美化的输入就是当前封面）
 const canBeautify = computed(() => canShowBeautify.value && Boolean(editingItem.value?.cover_path));
 

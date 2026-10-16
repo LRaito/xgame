@@ -113,7 +113,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | snapshot_id | INTEGER | NOT NULL, FK → `game_cloud_snapshots.id`, 索引 | 所属快照 |
 | sort_order | INTEGER | NOT NULL, 默认 0 | 快照内顺序，从 0 起（列表按此排序） |
 | local_key | VARCHAR(500) | NOT NULL | 还原时写回浏览器本地存储的键：Flash 为 localStorage 的 Ruffle 键；模拟器固定为 `x_emusave:{gameId}:state1`（内容经 IndexedDB 保存） |
-| name | VARCHAR(255) | NOT NULL, 默认 `''` | 展示名；下载名按此——name 含扩展名时原样（模拟器固定 `save.state`），否则补 `.sol`（Flash 历史名） |
+| name | VARCHAR(255) | NOT NULL, 默认 `''` | 展示名；下载名按此——name 含扩展名时原样（模拟器固定 `save.state`），否则补 `.sol`（Flash 存档的后缀） |
 | size | INTEGER | NOT NULL, 默认 0 | 字节数（快照列表的 total_size 由此聚合） |
 | mime | VARCHAR(200) | NULL | 默认回退 `application/octet-stream` |
 | file_path | VARCHAR(500) | NOT NULL, 默认 `''` | 磁盘相对路径，见「云端存档」路径规则 |
