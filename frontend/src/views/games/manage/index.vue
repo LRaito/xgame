@@ -164,7 +164,7 @@
                         </el-form-item>
                     </div>
                     <div class="game-manage__form-col">
-                        <el-form-item label="上传本体" :required="formMode === 'create'">
+                        <el-form-item label="游戏本体" :required="formMode === 'create'">
                             <!-- 两个来源做成同款按钮：原生文件选择器藏起来，由「本地上传」代点 -->
                             <div class="game-manage__source">
                                 <input
@@ -191,7 +191,7 @@
                                 当前：{{ editingItem.game_path }}
                             </p>
                         </el-form-item>
-                        <el-form-item label="上传封面">
+                        <el-form-item label="游戏封面">
                             <div class="game-manage__source">
                                 <input
                                     ref="coverFileRef"
@@ -202,6 +202,15 @@
                                 />
                                 <app-button @click="pickCoverFile">本地上传</app-button>
                                 <app-button @click="openRemoteCover">网络上传</app-button>
+                                <!-- 美化封面：把当前封面合成成光盘 / 卡带的外观后存回去。
+                                     只在支持美化的类型（flash / gb / gba）出现，且要已有封面 -->
+                                <app-button
+                                    v-if="canShowBeautify"
+                                    :disabled="!canBeautify"
+                                    @click="beautifyVisible = true"
+                                >
+                                    美化封面
+                                </app-button>
                             </div>
                             <p v-if="form.coverFile" class="game-manage__file-hint">
                                 已选：{{ form.coverFile.name }}
@@ -233,7 +242,7 @@
                             </div>
                         </el-form-item>
                         <!-- 攻略：只在编辑时出现（新建还没有卡带目录可落）。整目录上传，保存时才发出去 -->
-                        <el-form-item v-if="formMode === 'edit'" label="上传攻略">
+                        <el-form-item v-if="formMode === 'edit'" label="游戏攻略">
                             <div class="game-manage__source">
                                 <!-- webkitdirectory：整目录选择；只传文件夹内的内容，外层目录名由 guideRelPath 剥掉 -->
                                 <input
@@ -245,7 +254,7 @@
                                     multiple
                                     @change="onGuideDirChange"
                                 />
-                                <app-button @click="pickGuideDir">选择文件夹</app-button>
+                                <app-button @click="pickGuideDir">上传文件夹</app-button>
                             </div>
                             <p v-if="guideFiles.length" class="game-manage__file-hint">
                                 已选 {{ guideFiles.length }} 个文件
@@ -334,6 +343,14 @@
         <!-- 图集管理：叠在编辑弹框之上的另一层，所以放在它外面（同为根节点） -->
         <gallery-manager-dialog v-model="galleryManagerVisible" :game-id="editingId" />
 
+        <!-- 美化封面：同样叠在编辑弹框之上，确认后直接把合成图存成该游戏的新封面 -->
+        <cover-beautify-dialog
+            v-model="beautifyVisible"
+            :game="editingItem"
+            :confirm-loading="beautifySaving"
+            @confirm="onBeautifyConfirm"
+        />
+
         <app-dialog v-model="importVisible" title="搬运游戏" width="560px">
             <div class="game-import">
                 <div class="game-import__field">
@@ -414,6 +431,7 @@ import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch } from "v
 import { ElMessage, ElMessageBox } from "element-plus";
 import AppDialog from "@components/common/AppDialog.vue";
 import CopyButton from "@components/common/CopyButton.vue";
+import CoverBeautifyDialog from "@components/games/CoverBeautifyDialog.vue";
 import GameDetailDialog from "@components/games/GameDetailDialog.vue";
 import GalleryManagerDialog from "@components/games/GalleryManagerDialog.vue";
 import ImageUploadButton from "@components/games/ImageUploadButton.vue";
@@ -434,6 +452,7 @@ import {
     cartridgeTypesFor,
     sortedCartridgeTypes,
 } from "@/constants/cartridgeTypes";
+import { beautifyStyleFor } from "@/constants/coverStyles";
 import {
     ALL_GAME_EXTENSIONS,
     gameTypeByExtension,
@@ -475,6 +494,16 @@ const form = reactive({
 
 // 图集管理弹框（编辑弹框里的「图集 → 管理」打开；按游戏共享，保存即生效）
 const galleryManagerVisible = ref(false);
+
+// 美化封面弹框：把当前封面合成成光盘 / 卡带外观后存回去。样式由游戏类型决定
+// （constants/coverStyles.js），不支持的类型整条不显示按钮
+const beautifyVisible = ref(false);
+const beautifySaving = ref(false);
+const beautifyStyle = computed(() => beautifyStyleFor(editingItem.value?.game_type));
+// 新建时游戏还没落库、也没有封面，不出现（图集、攻略两项同样是编辑专属）
+const canShowBeautify = computed(() => formMode.value === "edit" && Boolean(beautifyStyle.value));
+// 支持美化的类型但还没有封面 → 按钮在、但点不动（美化的输入就是当前封面）
+const canBeautify = computed(() => canShowBeautify.value && Boolean(editingItem.value?.cover_path));
 
 // 网络上传的两个小弹框：本体要连类型一起选，封面只要地址
 const remoteBodyVisible = ref(false);
@@ -793,7 +822,7 @@ function onGuideDirChange(event) {
     const files = Array.from(event.target.files || []);
     // 拿不到 webkitRelativePath 时拼不出目录结构（子目录会被压平），宁可拒收
     if (files.length && !files.some((file) => file.webkitRelativePath)) {
-        ElMessage.warning("无法读取文件夹结构，请用「选择文件夹」重新选择");
+        ElMessage.warning("无法读取文件夹结构，请用「上传文件夹」重新选择");
         clearGuideDir();
         return;
     }
@@ -885,6 +914,32 @@ async function uploadAsset(gameId, kind, { file = null, url = "", gameType = "" 
         data.append("game_type", gameType);
     }
     await uploadGameAssetAPI(gameId, data);
+}
+
+/**
+ * 美化封面弹框点「确认」：把合成出来的 PNG 传成该游戏的新封面。
+ *
+ * 合成图是 canvas 出来的 Blob，没有名字——后端靠文件名的后缀定扩展名（并决定落盘的
+ * cover.{后缀}），所以必须包一层带 .png 的 File 再交给 uploadAsset。
+ */
+async function onBeautifyConfirm(blob) {
+    beautifySaving.value = true;
+    try {
+        await uploadAsset(editingId.value, "cover", {
+            file: new File([blob], "cover.png", { type: "image/png" }),
+        });
+        beautifyVisible.value = false;
+        ElMessage.success("封面已更新");
+        // 封面路径与 updated_at 都变了：刷新编辑弹框里「当前：…」与预览，再刷新列表缩略图
+        editingItem.value = await getManageGameAPI(editingId.value);
+        await reload();
+    } catch (err) {
+        if (!err.reported) {
+            ElMessage.error(err.message || "封面更新失败");
+        }
+    } finally {
+        beautifySaving.value = false;
+    }
 }
 
 /** 一次性提交整个攻略文件夹：files 与 paths 顺序严格对位（后端按下标配对） */

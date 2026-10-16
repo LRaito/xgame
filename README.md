@@ -322,8 +322,9 @@ touch /mnt/x/xgame/.mounted      # 路径换成你的数据目录
 引擎资产由 `frontend/scripts/copy-ruffle.mjs` 与 `fetch-emulatorjs.mjs` 在构建期按固定版本拉取，
 仓库里不含它们的源码，部署与再分发时仍需遵守各自的许可证。上表的许可**以各自上游仓库的声明为准**。
 
-`frontend/public/` 下的国旗图标与游戏机机身图（`gba-shell.png` / `gbc-shell.png` / `gbc-cart.png` /
-`nes-shell.png` / `nes-shell-43.png`）、`flash-logo.png` 是界面展示素材，版权归各自权利人所有，
+`frontend/public/` 下的国旗图标、游戏机机身图（`gba-shell.png` / `gbc-shell.png` /
+`nes-shell.png` / `nes-shell-43.png`）、卡带底图（`gba-cart.png` / `gbc-cart.png`）与
+`flash-logo.png` 是界面展示素材，版权归各自权利人所有，
 **不在本项目的 MIT 许可范围内**；要再分发或商用请自行确认来源与许可，或换成自己的图。
 
 ## 参考资料

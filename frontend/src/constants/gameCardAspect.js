@@ -3,7 +3,7 @@
  *
  * 卡片宽度由网格列宽统一决定（「最近游玩」rail 与「全部游戏」网格都是
  * repeat(auto-fill, minmax(180px, 1fr))，宽度完全一样），**这个宽度就是「正方形限制框」
- * 的边长**：封面内容（Flash 光盘 / GB-GBC 卡带合成 / 普通封面图）一律等比缩放到
+ * 的边长**：封面内容（封面原图）一律等比缩放到
  * 长或宽触到限制框的边、水平垂直居中，所以同一盘卡在 rail 与网格里**一样大**。
  * 实现见 components/games/GameCover.vue：框上 container-type: inline-size，
  * 内部用 cqw 表达边长（100cqw = 卡片宽）。
