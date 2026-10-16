@@ -67,12 +67,24 @@ const boxStyle = computed(() => {
     overflow: hidden;
 }
 
-/* 封面：宽先铺满，高度超出正方形限制框时由 max-height 等比压回
-   （替换元素触发 max-height 会保持宽高比，不裁不拉），父级 flex 居中 */
+/* 封面：宽先铺满，高度超出正方形限制框时由 max-height 压回，父级 flex 居中。
+
+   `object-fit: contain` 是这里的关键，不能省。max-height 生效时元素盒子被压成
+   正方形，而 img 默认 `object-fit: fill` 会把画面**横向拉宽**填满盒子——竖版封面
+   （GBC 卡带 438×503、FC 美版 700×779）就是这么被拉变形的，横版封面（GBA 640×370、
+   FC 日版 700×460）高度本来就没超框，走不到这一步，所以只有竖版看得出问题。
+
+   **别指望 max-height 自己保持比例**：那套算法（CSS2.1 §10.4）只在 width 与 height
+   **都是 auto** 时才适用；这里 width 是明确值 100%，浏览器只压 height、宽度不动。
+   改成 `width: auto` 则小图不会被放大到铺满卡片，也不对。
+
+   加了 contain 后：盒子仍是正方形，画面等比缩放到长或宽触到限制框的边，多出来的
+   方向留白居中——竖版贴满高、左右留白，横版贴满宽、上下留白，正是「正方形限制框」的语义。 */
 .game-cover__img {
     width: 100%;
     height: auto;
     max-height: 100cqw;
+    object-fit: contain;
     display: block;
 }
 

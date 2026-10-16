@@ -65,10 +65,15 @@ const showMeta = computed(
 </script>
 
 <style scoped>
-/* 卡片本身无边框、无底色，hover 时只把封面抬起 */
+/* 卡片本身无边框、无底色，hover 时只把封面抬起。
+   space-between：网格把一行里的卡片都拉到行高（= 这一行最高的封面 + 信息）后，
+   矮卡片的余量全部落到封面与信息之间，于是封面贴顶、标题等信息贴底——
+   整行标题落在同一条水平线上。默认的 flex-start 会把余量堆在信息下方，
+   矮卡片的标题就被顶上去，与高卡片的标题错开一行。 */
 .game-card {
     display: flex;
     flex-direction: column;
+    justify-content: space-between;
     min-width: 0;
     text-decoration: none;
     color: inherit;
