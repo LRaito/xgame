@@ -6,6 +6,22 @@ from backend import create_app
 from backend.auth.service import AuthService
 
 
+@pytest.fixture(autouse=True)
+def _hide_host_dir_env(monkeypatch):
+    """把两个宿主路径变量从进程环境里摘掉，让每条用例都在受控环境下构造 Settings。
+
+    `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` 是配在 `.env` 里、给 compose 用的**宿主**路径，
+    只参与 mount_guard 的哨兵前缀判断；而 `Settings`（pydantic-settings）会读环境变量，
+    于是 `make test` 经 Makefile 的 export 把它们带进来之后，任何构造 Settings 的用例都会
+    以为数据根落在 /mnt 这类 Windows 盘路径下，判定缺哨兵而 SystemExit: 3 —— 直接跑 pytest
+    全绿、走 make test 挂 4 条，就是这么来的。
+
+    需要这两个值的用例自己构造 Settings 时显式传参（见 test_mount_guard.py）。
+    """
+    monkeypatch.delenv("STORAGE_HOST_DIR", raising=False)
+    monkeypatch.delenv("RUNTIME_HOST_DIR", raising=False)
+
+
 def login_as(client, username="alice", password="secret123"):
     response = client.post(
         "/api/login", json={"username": username, "password": password}

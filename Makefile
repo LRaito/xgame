@@ -2,16 +2,24 @@
 
 COMPOSE ?= docker compose
 
-# 作为环境变量导出，compose 里的 ${STORAGE_HOST_DIR} / ${RUNTIME_HOST_DIR} / ${WEB_HTTPS_PORT} 从这里取。
+# 作为环境变量导出，compose 里的 ${STORAGE_HOST_DIR} / ${RUNTIME_HOST_DIR} / ${WEB_HTTPS_PORT} 从这里取
+# （index 目标也靠 $${STORAGE_HOST_DIR} 读它）。
 # 没有 .env 也没关系：compose 会退到默认值（数据与库都放 ./data/storage、端口 443）。
+#
+# 精确导出而不是裸 `export`：后者会把 .env 与 Makefile 里的每个变量都塞进所有子进程的环境。
+# 注意这两个 *_HOST_DIR 确实会被 `make test` 带进 pytest 的环境，而 `Settings` 会读环境变量——
+# 测试侧由 tests/conftest.py 的 `_hide_host_dir_env` 兜住（那条 autouse fixture 别删）。
+# WINBUILD_NO_CACHE 也要带上：`make win WINBUILD_NO_CACHE=1` 是命令行变量（不在环境里），
+# 而 packaging/windows/build-in-docker.sh 是按环境变量读它的。
 -include .env
-export
+export STORAGE_HOST_DIR RUNTIME_HOST_DIR WEB_HTTPS_PORT WINBUILD_NO_CACHE
 
 # 构建版本号：取仓库最新 tag；HEAD 停在 tag 之后的提交上时再补一段提交时间戳
 # （v1.0.0 或 v1.0.0-1792042865000，规则与比较方式见 scripts/version.sh）。
 # 前端把它显示在侧栏标题后、并写进 /version.txt 供已经打开的页面探测新版本。
-# 上面那行裸 export 会把它一并导出，docker compose build 能读到（web 镜像的 APP_VERSION 构建参数）。
+# 单独导出：docker compose build 要读它（web 镜像的 APP_VERSION 构建参数）。
 APP_VERSION ?= $(shell bash scripts/version.sh)
+export APP_VERSION
 
 # 重新生成 HTTPS 自签名证书（写进仓库的 certs/，已存在则跳过）。
 # 证书已随仓库提供，只有换主机名/IP 时才需要跑：make certs ARGS="192.168.1.10"
