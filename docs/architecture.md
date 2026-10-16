@@ -37,11 +37,11 @@ x 是私人游戏平台，不是对外 SaaS。只做一件事：把 Flash、HTML
 └─────────────┘             │  storage/access 跨模块流式下载通道    │
                             └──────────┬───────────┬───────────────┘
                                        ▼           ▼
-                                 data/app.db   项目文件根目录
-                                              （STORAGE_ROOT 挂载点）
+                            运行时根/db/app.db  项目文件根目录
+                            （RUNTIME_ROOT）    （STORAGE_ROOT 挂载点）
 ```
 
-浏览器只和 nginx 通信。API 负责会话和编排，领域逻辑在 service，I/O 在适配器。Router 不得直接访问 SQLite 或磁盘。游戏文件（本体/封面/H5 资源/攻略/云端存档/截图）落在宿主目录挂进容器的 `STORAGE_ROOT` 下，**SQLite 里存的是相对这个根目录的路径**；上传/下载都由 API 分块流式代理，浏览器不直连磁盘。
+浏览器只和 nginx 通信。API 负责会话和编排，领域逻辑在 service，I/O 在适配器。Router 不得直接访问 SQLite 或磁盘。游戏文件（本体/封面/H5 资源/攻略/云端存档/截图）落在宿主目录挂进容器的 `STORAGE_ROOT` 下，**SQLite 里存的是相对这个根目录的路径**；SQLite 库本身可以放在另一个宿主目录（`RUNTIME_ROOT`，默认 `./data/runtime`）里。上传/下载都由 API 分块流式代理，浏览器不直连磁盘。
 
 ### 技术栈
 
@@ -54,8 +54,8 @@ x 是私人游戏平台，不是对外 SaaS。只做一件事：把 Flash、HTML
 | 应用服务器 | Gunicorn（uvicorn worker）+ nginx | api 跑 ASGI，web 托管静态并反代 |
 | 语言 | Python 3.12 / JavaScript | 后端类型支持好；前端不加 TypeScript |
 | 账号 | werkzeug 密码哈希 + 登录失败锁定 | 账号只隔离配置与存档，不做更强的安全机制 |
-| 文件存储 | 宿主目录 bind 到容器内 `/data/storage`，后端 `LocalStorage` 直接读写普通文件 | 目录结构即业务结构，用户可直接拷走/备份；不需要对象存储那一层 |
-| 配置 | Pydantic Settings + `.env` | 适合 Docker，密钥不进 git |
+| 文件存储 | 宿主目录 bind 到容器内 `/data`（数据根）与 `/runtime`（只放 SQLite 库），后端 `LocalStorage` 直接读写普通文件 | 目录结构即业务结构，用户可直接拷走/备份；不需要对象存储那一层 |
+| 配置 | Pydantic Settings + `.env` | 适合 Docker；路径与端口留三个 `.env` 键，其余写死在代码里 |
 | 运行 | Docker Compose：`web` + `api` | 一条命令，浏览器可访问；本项目只在本地跑，没有远程发布流程 |
 
 不要引入 React、Celery、Redis、PostgreSQL、MinIO/对象存储，除非后续功能明确需要。
@@ -83,9 +83,9 @@ x/
 │   ├── public/emulator-host.html # EmulatorJS 播放宿主（iframe 隔离，__ejsRpc：存档 + 截图 + 画面几何）
 │   └── public/emulatorjs/    # EmulatorJS 引擎资产（构建生成，gitignore）
 ├── backend/                  # FastAPI JSON API（见下方路由树）
-├── tests/                    # test_auth/local_storage/games/game_saves/game_screenshots/game_stats/game_recent/game_emulator_settings
+├── tests/                    # test_auth/local_storage/games/game_saves/game_screenshots/game_stats/game_recent/game_emulator_settings/mount_guard
 ├── data/                     # 本机开发默认的数据根目录 data/storage（含 db/，gitignore；不在 /mnt 下，不需要哨兵）
-├── docker-compose.yml        # web + api（宿主数据根目录 bind：STORAGE_HOST_DIR → /data）
+├── docker-compose.yml        # web + api（宿主目录 bind：STORAGE_HOST_DIR → /data、RUNTIME_HOST_DIR → /runtime）
 ├── requirements.txt
 ├── .env.example              # 全部键、假值、中文注释
 └── Makefile
@@ -313,12 +313,13 @@ backend/
 
 ### 决策 4：不使用 docker 具名卷，数据全落宿主目录
 
-**决定：** compose 里一个具名卷都不用：**数据是一个宿主目录** `STORAGE_HOST_DIR`（默认 `./data/storage` → 容器 `/data`，后端读 `STORAGE_ROOT`），里面装着游戏文件与 SQLite（库固定在其下的 `db/app.db`，月度备份也在这个 `db/` 里）；**证书**是仓库里的 `certs/`（`cert.pem` / `cert.key`），compose 只读挂给 web 的 `/etc/nginx/certs`。
+**决定：** compose 里一个具名卷都不用：**数据是两个宿主目录**——数据根 `STORAGE_HOST_DIR`（默认 `./data/storage` → 容器 `/data`，后端读 `STORAGE_ROOT`）装着游戏文件、检索索引与备份；运行时根 `RUNTIME_HOST_DIR`（默认 `./data/runtime` → 容器 `/runtime`，后端读 `RUNTIME_ROOT`）只装 SQLite 库（固定在其下的 `db/app.db`）。备份落在数据根的 `db/` 里。**证书**是仓库里的 `certs/`（`cert.pem` / `cert.key`），compose 只读挂给 web 的 `/etc/nginx/certs`。
 **原因：** 数据要能被人直接拿到——存档要能自己拷出来备份、本体要能直接扔进模拟器、库要能用 sqlite3 打开看一眼，套一层 docker 卷管理就都得借容器。全部落宿主目录后，备份/迁移/排查都是普通文件操作。
+**为什么库能单独放：** 库一直在被写，网盘这类外部客户端**拷不动**它（文件被占用），而数据目录里其余东西又必须能整体备份走。把库挪到另一个宿主目录（指到网盘之外）就同时满足了：数据目录整个可备份，库不参与外部备份、靠数据目录里那份每月一份的 `<YYYY-MM>.db` 兜底。`.env.example` 默认就是分开的（`./data/storage` 与 `./data/runtime`）；不建 `.env` 时 compose 退到「两个都用 `./data/storage`」，等于不分开。
 **代价与时序要求：** 宿主 bind 在 WSL 发行版（或 Windows 盘）未就绪时会被挂成空目录（详见「排障」）。
 
-**数据根目录哨兵（`.mounted`）：** 数据根落在 **Windows 盘的挂载路径前缀下**时（前缀写死在 `backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，默认 `/mnt`，设成 `/` = 所有路径都要求），它里面要有一个**人工创建**的空文件 `.mounted`：`create_app()` 在建目录、建库**之前**调 `backend/mount_guard.py::require_mounted()` 检查，缺了就只 stat 一下、打一条中文日志、等 5 秒、以非零码退出（容器里这一步由入口脚本 `backend/entrypoint.sh` 在 `exec gunicorn` 之前触发，退的是**容器主进程**，compose 的 `api.restart: unless-stopped` 把容器重新拉起，循环重试到哨兵出现）。**不在这个前缀下的数据根（普通 Linux 目录）没有那条竞态，不做任何检查、直接启动。** 判断用的是「数据根路径」：容器里 `STORAGE_ROOT` 固定是 bind 目标 `/data`、看不出宿主路径，所以 compose 把 `STORAGE_HOST_DIR` 也作为环境变量传进容器供这一处判断（业务代码不读它）；本机直跑时退回 `STORAGE_ROOT`。
-**原因：** 上面那条时序问题（bind 挂成空目录）在容器内没有别的判据——空目录同样可写、`statvfs` 也正常，只有「这个目录里有我认得的哨兵文件」能识破它；而它只可能发生在宿主 bind 的场景，所以按前缀把「有风险的数据根」圈出来，别让放普通目录的人白折腾。拦住启动的代价是「Windows 盘上的数据目录首次部署要手工 `touch` 一次」，换来的是「绝不会在空目录里静默建出一个空库」。
+**根目录哨兵（`.mounted`）：** 数据根与运行时根的**宿主路径**落在 **Windows 盘的挂载路径前缀下**时（前缀写死在 `backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，默认 `/mnt`，设成 `/` = 所有路径都要求），各自挂载点里要有一个**人工创建**的空文件 `.mounted`：`create_app()` 在建目录、建库**之前**调 `backend/mount_guard.py::require_mounted()` 逐个检查，缺了就只 stat 一下、打一条中文日志（含该 `touch` 哪个宿主路径）、等 5 秒、以非零码退出（容器里这一步由入口脚本 `backend/entrypoint.sh` 在 `exec gunicorn` 之前触发，退的是**容器主进程**，compose 的 `api.restart: unless-stopped` 把容器重新拉起，循环重试到哨兵出现）。**不在这个前缀下的根（普通 Linux 目录）没有那条竞态，不做任何检查、直接启动。** 判断用的是「宿主路径」：容器里两个根固定是 bind 目标 `/data` 与 `/runtime`、看不出宿主路径，所以 compose 把 `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` 也作为环境变量传进容器供这一处判断（业务代码不读它们）；本机直跑时退回 `STORAGE_ROOT` / `RUNTIME_ROOT`。两个根相同时按挂载点去重，只查一次。
+**原因：** 上面那条时序问题（bind 挂成空目录）在容器内没有别的判据——空目录同样可写、`statvfs` 也正常，只有「这个目录里有我认得的哨兵文件」能识破它；而它只可能发生在宿主 bind 的场景，所以按前缀把「有风险的根」圈出来，别让放普通目录的人白折腾。运行时根是空的后果最直接（新建一个空 app.db = 账号全没了），所以它也要查。拦住启动的代价是「Windows 盘上的根首次部署要手工 `touch` 一次」，换来的是「绝不会在空目录里静默建出一个空库」。
 **它不代建：** 代码只检查、绝不自动补——自动补就等于承认「空目录也是数据根」，判据立刻失效。也**不是** `configured` 那类开关：storage 永远可用，哨兵只拦启动。
 
 **何时重评：** 多容器并发写或拆出的服务需要网络 SQL。
@@ -380,8 +381,8 @@ backend/
 
 ### 决策 13：游戏检索是独立只读派生库，整库重建 + 原子替换
 
-**决定：** 「游戏检索」查的是一份**与平台游戏库无关**的外部中英文名录（`backend/search/csv/` 下 37 个 CSV、5 万余行），因此它用**自己一个 SQLite 文件** `<数据根>/db/game.db`，与 `app.db` 无外键关系。这个库**只有一个写入方** `backend/games/search_index.py::build_index()`，两个触发口：`make index`（手动重建/更新）与**服务启动时的自动补建**（`ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning 不拦启动）。构建一律**整库重建**：写同目录临时文件、`os.replace` 原子替换；不开 WAL（否则会留 `-wal`/`-shm`，而替换只换主库）。运行期的所有读都经 `GameSearchService`，用 `mode=ro` + `PRAGMA query_only=1` 打开，每请求一条短连接。它**不参与月度备份**。分词用 FTS5 `unicode61` + 汉字逐字拆 token，且**索引期与查询期共用 `search_text.py` 的同一份归一化实现**；中英文名结尾的地区/语言/版本标签不进索引，落库与展示仍是原文。
-**原因：** 名录是「外部参考数据」而不是平台业务数据——它可以从 CSV 一键重建、随时重跑，所以既不需要增量更新，也不需要备份，更不该跟业务表混在一个库里（混了就得为它写迁移、写清理、写备份排除）。整库重建把「更新」这件事变成「重新生成一个文件」，没有半更新状态可言；`os.replace` 的 POSIX 语义让正在读旧库的请求继续读旧 inode、新请求自动拿到新库，所以**重建索引不需要重启 api**。只读连接让「运行期绝不写这个库」成为结构上的事实，而不是纪律。启动时自检补建与 `backup_database()` 是同一个套路（做一次、已有就跳过、失败只记 warning），换来「装好就能用检索」——不用先读文档才知道要跑一条命令。汉字逐字拆 token 是因为裸 `unicode61` 会把整串中文当**一个** token（搜任何子串都 0 命中），而 `trigram` 少于 3 个字全废；一份实现两处调用是因为索引期与查询期只要有任意一处漏了归一化，中文就静默搜不到。
+**决定：** 「游戏检索」查的是一份**与平台游戏库无关**的外部中英文名录（`backend/search/csv/` 下 37 个 CSV、5 万余行），因此它用**自己一个 SQLite 文件** `<数据根>/db/game.db`，与 `app.db` 无外键关系。这个库**只有一个写入方** `backend/games/search_index.py::build_index()`，两个触发口：`make index`（手动重建/更新）与**服务启动时的自动补建**（`ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning 不拦启动）。构建一律**整库重建**：写同目录临时文件、`os.replace` 原子替换；不开 WAL（否则会留 `-wal`/`-shm`，而替换只换主库）。运行期的所有读都经 `GameSearchService`，用 `mode=ro` + `PRAGMA query_only=1` 打开，每请求一条短连接。它**不参与备份**。分词用 FTS5 `unicode61` + 汉字逐字拆 token，且**索引期与查询期共用 `search_text.py` 的同一份归一化实现**；中英文名结尾的地区/语言/版本标签不进索引，落库与展示仍是原文。
+**原因：** 名录是「外部参考数据」而不是平台业务数据——它可以从 CSV 一键重建、随时重跑，所以既不需要增量更新，也不需要备份，更不该跟业务表混在一个库里（混了就得为它写迁移、写清理、写备份排除）。整库重建把「更新」这件事变成「重新生成一个文件」，没有半更新状态可言；`os.replace` 的 POSIX 语义让正在读旧库的请求继续读旧 inode、新请求自动拿到新库，所以**重建索引不需要重启 api**。只读连接让「运行期绝不写这个库」成为结构上的事实，而不是纪律。启动时自检补建与 `backup_database()` 是同一个套路（启动时做一次、失败只记 warning、绝不拦启动），换来「装好就能用检索」——不用先读文档才知道要跑一条命令。汉字逐字拆 token 是因为裸 `unicode61` 会把整串中文当**一个** token（搜任何子串都 0 命中），而 `trigram` 少于 3 个字全废；一份实现两处调用是因为索引期与查询期只要有任意一处漏了归一化，中文就静默搜不到。
 **代价：** 服务进程持有的那个数据根必须有**写权限**，自动补建才可能成功——数据根被 Docker 以 root 建过时，宿主机上直跑会因权限失败（只记一条 warning，检索页提示尚未构建；容器里是 root，不受影响）。另外这 4MB 名录 CSV 随 `backend/` 进了 api 镜像，换名录数据要重建镜像（换来的是容器首次启动也能自建，不必先跑命令）。英文按整词索引，缩写（`ff vii`）搜不到，不做拼音与错别字容错。
 **何时重评：** 若名录将来变成平台业务数据（可在界面上增删改），它就该并回 `app.db` 并走正常的写入路径；若单次查询的耗时随数据量增长到需要缓存，再考虑加内存索引而不是改库。
 
@@ -453,19 +454,22 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 └── docker compose（一条命令启动，**不用任何具名卷**）
      ├── api                    # backend/Dockerfile → ENTRYPOINT entrypoint.sh（哨兵检查）→ Gunicorn+uvicorn :8910（仅内部）
      │    ├── 宿主目录 ${STORAGE_HOST_DIR} → /data         （宿主路径也作为环境变量传进容器，供哨兵前缀判断）
-     │    │    ├── .mounted             哨兵文件（数据根在 /mnt 这类 Windows 盘路径下时人工创建，缺了 api 拒绝启动并反复重启）
+     │    │    ├── .mounted             哨兵文件（该宿主目录在 /mnt 这类 Windows 盘路径下时人工创建，缺了 api 拒绝启动并反复重启）
      │    │    ├── game/ save/ image/   游戏文件、存档与截图
-     │    │    └── db/           app.db 与月度备份 <YYYY-MM>.db
-     │    └── 配置：全部在 backend/config.py（后端不读 .env 文件；容器里只多一个 STORAGE_HOST_DIR 给哨兵判断）
+     │    │    └── db/           game.db 检索索引与备份 <YYYY-MM>.db（每小时刷新）
+     │    ├── 宿主目录 ${RUNTIME_HOST_DIR} → /runtime      （同上；默认与数据根同一个目录）
+     │    │    ├── .mounted             哨兵文件（同上；两个目录相同时就是上面那一个）
+     │    │    └── db/app.db    SQLite 库
+     │    └── 配置：全部在 backend/config.py（后端不读 .env 文件；容器里只多 STORAGE_HOST_DIR / RUNTIME_HOST_DIR 给哨兵判断）
      └── web                    # frontend/Dockerfile → nginx :443，反代 /api 到 api
           └── 仓库 certs/ → /etc/nginx/certs（只读）
 ```
 
 证书是随仓库提交的自签名证书（`certs/cert.pem` / `certs/cert.key`）；要换就 `scripts/gen-certs.sh`（`make certs`）重新生成，全程只用 openssl、不需要 docker。
 
-**备份**：三份数据都在宿主目录里，想怎么备就怎么备——存档（`STORAGE_HOST_DIR/save/`）与截图（`STORAGE_HOST_DIR/image/`）不可重建，本体/封面/H5 资源/攻略可以重传。
+**备份**：数据目录里的一切都可以整体拷走——存档（`STORAGE_HOST_DIR/save/`）与截图（`STORAGE_HOST_DIR/image/`）不可重建，本体/封面/H5 资源/攻略可以重传；只有 SQLite 库不在里面（它在运行时根里，一直被写、外部客户端拷不动），靠下面那份快照兜底。
 
-**SQLite 的月度备份**（`backend/backup.py`）：`create_app()` 启动时检查一次，当月还没有备份就写一份 `<YYYY-MM>.db` 到库同目录（即 `<STORAGE_ROOT>/db/`），已有则跳过——一个自然月最多一份，文件名按**本机本地时间**取月份。用 `sqlite3` 的 backup API 而不是拷文件（WAL 下裸拷会撕裂），先写 `.tmp` 再改名，失败只记 warning、绝不拦住启动。**不做还原功能**：要回滚就停服务，把备份文件改名成 `app.db` 手动替换。
+**SQLite 的滚动备份**（`backend/backup.py`）：`create_app()` 启动时立刻备一次，之后每 `BACKUP_INTERVAL_SECONDS`（1 小时）由一个守护线程再备一次。**一个自然月只有一份** `<YYYY-MM>.db`，文件名按**本机本地时间**取月份，写在**数据根**的 `db/` 里（不是库所在的目录），**每次都整份重写**——所以快照最多落后一小时。用 `sqlite3` 的 backup API 而不是拷文件（服务一直在写，裸拷会撕裂），先写 `.tmp` 再 `os.replace` 改名，读的人永远看到完整文件；失败只记 warning、绝不拦住启动。**不做还原功能**：要回滚就停服务，把备份文件改名成 `app.db` 手动替换。
 
 **开发 vs Docker：**
 
@@ -473,21 +477,22 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 |--|-----|--------|
 | 界面 | Vite `:5173`，代理 `/api` | nginx 静态 `dist` |
 | API | `uvicorn backend.asgi:app --reload --port 8910` | Gunicorn + uvicorn worker |
-| 数据库 | `<STORAGE_ROOT>/db/app.db`（默认 `./data/storage/db/app.db`） | 同一个根目录 → 容器 `/data/db/app.db` |
+| 数据库 | `<RUNTIME_ROOT>/db/app.db`（默认 `./data/runtime`） | 宿主 `${RUNTIME_HOST_DIR}` → 容器 `/runtime/db/app.db` |
 | 游戏文件 | `<STORAGE_ROOT>`（默认 `./data/storage`） | 宿主 `${STORAGE_HOST_DIR}` → 容器 `/data` |
 | 证书 | 仓库 `certs/`（`make certs` 重新生成） | 同一个目录 → 容器 `/etc/nginx/certs`（只读） |
 | 建号 | 浏览器打开站点自助注册 | 同左（没有命令行建号） |
 
 ## 配置
 
-配置**写死在代码里**：`backend/config.py` 放 `SECRET_KEY`、`SESSION_COOKIE_*`、`DB_SUBDIR` / `DB_FILENAME`、`WINDOWS_MOUNT_PREFIX` 与本机默认的数据根目录，容器里的数据根目录由 `backend/Dockerfile` 的 `ENV STORAGE_ROOT=/data` 固定。`.env` 只剩两个键，而且**只有 docker compose 读那个文件**（`backend/config.py` 不加载 `.env`）；其中 `STORAGE_HOST_DIR` 会被 compose 作为环境变量传进 api 容器，后端**只用它**做启动时的哨兵前缀判断（容器里看不出宿主路径，见决策 4），业务代码不碰它。`.env.example` 列出这两个键与中文注释，`.env` 加入 gitignore，不建 `.env` 也能跑。
+配置**写死在代码里**：`backend/config.py` 放 `SECRET_KEY`、`SESSION_COOKIE_*`、`DB_SUBDIR` / `DB_FILENAME`、`BACKUP_INTERVAL_SECONDS`、`WINDOWS_MOUNT_PREFIX` 与本机默认的数据根目录，容器里的两个根目录由 `backend/Dockerfile` 的 `ENV STORAGE_ROOT=/data` 与 `ENV RUNTIME_ROOT=/runtime` 固定。`.env` 只剩三个键，而且**只有 docker compose 读那个文件**（`backend/config.py` 不加载 `.env`）；其中 `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` 会被 compose 作为环境变量传进 api 容器，后端**只用它们**做启动时的哨兵前缀判断（容器里看不出宿主路径，见决策 4），业务代码不碰它们。`.env.example` 列出这三个键与一行中文注释，`.env` 加入 gitignore，不建 `.env` 也能跑。
 
 | 变量 | 默认 | 用途 |
 |----------|----------|---------|
-| `STORAGE_HOST_DIR` | `./data/storage` | **宿主侧**数据根目录；容器里挂到 `/data`，同时作为环境变量传进容器供哨兵判断。游戏文件在它下面，SQLite 固定在 `<根>/db/app.db` |
+| `STORAGE_HOST_DIR` | `./data/storage` | **宿主侧**数据根目录；容器里挂到 `/data`，同时作为环境变量传进容器供哨兵判断。游戏文件、检索索引与备份在它下面 |
+| `RUNTIME_HOST_DIR` | `./data/runtime` | **宿主侧**运行时根目录，只放 SQLite 库；容器里挂到 `/runtime`，留空则同 `STORAGE_HOST_DIR` |
 | `WEB_HTTPS_PORT` | `443` | 对外发布的 HTTPS 端口（容器内 nginx 固定听 443，见「安全架构」） |
 
-代码内固定：`SECRET_KEY`（session cookie 的签名密钥，换值让所有已登录会话失效）、`STORAGE_ROOT`（容器 `/data`，本机 `<repo>/data/storage`）、`WINDOWS_MOUNT_PREFIX`（Windows 盘挂载路径前缀，默认 `/mnt`；数据根在它下面才要求 `.mounted` 哨兵）、SQLite 路径 `<STORAGE_ROOT>/db/app.db`、证书 `certs/cert.pem` / `certs/cert.key`、`SESSION_COOKIE_SECURE`；nginx `client_max_body_size 128m` 是上传网关（游戏 GBA 整卡 32MiB 等大文件经它放行）。
+代码内固定：`SECRET_KEY`（session cookie 的签名密钥，换值让所有已登录会话失效）、`STORAGE_ROOT`（容器 `/data`，本机 `<repo>/data/storage`）、`RUNTIME_ROOT`（容器 `/runtime`，本机不设 = 同 `STORAGE_ROOT`）、`WINDOWS_MOUNT_PREFIX`（Windows 盘挂载路径前缀，默认 `/mnt`；根在它下面才要求 `.mounted` 哨兵）、SQLite 路径 `<RUNTIME_ROOT>/db/app.db`、备份间隔 1 小时、证书 `certs/cert.pem` / `certs/cert.key`、`SESSION_COOKIE_SECURE`；nginx `client_max_body_size 128m` 是上传网关（游戏 GBA 整卡 32MiB 等大文件经它放行）。
 
 ## 性能
 
@@ -510,7 +515,7 @@ cd frontend && npm run lint
 
 **问题：开机（`wsl --shutdown` 后重开）后 data 目录看起来是空的**
 原因：数据目录所在的盘（WSL 挂载的 Windows 盘 `/mnt/…`）在容器起来时还没挂上，bind 把宿主的空目录挂进了容器。
-处理：**数据根在 `/mnt` 前缀下时不需要人工介入**——空挂载里没有 `.mounted` 哨兵，api 会拒绝启动并被 `restart: unless-stopped` 反复重启，一个字节都不会写进空目录；盘挂上后容器下一次重启即自愈（急的话 `docker compose restart api`）。前提是哨兵当初建在**真实的数据目录**里：从没建过、或曾建在空挂载里，都会让这道守卫失效/误判，先在宿主侧补 `touch "$STORAGE_HOST_DIR/.mounted"`；治本仍是把 `STORAGE_HOST_DIR` 指向挂载稳定、docker 启动前就可达的路径。放普通 Linux 目录下的数据根不走这条判断。
+处理：**根目录在 `/mnt` 前缀下时不需要人工介入**——空挂载里没有 `.mounted` 哨兵，api 会拒绝启动并被 `restart: unless-stopped` 反复重启，一个字节都不会写进空目录；盘挂上后容器下一次重启即自愈（急的话 `docker compose restart api`）。前提是哨兵当初建在**真实的目录**里：从没建过、或曾建在空挂载里，都会让这道守卫失效/误判，先在宿主侧按日志给的路径补 `touch "$STORAGE_HOST_DIR/.mounted"`（运行时根同理）；治本仍是把 `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` 指向挂载稳定、docker 启动前就可达的路径。放普通 Linux 目录下的根不走这条判断。
 
 **问题：登录时提示「今日已禁止登录」/「请 5 分钟后再试」**
 原因：同一用户名连续失败触发了登录锁定（≥3 短锁 5 分钟，≥6 锁到当天 UTC 结束）。

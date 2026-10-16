@@ -358,13 +358,13 @@ def serve(config: Config) -> int:
     os.environ["SESSION_COOKIE_SECURE"] = "false"
 
     # 必须在这里才 import：backend.asgi 在导入时就 create_app()，配置是那一刻读的。
-    # 也正是这次导入在建目录、建表、做月度备份、建检索索引，首次启动会明显卡一下。
+    # 也正是这次导入在建目录、建表、做备份、建检索索引，首次启动会明显卡一下。
     prepared_at = time.monotonic()
     from backend.asgi import app
 
     prepared = time.monotonic() - prepared_at
     if prepared > 3:
-        say(f"已准备数据（{prepared:.0f} 秒）：建库、月度备份、检索索引。下次启动会快很多。")
+        say(f"已准备数据（{prepared:.0f} 秒）：建库、备份、检索索引。下次启动会快很多。")
 
     server = uvicorn.Server(
         uvicorn.Config(app, host=config.host, port=config.port, log_config=None, access_log=False)

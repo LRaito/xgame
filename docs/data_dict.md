@@ -8,10 +8,12 @@
 
 | 存储 | 位置 | 用途 |
 |--------|------|------|
-| SQLite 单文件 | `<数据根>/db/app.db`（Docker 里是宿主 `${STORAGE_HOST_DIR}/db/app.db` → 容器 `/data/db/app.db`） | 全部业务元数据 |
-| SQLite 月度备份 | 与库同目录的 `<数据根>/db/<YYYY-MM>.db` | 服务启动时按当月补一份，一个自然月一份；不做还原，回滚就手工换回 `app.db` |
+| SQLite 单文件 | `<运行时根>/db/app.db`（Docker 里是宿主 `${RUNTIME_HOST_DIR}/db/app.db` → 容器 `/runtime/db/app.db`） | 全部业务元数据 |
+| SQLite 备份 | `<数据根>/db/<YYYY-MM>.db` | 启动时备一次、之后每小时一次，**当月只此一份、每次整份重写**（快照最多落后一小时）；不做还原，回滚就手工换回 `app.db` |
 | SQLite 检索索引 | `<数据根>/db/game.db` | 游戏检索用的**派生只读库**（外部中英文名录的全文索引），服务启动时不存在会自动补建、也可用 `make index` 重建；**不备份**，可从 CSV 重建，见文末「游戏检索索引」 |
-| 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/H5 资源/攻略/图集、云端存档、游戏截图，以及 `db/` 下的 SQLite 库与月度备份；数据根在 Windows 盘挂载路径下时另有一个**人工创建**的哨兵文件 `.mounted`（缺了服务拒绝启动，见 `backend/mount_guard.py`） |
+| 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/H5 资源/攻略/图集、云端存档、游戏截图，以及 `db/` 下的备份与检索索引 |
+| 运行时根目录 | `RUNTIME_ROOT`（不配 = 与数据根相同；容器内固定 `/runtime`，宿主目录由 `RUNTIME_HOST_DIR` 挂进去） | 只有 SQLite 库。单独放是为了让数据根整个可以交给网盘之类的客户端备份——它拷不动一个一直被写着的库文件 |
+| 哨兵文件 | 每个根目录下的 `.mounted` | **人工创建**的空文件；该根的宿主路径在 Windows 盘挂载路径前缀下时启动会检查，缺了服务拒绝启动（见 `backend/mount_guard.py`）。两个根相同时只有一个 |
 
 分工原则：**所有元数据在 SQLite，SQLite 里存的是相对于文件根目录的路径**；文件本身是磁盘上的普通文件，用户可以直接从宿主目录拷走、备份、浏览。相对路径统一用 `/` 作分隔符，读取时由 `LocalStorage` 拼上根路径。
 
@@ -19,9 +21,9 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 ## SQLite 结构
 
-库路径在代码里写死为 `<STORAGE_ROOT>/db/app.db`（`backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME`，不可另配），`create_app()` 启动时 `init_db()` 建全部表。**没有迁移框架**：`create_all` 只建缺失的表、不给已存在的表补列，所以后来新增的列靠 `backend/database.py` 的 `_ADDED_COLUMNS` / `_ensure_columns()` 在启动时 `ALTER TABLE … ADD COLUMN` 补上（只加列，不改不删）。
+库路径在代码里写死为 `<运行时根>/db/app.db`（`backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME`，不可另配；运行时根不配就是数据根），`create_app()` 启动时 `init_db()` 建全部表。**没有迁移框架**：`create_all` 只建缺失的表、不给已存在的表补列，所以后来新增的列靠 `backend/database.py` 的 `_ADDED_COLUMNS` / `_ensure_columns()` 在启动时 `ALTER TABLE … ADD COLUMN` 补上（只加列，不改不删）。
 
-同目录下还有第二个库 `game.db`（游戏检索索引），它是**派生、只读**的，结构与本节无关，见文末「游戏检索索引」。
+数据根的 `db/` 下还有第二个库 `game.db`（游戏检索索引），它是**派生、只读**的，结构与本节无关，见文末「游戏检索索引」。
 
 ### 表索引
 
@@ -194,9 +196,9 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 ## 文件存储结构
 
-根目录由 `backend/config.py` 的 `STORAGE_ROOT` 决定（本机默认 `<仓库>/data/storage`，容器内为 `/data`），`LocalStorage` 构造时自动建出来。**SQLite 里存的都是相对这个根目录的路径**，读取时 `LocalStorage._resolve()` 拼上根路径并挡掉越界（绝对路径、`..` 一律拒绝）。浏览器从不直连磁盘，所有上传/下载都由 API 经 `StorageBackend` 分块流式代理。
+数据根目录由 `backend/config.py` 的 `STORAGE_ROOT` 决定（本机默认 `<仓库>/data/storage`，容器内为 `/data`），`LocalStorage` 构造时自动建出来。**SQLite 里存的都是相对这个根目录的路径**，读取时 `LocalStorage._resolve()` 拼上根路径并挡掉越界（绝对路径、`..` 一律拒绝）。浏览器从不直连磁盘，所有上传/下载都由 API 经 `StorageBackend` 分块流式代理。
 
-**根目录下还可能有一个不在表里的哨兵文件 `.mounted`**：空文件，**人工创建**（不由 `LocalStorage`、也不由任何代码代建）。**只有数据根落在 Windows 盘挂载路径前缀下时**（`backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，默认 `/mnt`）服务启动才会检查它，缺了就打日志等 5 秒退出（`backend/mount_guard.py`）；放普通 Linux 目录下的数据根不做这个检查。它只用来判断「这个目录确实是挂上了的数据根」，不参与任何业务路径。
+**根目录下还可能有一个不在表里的哨兵文件 `.mounted`**：空文件，**人工创建**（不由 `LocalStorage`、也不由任何代码代建）。**只有该根的宿主路径落在 Windows 盘挂载路径前缀下时**（`backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，默认 `/mnt`）服务启动才会检查它，缺了就打日志等 5 秒退出（`backend/mount_guard.py`）；放普通 Linux 目录下的根不做这个检查。**数据根与运行时根各查一份**（两个根相同时就是同一个文件）。它只用来判断「这个目录确实是挂上了的根目录」，不参与任何业务路径。
 
 目录名一律用「游戏类型键 + 卡带ID」，**不随游戏名变化**——卡带ID 建后不可改，所以改游戏名不会挪动任何文件。
 
@@ -234,7 +236,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | 路径 | `<数据根>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`；容器里就是 `/data/db/game.db`） |
 | 写入方 | 只有 `backend/games/search_index.py::build_index()` 一处，两个触发口：**服务启动自动补建**（`create_app()` → `ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning）与 **`make index`**（`Makefile` → `python -m backend.cli index`，手动重建/更新）。容器里也能建（CSV 随 `backend/` 进镜像） |
 | 读取方 | `backend/games/search_service.py::GameSearchService`，一律 `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接——**运行期只读，绝不写它** |
-| 是否备份 | **不进月度备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）。它可从 `backend/search/csv/` 的 CSV 完整重建 |
+| 是否备份 | **不进备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）。它可从 `backend/search/csv/` 的 CSV 完整重建 |
 | 源数据 | `backend/search/csv/` 下 37 个 CSV（3 列无表头、UTF-8 带 BOM、CRLF），随 `backend/` 一起进 api 镜像 |
 | 重建方式 | 整库重建 + 原子替换（写同目录 `game.db.tmp` → `chmod 0644` → `os.replace`）。**不开 WAL**，所以不会留 `-wal`/`-shm`；重建后无需重启 api |
 

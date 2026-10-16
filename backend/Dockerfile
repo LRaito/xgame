@@ -13,11 +13,14 @@ COPY backend/ ./backend/
 # 重启容器，见 backend/mount_guard.py）。显式给执行位，别指望从 git 带过来的权限位。
 RUN chmod +x backend/entrypoint.sh
 
-# 数据根目录：宿主目录经 compose 挂到这个固定路径（见根目录 docker-compose.yml）。
-# 游戏文件在它下面，SQLite 固定在它下面的 db/ 里（backend/config.py 的 DB_SUBDIR）。
-# 这是后端进程唯一认的**业务**环境变量（`STORAGE_ROOT`），其余配置都写死在 backend/config.py。
-# （compose 另外会传一个 STORAGE_HOST_DIR，只给启动时的哨兵判断用——容器里看不出宿主路径。）
+# 两个根目录：宿主目录经 compose 挂到这两个固定路径（见根目录 docker-compose.yml）。
+# 游戏文件与检索索引在 STORAGE_ROOT 下面，SQLite 库在 RUNTIME_ROOT 下面的 db/ 里
+# （backend/config.py 的 DB_SUBDIR）；月度备份写在 STORAGE_ROOT 的 db/ 里。
+# 这是后端进程唯一认的**业务**环境变量，其余配置都写死在 backend/config.py。
+# （compose 另外会传 STORAGE_HOST_DIR / RUNTIME_HOST_DIR，只给启动时的哨兵判断用——
+# 容器里看不出宿主路径。）
 ENV STORAGE_ROOT=/data
+ENV RUNTIME_ROOT=/runtime
 
 EXPOSE 8910
 

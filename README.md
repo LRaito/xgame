@@ -55,8 +55,21 @@
 
 ```bash
 cp .env.example .env
-# 编辑 .env，改这一行：STORAGE_HOST_DIR=/srv/xgame    ← 整个平台的数据都放这儿
+# 编辑 .env：STORAGE_HOST_DIR=/srv/xgame/storage    ← 游戏、存档、截图、备份都放这儿
+#           RUNTIME_HOST_DIR=/srv/xgame/runtime    ← 数据库单独放这儿（默认 ./data/runtime）
 ```
+
+**想用网盘（或任何外部工具）备份数据目录，就让运行时目录待在网盘之外**：
+
+```bash
+STORAGE_HOST_DIR=/srv/xgame/storage        # ← 这份要备份
+RUNTIME_HOST_DIR=/home/you/xgame-runtime   # 只有数据库，放在网盘之外 ← 这份不用备份
+```
+
+`RUNTIME_HOST_DIR` 留空就退回与 `STORAGE_HOST_DIR` 相同（库跟数据放一起，等于不分开）。库文件一直被
+服务写着，网盘客户端**拷不动**它、备份任务会报「文件被占用」；把库单独放到网盘之外，数据目录里就只剩
+能随便拷的普通文件（游戏、存档、截图），整个拷走就是完整备份。数据库另有兜底：服务每月留一份
+`<年>-<月>.db` 在数据目录的 `db/` 里，**每小时刷新一次**，所以那份快照最多落后一小时。
 
 2. 构建并启动（首次要联网，会去拉引擎资产）：
 
@@ -69,12 +82,15 @@ make all
 
 两个容易踩的点：
 
-- 数据目录要在 **Docker 启动之前就可达**，别指到会被 `git pull` 覆盖的仓库目录里。
-- 数据目录放在 WSL 挂进来的 Windows 盘上时（`/mnt/x/…` 这种），要在里面**手工建一个空的
-  `.mounted` 文件**（只建一次），否则服务起不来：
+- 数据目录（以及单独指定的运行时目录）要在 **Docker 启动之前就可达**，别指到会被 `git pull`
+  覆盖的仓库目录里。
+- 目录放在 WSL 挂进来的 Windows 盘上时（`/mnt/x/…` 这种），要在里面**手工建一个空的
+  `.mounted` 文件**（只建一次），否则服务起不来。两个目录都在 Windows 盘上就是**两个文件**，
+  各建在自己的目录里：
 
 ```bash
-touch /mnt/x/xgame/.mounted      # 路径换成你的数据目录
+touch /mnt/x/xgame/storage/.mounted      # 数据目录
+touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就与上面是同一个文件）
 ```
 
 「游戏检索」页第一次用时服务会自己把索引建好，不用管；细节见 [`DEVELOP.md`](DEVELOP.md)。

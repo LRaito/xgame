@@ -26,8 +26,8 @@ backend/
   __init__.py             # create_app() 应用工厂（唯一入口）
   config.py               # 配置：全部写死在这里，见下
   asgi.py                 # 生产 ASGI 入口（gunicorn 用）
-  backup.py               # SQLite 月度备份
-  mount_guard.py          # 启动前的数据根目录哨兵检查（数据根在 Windows 盘挂载路径下时缺 .mounted 就退出）
+  backup.py               # SQLite 滚动备份（启动一次 + 每小时一次，当月一份、整份重写）
+  mount_guard.py          # 启动前的根目录哨兵检查（数据根与运行时根在 Windows 盘挂载路径下时缺 .mounted 就退出）
   static_site.py          # 可选：后端顺带托管前端 dist（只有 Windows 包设 STATIC_DIR 时生效）
   request_limit.py        # 请求体上限中间件，顶替 nginx 的 client_max_body_size
   entrypoint.sh           # api 容器的 ENTRYPOINT：先过哨兵检查，再 exec gunicorn
@@ -63,9 +63,10 @@ uvicorn backend.asgi:app --reload --port 8910
 ```
 
 本机数据根默认是仓库下的 `data/storage`，它不在 Windows 盘挂载前缀（`/mnt`）下，**不需要**哨兵文件。
-只有把数据根指到 WSL 挂载的 Windows 盘上（如 `STORAGE_ROOT=/mnt/x/xgame`）时才要**先手工建一次**
-`/mnt/x/xgame/.mounted`，否则后端不会启动：打一条中文日志、等 5 秒、以非零码退出（本机没有容器
+只有把数据根指到 WSL 挂载的 Windows 盘上（如 `STORAGE_ROOT=/mnt/x/xgame/storage`）时才要**先手工建一次**
+`/mnt/x/xgame/storage/.mounted`，否则后端不会启动：打一条中文日志、等 5 秒、以非零码退出（本机没有容器
 重启策略，就是起不来）——这是有意的，见下面「启动时发生什么」。测试不用管（`TESTING` 下跳过检查）。
+把运行时根（`RUNTIME_ROOT`）也指到 `/mnt` 下时，那个目录同样要建一份 `.mounted`。
 
 前端（另开一个终端）：
 
@@ -90,28 +91,37 @@ make all            # = docker compose build && up -d
 
 站点在 **https://localhost**（只支持 HTTPS，不发布 80，也没有 http→https 跳转）。
 证书随仓库提供，**不建 `.env` 也能直接跑**——数据落在 `./data/storage`，端口 443。
-要改数据目录或端口：
+要改数据目录、运行时目录或端口：
 
 ```bash
-cp .env.example .env        # 改 STORAGE_HOST_DIR / WEB_HTTPS_PORT
+cp .env.example .env        # 改 STORAGE_HOST_DIR / RUNTIME_HOST_DIR / WEB_HTTPS_PORT
 ```
 
-**数据目录在 Windows 盘上（`/mnt/…`）时，第一次运行平台前要先建 `.mounted` 哨兵**，否则 api 容器
-起不来（日志里反复出现「数据根目录 … 里没有哨兵文件」，容器被 `restart: unless-stopped` 反复重启）。
-数据目录放在普通 Linux 路径（如 `/srv/xgame`）下不用建、也完全不检查。要建的话先建目录再 `make all`：
+**数据目录或运行时目录在 Windows 盘上（`/mnt/…`）时，第一次运行平台前要给那个目录建 `.mounted`
+哨兵**（两个目录都在盘上就是两个文件），否则 api 容器起不来（日志里反复出现「根目录 … 里没有
+哨兵文件」，容器被 `restart: unless-stopped` 反复重启）。目录放在普通 Linux 路径（如 `/srv/xgame`）
+下不用建、也完全不检查。要建的话先建目录再 `make all`：
 
 ```bash
 mkdir -p "$STORAGE_HOST_DIR" && touch "$STORAGE_HOST_DIR/.mounted"     # 只建一次
+mkdir -p "$RUNTIME_HOST_DIR" && touch "$RUNTIME_HOST_DIR/.mounted"     # 只建一次
 ```
 
 ## 配置
 
-绝大部分配置**写死在代码里**，只有两个键留在 `.env`，而且**后端进程不读这个文件**（唯一例外见下表：`STORAGE_HOST_DIR` 会被 compose 作为环境变量传进 api 容器，只用于启动时的哨兵判断）：
+绝大部分配置**写死在代码里**，只有三个键留在 `.env`，而且**后端进程不读这个文件**（例外见下表：`STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` 会被 compose 作为环境变量传进 api 容器，只用于启动时的哨兵判断）：
 
 | 键 | 默认 | 作用 |
 | --- | --- | --- |
 | `STORAGE_HOST_DIR` | `./data/storage` | **宿主侧**数据目录，compose 挂到容器的 `/data` |
+| `RUNTIME_HOST_DIR` | `./data/runtime` | **宿主侧**运行时目录（只放 SQLite 库），compose 挂到容器的 `/runtime`；留空则同 `STORAGE_HOST_DIR` |
 | `WEB_HTTPS_PORT` | `443` | 对外发布的 HTTPS 端口（容器内 nginx 固定听 443） |
+
+**为什么要两个目录。** 库（`app.db`）一直在被写，网盘之类的客户端**拷不动**它（报「文件被占用」），
+而数据目录里那堆游戏文件、存档、截图又必须能整体备份走。所以库单独放一个宿主目录：想用网盘备份就
+让 `RUNTIME_HOST_DIR` 待在网盘之外，只备份数据目录。`.env.example` 的默认值就是分开的
+（`./data/storage` 与 `./data/runtime`）；不建 `.env` 时 compose 退到「两个都用 `./data/storage`」
+（等于不分开，与从前一样）。
 
 写死的东西（要改就改代码，改完重新构建）：
 
@@ -119,61 +129,69 @@ mkdir -p "$STORAGE_HOST_DIR" && touch "$STORAGE_HOST_DIR/.mounted"     # 只建�
 | --- | --- | --- |
 | `SECRET_KEY` | `backend/config.py` | session cookie 的签名密钥，跟仓库一起走；改它会让所有已登录会话失效 |
 | `STORAGE_ROOT` | `backend/Dockerfile` 的 `ENV`（容器）/ `backend/config.py`（本机） | 容器里固定 `/data`；本机是 `<仓库>/data/storage` |
+| `RUNTIME_ROOT` | `backend/Dockerfile` 的 `ENV`（容器）/ `backend/config.py`（本机） | 容器里固定 `/runtime`；本机不设 = 与 `STORAGE_ROOT` 相同 |
 | `STORAGE_HOST_DIR` | `.env`（只给 compose） | 宿主侧数据目录。compose 除了拿它做 bind，还把它作为环境变量传进 api 容器，**只**用于启动时的哨兵前缀判断（见 `backend/mount_guard.py`） |
-| `WINDOWS_MOUNT_PREFIX` | `backend/config.py` | Windows 盘的挂载路径前缀，默认 `/mnt`；数据根落在这下面才要求 `.mounted` 哨兵（设成 `/` = 所有路径都要求） |
-| SQLite 路径 | `backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME` | `<STORAGE_ROOT>/db/app.db`，**没有 `DATABASE_URL` 可配** |
+| `RUNTIME_HOST_DIR` | `.env`（只给 compose） | 宿主侧运行时目录，同上；为空时哨兵判断退回 `RUNTIME_ROOT` |
+| `WINDOWS_MOUNT_PREFIX` | `backend/config.py` | Windows 盘的挂载路径前缀，默认 `/mnt`；两个根落在这下面才各要求一份 `.mounted` 哨兵（设成 `/` = 所有路径都要求） |
+| SQLite 路径 | `backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME` | `<运行时根>/db/app.db`，**没有 `DATABASE_URL` 可配**；备份写在 `<数据根>/db/` 里 |
+| 备份间隔 | `backend/backup.py` 的 `BACKUP_INTERVAL_SECONDS` | 3600 秒（1 小时） |
 | 证书 | `docker-compose.yml` + `frontend/nginx.conf.template` | `certs/cert.pem` 与 `certs/cert.key` |
 | Session cookie | `backend/config.py` | HttpOnly、SameSite=Lax、HTTPS 下 Secure（测试自动关） |
-| `TESTING` | `backend/config.py` | 只给测试用（顺带跳过启动时的 `.mounted` 哨兵检查） |
+| `TESTING` | `backend/config.py` | 只给测试用（顺带跳过启动时的 `.mounted` 哨兵检查与备份线程） |
 
 > **这是有意的取舍**：平台只给自己用，不打算部署到别人的机器上，所以不做「可配置化」。
 > 密钥、证书都随仓库提交，安全性不是考虑项。别把 `SECRET_KEY` 之类的再挪回环境变量。
 
 ### 启动时发生什么
 
-`create_app()`（`backend/__init__.py`）按顺序做四件事：
+`create_app()`（`backend/__init__.py`）按顺序做这些事：
 
-1. `require_mounted()` — 数据根落在 Windows 盘挂载前缀下时，没有 `.mounted` 哨兵就**拒绝启动**（见下）；不在那个前缀下直接放行；
-2. `ensure_data_dir()` — 建出 `<STORAGE_ROOT>/db`；
+1. `require_mounted()` — 数据根与运行时根的宿主路径落在 Windows 盘挂载前缀下时，各自挂载点里
+   没有 `.mounted` 哨兵就**拒绝启动**（见下）；不在那个前缀下直接放行；
+2. `ensure_data_dir()` — 建出 `<运行时根>/db`；
 3. `init_db()` — `create_all` 建缺失的表，再 `_ensure_columns()` 给老表 `ALTER TABLE ADD COLUMN` 补列；
-4. `backup_database()` — 当月还没有备份就往 `<STORAGE_ROOT>/db/<YYYY-MM>.db` 备一份。
+4. `backup_database()` — 立刻往 `<数据根>/db/<YYYY-MM>.db` 备一份（当月只有这一份，整份重写）；
+5. `start_backup_loop()` — 起一个守护线程，之后每 1 小时再备一次（`TESTING` 下不起）；
+6. `ensure_game_index()` — 检索索引不存在就补建一次。
 
-第 1 步与第 4 步的失败处理正好相反：哨兵缺了**一定拦住启动**；备份失败只记 warning、绝不拦，
+第 1 步与第 4/5 步的失败处理正好相反：哨兵缺了**一定拦住启动**；备份失败只记 warning、绝不拦，
 也不做还原功能（回滚就手工把备份文件改名成 `app.db` 替换）。
 
 ### `.mounted` 哨兵文件
 
-**只对 Windows 盘挂载路径下的数据根**要求一个空的 `.mounted`：**人工创建，代码只检查、绝不代建**
-（`backend/mount_guard.py`）。
+**只对 Windows 盘挂载路径下的根目录**要求一个空的 `.mounted`：**人工创建，代码只检查、绝不代建**
+（`backend/mount_guard.py`）。**数据根与运行时根各查一份**——两个根默认是同一个目录，那就只有
+一个文件；`RUNTIME_HOST_DIR` 单独指到别处、且那也在 `/mnt` 下时，那个目录里也要有一份。
 
-它用来识破「bind 把宿主空目录挂进来了」这种情况：数据目录放在 WSL 挂的 Windows 盘（`/mnt/…`）上
-时，开机可能 docker 先于盘挂载起来，那时容器里的数据根目录是个**空目录**——可写、`statvfs` 也
+它用来识破「bind 把宿主空目录挂进来了」这种情况：目录放在 WSL 挂的 Windows 盘（`/mnt/…`）上
+时，开机可能 docker 先于盘挂载起来，那时容器里的目录是个**空目录**——可写、`statvfs` 也
 正常，服务照常启动就会在里面新建一个空库，看起来就像「数据全没了」。唯一能识破它的判据就是
-哨兵文件在不在。
+哨兵文件在不在。运行时根是空的后果更直接：**新建一个空 app.db = 账号全没了**。
 
 所以判断分两步：
 
-1. **要不要检查**：数据根路径是否落在 Windows 盘挂载前缀下。前缀写死在
+1. **要不要检查**：这个根的宿主路径是否落在 Windows 盘挂载前缀下。前缀写死在
    `backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`（**可改，默认 `/mnt`**；设成 `/` 表示对所有路径
    都要求哨兵）。**不在这个前缀下（普通 Linux 目录，比如仓库内的 `data/storage` 或 `/srv/xgame`）
-   没有这个竞态，直接启动、不要求任何文件**。这里的「数据根路径」在容器里取 compose 传进来的
-   宿主路径 `STORAGE_HOST_DIR`（容器里 `STORAGE_ROOT` 固定是 bind 目标 `/data`，看不出宿主路径），
-   本机直跑时退回 `STORAGE_ROOT`。
-2. **检查哪一份**：进程能看到的 `<STORAGE_ROOT>/.mounted`（容器里就是挂进来的宿主目录）。
+   没有这个竞态，直接启动、不要求任何文件**。这里的「宿主路径」在容器里取 compose 传进来的
+   `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR`（容器里两个根固定是 bind 目标 `/data` 与 `/runtime`，
+   看不出宿主路径），本机直跑时退回 `STORAGE_ROOT` / `RUNTIME_ROOT`。
+2. **检查哪一份**：进程能看到的 `<挂载点>/.mounted`（容器里就是挂进来的宿主目录）。
 
-缺哨兵时：打一条中文日志（含该 `touch` 哪个路径）→ 等 5 秒 → 以非零码退出。容器里这一步发生在
+缺哨兵时：打一条中文日志（含该 `touch` 哪个宿主路径）→ 等 5 秒 → 以非零码退出。容器里这一步发生在
 `exec gunicorn` **之前**（`backend/entrypoint.sh` 是 api 镜像的 ENTRYPOINT，它调的就是
 `create_app()` 里同一个 `require_mounted()`），退出的是容器主进程，compose 的
 `api.restart: unless-stopped` 随即把容器重新拉起，如此循环直到哨兵出现、服务自己恢复。
 判断与日志只有 `mount_guard.py` 一份，脚本只是把退出码透传出去。
 
 ```bash
-# 数据根在 Windows 盘上（如 /mnt/x/xgame）时，第一次运行平台前建一次；普通 Linux 目录不用建
+# 在 Windows 盘上（如 /mnt/x/xgame/storage 与 /mnt/x/xgame/runtime）时，第一次运行平台前各建一次；普通 Linux 目录不用建
 touch "$STORAGE_HOST_DIR/.mounted"
+touch "$RUNTIME_HOST_DIR/.mounted"     # 两行指向同一个目录时，这行与上一行是同一个文件
 ```
 
-哨兵要建在**真实的数据目录**里（它会随数据目录一起被备份；空的 bind 挂载天然没有它），
-换新的数据目录要重新建一次。
+哨兵要建在**真实的目录**里（它会随目录一起被备份；空的 bind 挂载天然没有它），
+换新的目录要重新建一次。
 
 ## 证书
 
@@ -267,18 +285,19 @@ make win-image    # 只构建/更新那个构建环境镜像，不出包
 ```bash
 STORAGE_ROOT=/tmp/x STATIC_DIR=frontend/dist python -m backend.cli serve --port 8910
 # 或者：python -m backend.cli serve --static-dir frontend/dist --storage-root /tmp/x
+# 库想单独放就再加 --runtime-root /tmp/x-runtime（不给则与数据根相同）
 ```
 
 不设 `STATIC_DIR` 时后端一条静态路由都不注册，Docker 路线行为不变。
 
 ## 数据与磁盘布局
 
-数据根目录（`STORAGE_ROOT`）里的一切都是普通文件，**没有任何对象存储、也没有 docker 具名卷**：
+数据根目录（`STORAGE_ROOT`）与运行时根目录（`RUNTIME_ROOT`，不配就是数据根）里的一切都是普通文件，
+**没有任何对象存储、也没有 docker 具名卷**。数据根：
 
 ```
-.mounted                                     哨兵文件（数据根在 /mnt 这类 Windows 盘路径下时人工创建）
-db/app.db                                    SQLite 库（SQLModel 表）
-db/2026-10.db                                月度备份
+.mounted                                     哨兵文件（在 /mnt 这类 Windows 盘路径下时人工创建）
+db/2026-10.db                                备份（启动时 + 每小时一次，当月只此一份、整份重写）
 db/game.db                                   游戏检索索引（派生只读库，make index 构建，不备份）
 game/{游戏类型}/{卡带ID}/game.{后缀}          本体
 game/{游戏类型}/{卡带ID}/cover.{后缀}         封面
@@ -289,9 +308,16 @@ save/{用户名}/{游戏类型}/{卡带ID}/{uuid}.state  云端存档快照（�
 image/{用户名}/{游戏类型}/{卡带ID}/{uuid}.png   游戏截图（按账号）
 ```
 
+运行时根（只有库，所以它整个目录都可以不备份）：
+
+```
+.mounted                                     哨兵文件（同上；两个根相同时就是上面那一个）
+db/app.db                                    SQLite 库（SQLModel 表）
+```
+
 路径规则全部集中在 `backend/games/paths.py`，**别在别处手拼字符串**；读写一律走
 `backend/storage/local.py` 的 `LocalStorage`。SQLite 里只存相对根目录的路径，
-所以换盘、换目录只改 `STORAGE_HOST_DIR`，库里的数据不用动。
+所以换盘、换目录只改 `STORAGE_HOST_DIR`（以及 `RUNTIME_HOST_DIR`），库里的数据不用动。
 
 `save/` 与 `image/` 不可重建；`game/` 下的本体、封面、H5、攻略都能重传。
 
@@ -328,7 +354,7 @@ make index        # = STORAGE_ROOT=${STORAGE_HOST_DIR:-./data/storage} python -m
 
 - **运行期只读**。所有读都经 `GameSearchService`，用 `mode=ro` + `PRAGMA query_only=1` 打开，
   每请求一条短连接；没有第三条路径会写它。
-- **不参与月度备份**（`backend/backup.py` 只备份 `app.db`）——它随时能从 CSV 重建。
+- **不参与备份**（`backend/backup.py` 只备份 `app.db`）——它随时能从 CSV 重建。
 - **重建后不用重启 api**：`os.replace` 之后，已经打开的连接继续读旧 inode，新请求自动拿新库。
 - **宿主机与容器都能跑**：CSV 随 `backend/` 进 api 镜像，容器里的自动补建正常工作（写的是
   bind 进去的宿主数据目录）。反过来也一样：宿主机 `make index` 建出来的库，容器立刻能读到
@@ -363,17 +389,18 @@ sudo chown -R "$USER" "$STORAGE_HOST_DIR"     # 默认就是 ./data/storage
 ## 排障
 
 **数据目录在 WSL 的 Windows 盘上（`/mnt/…`），开机后数据像是空的。**
-Docker 守护进程可能先于 WSL 发行版起来，bind 把宿主的空目录挂进了容器。**这种数据根由哨兵拦住**：
-容器里的数据根没有 `.mounted`，api 拒绝启动并被反复重启，窗口期内一个字节都写不进去（不会再
+Docker 守护进程可能先于 WSL 发行版起来，bind 把宿主的空目录挂进了容器。**这种根由哨兵拦住**：
+容器里的根没有 `.mounted`，api 拒绝启动并被反复重启，窗口期内一个字节都写不进去（不会再
 静默建出空库）。盘挂上后不用做别的，容器下一次重启就自己恢复（急的话 `docker compose restart api`）。
-前提是哨兵当初已建在**真实的数据目录**里——走的是「数据根在 `/mnt` 前缀下」这条判断，若曾在空
-挂载里建过一次 `.mounted`，它反而会把问题掩盖掉。治本的仍是把 `STORAGE_HOST_DIR` 指向 docker
-启动前就稳定的路径，别放在会被 `git pull` 覆盖的仓库目录里。
+前提是哨兵当初已建在**真实的目录**里——走的是「这个根在 `/mnt` 前缀下」这条判断，若曾在空
+挂载里建过一次 `.mounted`，它反而会把问题掩盖掉。治本的仍是把 `STORAGE_HOST_DIR` /
+`RUNTIME_HOST_DIR` 指向 docker 启动前就稳定的路径，别放在会被 `git pull` 覆盖的仓库目录里。
 
-**api 容器一直在重启，日志反复出现「数据根目录 … 里没有哨兵文件」。**
-数据根在 Windows 盘挂载前缀（默认 `/mnt`）下、却缺 `.mounted`：从没建过、换过 `STORAGE_HOST_DIR`、
-或者盘还没挂上。确认盘已挂上（`mountpoint -q /mnt/d`）之后，在**宿主侧**那个数据目录里
-`touch .mounted`，容器下一次重启就起来了。在容器里 `touch /data/.mounted` 也行，但那是建在 bind
+**api 容器一直在重启，日志反复出现「根目录 … 里没有哨兵文件」。**
+那个根的宿主路径在 Windows 盘挂载前缀（默认 `/mnt`）下、却缺 `.mounted`：从没建过、换过
+`STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR`、或者盘还没挂上。确认盘已挂上（`mountpoint -q /mnt/d`）
+之后，在**宿主侧**那个目录里 `touch .mounted`，容器下一次重启就起来了（日志里写明了是哪个宿主
+路径）。在容器里 `touch /data/.mounted`（运行时根就是 `/runtime/.mounted`）也行，但那是建在 bind
 进来的宿主目录里，效果一样（盘没挂上时只是白建，掩盖问题）。日志给出的 `touch` 路径就是宿主路径。
 
 **页面还是旧版。** 前端按构建版本号（git 短 sha）探测更新，`nginx` 对 HTML 与 `/version.txt`
@@ -388,11 +415,15 @@ Docker 守护进程可能先于 WSL 发行版起来，bind 把宿主的空目录
 
 **浏览器的证书警告。** 自签名证书的正常表现，见上面「证书」。
 
-**用网盘备份数据目录时，报「SQLite 文件复制失败 / 文件被占用」。** 数据目录挂在 WSL 下的
-Windows 盘（`/mnt/x/…`）、而 api 容器一直开着 `<根>/db/app.db` 时，Windows 侧的网盘客户端拷不动
-这个被占用的文件，于是备份任务报错。**不影响数据安全**：每月会自动往同一个 `db/` 里备一份
-`<年>-<月>.db`，那份写完就不再变，网盘能正常备份走，元数据一直有兜底。非要拷最新的 `app.db`，
-先 `docker compose stop api`，拷完再 `docker compose start api`。
+**用网盘备份数据目录时报「SQLite 文件复制失败 / 文件被占用」。** 说明库还在数据目录里
+（`RUNTIME_HOST_DIR` 没单独指出去）：数据目录挂在 WSL 下的 Windows 盘（`/mnt/x/…`）、而 api 容器
+一直开着 `<数据根>/db/app.db` 时，Windows 侧的网盘客户端拷不动这个被占用的文件，于是备份任务报错。
+**对策：把 `RUNTIME_HOST_DIR` 指到网盘之外**（比如 WSL 本机文件系统上的一个目录），数据目录里就只剩
+能随便拷的普通文件；那个运行时目录**不用备份**，兜底靠每月一份的 `<年>-<月>.db`。
+
+**备份文件每小时都会被重写。** 这是有意的：`backup_database()` 启动时备一次、之后每小时一次，
+每次都整份重写当月那一个 `<年>-<月>.db`，所以快照最多落后一小时。写的是同目录的 `.tmp` 再
+`os.replace` 改名，读的人永远看到一个完整文件；代价是网盘会每小时重新同步一次这个文件。
 
 ## 文档索引
 

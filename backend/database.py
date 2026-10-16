@@ -28,7 +28,7 @@ def make_engine(settings: Settings) -> Engine:
 
 
 def ensure_data_dir(settings: Settings) -> None:
-    """建出库所在目录（根路径/db）。"""
+    """建出库所在目录（运行时根/db）。没配运行时根时它就是数据根/db。"""
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
 
 

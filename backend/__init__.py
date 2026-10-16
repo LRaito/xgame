@@ -6,7 +6,7 @@ from sqlmodel import Session
 from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth.router import router as auth_router
-from backend.backup import backup_database
+from backend.backup import backup_database, start_backup_loop
 from backend.config import LOG_FORMAT, SECRET_KEY, settings_from_overrides
 from backend.csrf import CSRFMiddleware
 from backend.database import ensure_data_dir, init_db, make_engine
@@ -39,8 +39,9 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     ensure_data_dir(settings)
     engine = make_engine(settings)
     init_db(engine)
-    # 启动时检查一次月度备份：当月还没有就补一份，已有则跳过
+    # 启动先备一次，之后由守护线程每小时再备一次（当月只有一份 <YYYY-MM>.db，每次都整份重写）
     backup_database(settings)
+    start_backup_loop(settings)
     # 启动时检查一次游戏检索索引：没有就自动补建（已有则跳过；建不出来只记 warning，不拦启动）
     ensure_game_index(settings)
 

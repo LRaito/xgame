@@ -85,7 +85,7 @@ make_icon.py / xgame.png  从源图生成 xgame.ico（换图标 = 替换 xgame.p
 | 协议 | HTTPS（自签证书） | HTTP（局域网里手机/平板不会信任自签证书） |
 | session cookie | `Secure` | 由启动器设 `SESSION_COOKIE_SECURE=false`，否则浏览器不保存 cookie |
 | 上传闸门 | nginx `client_max_body_size 128m` | `backend/request_limit.py`（默认 512MB，可配） |
-| 后端配置 | 只认 `STORAGE_ROOT` | 启动器额外设 `STATIC_DIR`（让后端托管前端 dist） |
+| 后端配置 | 只认 `STORAGE_ROOT`（库就在 `data/db/` 里） | 启动器额外设 `STATIC_DIR`（让后端托管前端 dist） |
 
 HTTP 的代价：非 localhost 下 Service Worker 不注册（封面缓存退化直连，只是慢）、
 剪贴板 API 不可用（「复制」按钮已加兜底）。EmulatorJS 不需要跨源隔离

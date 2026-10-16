@@ -36,7 +36,19 @@ def init_db_cmd() -> None:
     default=None,
     help="数据根目录；不给就用默认的 <仓库>/data/storage。",
 )
-def serve_cmd(host: str, port: int, static_dir: Path | None, storage_root: Path | None) -> None:
+@click.option(
+    "--runtime-root",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="运行时根目录（SQLite 库落它下面的 db/）；不给就与数据根相同。",
+)
+def serve_cmd(
+    host: str,
+    port: int,
+    static_dir: Path | None,
+    storage_root: Path | None,
+    runtime_root: Path | None,
+) -> None:
     """本机直跑一份「生产形态」的服务：单进程 uvicorn，可选地顺带托管前端。
 
     Docker 路线是 nginx + gunicorn；这条命令是给「没有 nginx 的本地场景」用的：
@@ -52,10 +64,13 @@ def serve_cmd(host: str, port: int, static_dir: Path | None, storage_root: Path 
 
     if storage_root is not None:
         os.environ["STORAGE_ROOT"] = str(storage_root.resolve())
+    if runtime_root is not None:
+        os.environ["RUNTIME_ROOT"] = str(runtime_root.resolve())
     if static_dir is not None:
         os.environ["STATIC_DIR"] = str(static_dir.resolve())
 
     click.echo(f"数据根：{os.environ.get('STORAGE_ROOT', '(默认)')}")
+    click.echo(f"运行时根：{os.environ.get('RUNTIME_ROOT', '(同数据根)')}")
     click.echo(f"前端：{os.environ.get('STATIC_DIR', '(不托管，交给 nginx)')}")
     click.echo(f"访问：http://{host}:{port}")
     uvicorn.run("backend.asgi:app", host=host, port=port)

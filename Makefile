@@ -2,8 +2,8 @@
 
 COMPOSE ?= docker compose
 
-# 作为环境变量导出，compose 里的 ${STORAGE_HOST_DIR} / ${WEB_HTTPS_PORT} 从这里取。
-# 没有 .env 也没关系：compose 会退到默认值（./data/storage、443）。
+# 作为环境变量导出，compose 里的 ${STORAGE_HOST_DIR} / ${RUNTIME_HOST_DIR} / ${WEB_HTTPS_PORT} 从这里取。
+# 没有 .env 也没关系：compose 会退到默认值（数据与库都放 ./data/storage、端口 443）。
 -include .env
 export
 
