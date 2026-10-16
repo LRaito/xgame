@@ -68,7 +68,7 @@ export async function composeCover(styleId, sourceImg) {
  *
  * 贴之前一定要按洞口的圆角裁一刀：底图洞口是按圆角填的，圆角之外仍是机身像素
  * （GBA 是机身灰、GBC 是贴纸凹槽的阴影），不裁的话矩形封面会把这圈盖掉。
- * 圆角**按角给**：美版 FC 的洞口上边就是画布顶边，上面两角是直角（见 constants/coverStyles.js）。
+ * 圆角可以**按角给**（`cornerRadii()` 归一化成 `{ tl, tr, br, bl }`，目前五个样式四角都一样）。
  */
 async function composeCartridge(cart, sourceImg) {
     const { image, hole } = cart;
