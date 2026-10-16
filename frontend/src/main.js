@@ -9,6 +9,7 @@ import router from "./router";
 import { ensureCsrf } from "./utils/request";
 import AppButton from "@components/common/AppButton.vue";
 import AppEmpty from "@components/common/AppEmpty.vue";
+import AppPagination from "@components/common/AppPagination.vue";
 import CopyButton from "@components/common/CopyButton.vue";
 import "./styles/index.css";
 import "./permission";
@@ -23,6 +24,7 @@ app.use(router);
 app.use(ElementPlus, { locale: zhCn });
 app.component("AppButton", AppButton);
 app.component("AppEmpty", AppEmpty);
+app.component("AppPagination", AppPagination);
 app.component("CopyButton", CopyButton);
 
 ensureCsrf().catch(() => {});

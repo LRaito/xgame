@@ -6,7 +6,7 @@
                 placeholder="游戏类型"
                 clearable
                 class="game-manage__filter-type"
-                @change="reload"
+                @change="applyFilter"
             >
                 <el-option label="全部类型" value="" />
                 <el-option
@@ -22,6 +22,7 @@
                 clearable
                 class="game-manage__filter-keyword"
                 @input="onKeywordInput"
+                @clear="applyFilter"
             />
             <div class="game-manage__actions">
                 <app-button @click="openImport">搬运游戏</app-button>
@@ -91,6 +92,14 @@
             </table>
             <app-empty v-else description="暂无游戏，点击「添加游戏」开始录入。" />
         </div>
+
+        <!-- 翻页放在表格下面；只有一页时整块不渲染（AppPagination 自己判，左右键翻页也在它里面） -->
+        <app-pagination
+            v-model:page="page"
+            :total="total"
+            :page-size="PAGE_SIZE"
+            @change="reload"
+        />
 
         <!-- 添加/编辑游戏：左右两栏——左边元数据、右边两个上传；整窗居中且一页放得下（不滚动） -->
         <app-dialog
@@ -460,15 +469,22 @@ import {
 } from "@/constants/gameTypes";
 import { ensureGameAssetSw, gameCoverUrl } from "@/utils/gameAssetCache";
 
+// 每页 5 条，与后端 backend/games/service.py 的 MANAGE_PAGE_SIZE_DEFAULT 保持一致
+const PAGE_SIZE = 5;
+
 const loading = ref(false);
 const saving = ref(false);
 const items = ref([]);
+const page = ref(1);
+const total = ref(0);
 const gameTypes = ref(["flash"]);
 const bodyExtensions = ref(ALL_GAME_EXTENSIONS);
 
 const filterType = ref("");
 const filterKeyword = ref("");
 let keywordTimer = null;
+// 请求序号：防抖 + 快速翻页时，慢的旧响应不能覆盖新结果（同检索页）
+let requestSeq = 0;
 
 const formVisible = ref(false);
 const formMode = ref("create");
@@ -667,29 +683,59 @@ function collapseDesc() {
     expandedDescId.value = null;
 }
 
+function listParams() {
+    const params = { page: page.value, page_size: PAGE_SIZE };
+    if (filterType.value) {
+        params.game_type = filterType.value;
+    }
+    if (filterKeyword.value.trim()) {
+        params.q = filterKeyword.value.trim();
+    }
+    return params;
+}
+
+/** 取当前页。**保持页码**——保存、删除、搬运之后都调它，别把用户从第 3 页踢回第 1 页。 */
 async function reload() {
+    const seq = ++requestSeq;
     loading.value = true;
     // 换了一批行，之前展开的那条描述跟着收起来
     expandedDescId.value = null;
     try {
-        const params = {};
-        if (filterType.value) {
-            params.game_type = filterType.value;
+        const data = await listManageGamesAPI(listParams());
+        if (seq !== requestSeq) {
+            return;
         }
-        if (filterKeyword.value.trim()) {
-            params.q = filterKeyword.value.trim();
+        // 删掉本页最后一条后页码会越界：收敛到最后一页再取一次。
+        // （服务端不收敛页码、只返回空 items + 真 total，与检索页同一口径，收敛放前端）
+        const pageCount = Math.max(
+            1,
+            Math.ceil((data.total || 0) / (data.page_size || PAGE_SIZE))
+        );
+        if (page.value > pageCount) {
+            page.value = pageCount;
+            // 内层会 ++requestSeq，外层 finally 的 seq 判断自然跳过、不覆盖 loading
+            await reload();
+            return;
         }
-        items.value = await listManageGamesAPI(params);
+        items.value = data.items || [];
+        total.value = data.total || 0;
+        page.value = data.page || 1;
     } finally {
-        loading.value = false;
+        if (seq === requestSeq) {
+            loading.value = false;
+        }
     }
+}
+
+/** 改筛选条件要回到第 1 页，否则会停在一个新结果里不存在的页码上。 */
+function applyFilter() {
+    page.value = 1;
+    reload();
 }
 
 function onKeywordInput() {
     clearTimeout(keywordTimer);
-    keywordTimer = setTimeout(() => {
-        reload();
-    }, 300);
+    keywordTimer = setTimeout(applyFilter, 300);
 }
 
 function clearGameFile() {
@@ -1107,7 +1153,11 @@ onMounted(async () => {
     }
 });
 
-onBeforeUnmount(releaseCoverPreview);
+onBeforeUnmount(() => {
+    // 挂起的防抖别再触发一次请求（序号防竞态兜得住，但清掉更干净）
+    clearTimeout(keywordTimer);
+    releaseCoverPreview();
+});
 </script>
 
 <style scoped>
@@ -1167,14 +1217,15 @@ onBeforeUnmount(releaseCoverPreview);
 
 /* 百分比之和正好 100%：表格永远等于内容区宽度，不会撑出水平滚动条。
    各列的百分比是按「最窄也要放得下」定的（如更新时间那串固定 19 个字） */
+/* 12% 是给 102px 封面 + 左右各 14px 内边距留的（约 130px），窗口更窄时封面会自己收窄 */
 .game-manage__col-cover {
-    width: 10%;
+    width: 12%;
 }
 
 /* 操作列按三个按钮的实际需要给宽（按钮左对齐，正好从左铺到列尾，右边不留空），
    省下的宽度都给名称列 */
 .game-manage__col-name {
-    width: 32%;
+    width: 30%;
 }
 
 .game-manage__col-type {
@@ -1197,7 +1248,7 @@ onBeforeUnmount(releaseCoverPreview);
    这里把操作列加回来一点，名称列让出同样的数 */
 @media (max-width: 1240px) {
     .game-manage__col-name {
-        width: 29%;
+        width: 27%;
     }
 
     .game-manage__col-actions {
@@ -1207,10 +1258,19 @@ onBeforeUnmount(releaseCoverPreview);
 
 .game-manage__table th,
 .game-manage__table td {
-    padding: 12px 14px;
     border-bottom: 1px solid #f1f5f9;
     text-align: left;
     vertical-align: middle;
+}
+
+/* 数据行上下各 16px，行高 = 封面高 68 + 32 = 100px（约原来的 1.4 倍） */
+.game-manage__table td {
+    padding: 16px 14px;
+}
+
+/* 表头没有封面撑着，上下留 12px 就够——别白占一屏的竖向预算 */
+.game-manage__table th {
+    padding: 12px 14px;
 }
 
 /* 除名称列外都只占一行，超长（如 Sega_Master_System）就地省略 */
@@ -1227,10 +1287,11 @@ onBeforeUnmount(releaseCoverPreview);
     font-weight: 600;
 }
 
-/* 封面缩略图：常规宽度下就是 72×48；单元格被挤窄时等比缩小，绝不撑破格子 */
+/* 封面缩略图：常规宽度下就是 102×68（行高因此是 100px）；单元格被挤窄时按 max-width
+   等比缩小，绝不撑破格子（img 是 object-fit: cover，收窄只会裁、不会把画面拉变形） */
 .game-manage__cover {
-    width: 100%;
-    max-width: 72px;
+    width: 102px;
+    max-width: 100%;
     aspect-ratio: 3 / 2;
     overflow: hidden;
     background: #f8fafc;
@@ -1246,7 +1307,7 @@ onBeforeUnmount(releaseCoverPreview);
 }
 
 .game-manage__cover-fallback {
-    font-size: 24px;
+    font-size: 34px;
 }
 
 /* 名称列：整格是展开描述的定位基准 */
@@ -1275,10 +1336,11 @@ onBeforeUnmount(releaseCoverPreview);
 }
 
 /* 展开的那一层：钉在收起那行的位置上往下铺，白底 + 投影盖住下面的行。
-   left/right 取单元格的内边距（14px），文字才和收起的描述对齐 */
+   left/right 取单元格的内边距（14px），文字才和收起的描述对齐；
+   top 跟着单元格的上内边距走（16 + 名称一行约 21 + 描述 margin-top 4 ≈ 42） */
 .game-manage__desc-panel {
     position: absolute;
-    top: 38px;
+    top: 42px;
     left: 14px;
     right: 14px;
     z-index: 3;

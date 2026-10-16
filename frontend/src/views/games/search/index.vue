@@ -60,17 +60,13 @@
             </table>
             <app-empty v-else :description="emptyDescription" />
 
-            <!-- 翻页放在表格下面；只有一页时不出现 -->
-            <div v-if="total > pageSize" class="game-search__pager">
-                <el-pagination
-                    v-model:current-page="page"
-                    :page-size="pageSize"
-                    :total="total"
-                    layout="prev, pager, next, total"
-                    background
-                    @current-change="load"
-                />
-            </div>
+            <!-- 翻页放在表格下面；只有一页时不出现（AppPagination 自己判，左右键翻页也在它里面） -->
+            <app-pagination
+                v-model:page="page"
+                :total="total"
+                :page-size="pageSize"
+                @change="load"
+            />
         </div>
     </div>
 </template>
@@ -272,11 +268,5 @@ onMounted(async () => {
     background: #fde68a;
     color: inherit;
     border-radius: 2px;
-}
-
-.game-search__pager {
-    display: flex;
-    justify-content: center;
-    margin-top: 20px;
 }
 </style>

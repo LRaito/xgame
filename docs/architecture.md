@@ -74,7 +74,7 @@ x/
 ├── frontend/                 # Vue 3 SPA
 │   ├── src/api/              # 按业务域；导出 xxxAPI（auth / games）
 │   ├── src/views/            # login / games（index、manage、flash-player、emulator-player、h5-player）
-│   ├── src/components/common/# AppDialog、AppButton、AppFilterBar、AppEmpty…
+│   ├── src/components/common/# AppDialog、AppButton、AppPagination、AppFilterBar、AppEmpty…
 │   ├── src/components/games/ # 游戏专用：GameShell、GameCard、FlashPlayer、FlashSaveManager、EmuSaveManager、
 │   │                         #   GameScreenshotGallery(详情图片栏)、ScreenshotManagerDialog、ScreenshotConfirmDialog
 │   ├── src/utils/            # request / auth / gameSaves(Flash) / emulatorSaves(模拟器本地档) / emulatorSettings(模拟器设置) …
@@ -135,6 +135,10 @@ backend/
 ### 游戏中心
 
 ```
+管理列表（登录）：GET /api/games/manage?page=1&page_size=5[&game_type=][&q=]
+  服务端分页，返回 {total, page, page_size, items}；排序固定为 GAME_TYPES 类型顺序分组 → 组内按名称 → id
+  管理页每页 5 行，翻页条与游戏检索共用 components/common/AppPagination.vue（两页都支持左右方向键翻页）
+
 管理（登录）：POST /api/games/manage（multipart：name/cartridge_id/description/file[+cover]）
   一步建条目并写本体；**卡带ID 必填、创建后不可改**（只能删掉重建），它全局唯一且是磁盘目录名
   游戏类型由本体文件扩展名自动判定，不接受手动指定（flash←.swf；h5←.zip；nes←.nes；snes←.sfc/.smc；

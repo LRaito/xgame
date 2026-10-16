@@ -199,7 +199,7 @@ def test_games_list_sorted_by_name_asc(game_service):
         )
 
     center = [g.name for g in game_service.list_center()]
-    manage = [g.name for g in game_service.list_manage()]
+    manage = [g.name for g in game_service.list_manage().items]
     assert center == ["bravo", "charlie", "delta"]
     assert manage == ["bravo", "charlie", "delta"]
 
@@ -242,7 +242,7 @@ def test_game_crud_flow(game_service, storage_root):
 
     center = game_service.list_center()
     assert len(center) == 1
-    found = game_service.list_manage(keyword="测试")
+    found = game_service.list_manage(keyword="测试").items
     assert len(found) == 1
 
     stream = game_service.open_asset(updated.game_path)
@@ -330,7 +330,7 @@ def test_manage_api_rejects_unknown_body_format(logged_in_games, storage_root):
     assert response.status_code == 400
     message = response.json()["message"]
     assert ".swf" in message.lower() and ".nes" in message
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
     assert _files(storage_root) == set()
 
 
@@ -345,7 +345,7 @@ def test_create_rolls_back_when_cover_invalid(logged_in_games, storage_root):
     )
     assert response.status_code == 400
     assert "封面" in response.json()["message"]
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
     assert _files(storage_root) == set()
 
 
@@ -418,12 +418,88 @@ def test_manage_search_and_filter(logged_in_games):
 
     filtered = logged_in_games.get("/api/games/manage", params={"q": "Alpha"})
     assert filtered.status_code == 200
-    names = [item["name"] for item in filtered.json()["data"]]
+    names = [item["name"] for item in filtered.json()["data"]["items"]]
     assert names == ["Alpha"]
 
     typed = logged_in_games.get("/api/games/manage", params={"game_type": "flash"})
     assert typed.status_code == 200
-    assert len(typed.json()["data"]) == 2
+    assert len(typed.json()["data"]["items"]) == 2
+
+
+def test_manage_list_is_paged(logged_in_games):
+    """管理列表服务端分页：默认每页 5 条，载荷是 {total, page, page_size, items}。"""
+    for name in ("n06", "n02", "n09", "n04", "n01", "n08", "n03", "n10", "n05", "n07"):
+        _create_game(logged_in_games, name, "a.swf")
+
+    first = logged_in_games.get("/api/games/manage").json()["data"]
+    assert set(first) == {"total", "page", "page_size", "items"}
+    assert (first["total"], first["page"], first["page_size"]) == (10, 1, 5)
+    assert [item["name"] for item in first["items"]] == ["n01", "n02", "n03", "n04", "n05"]
+
+    second = logged_in_games.get("/api/games/manage", params={"page": 2}).json()["data"]
+    assert [item["name"] for item in second["items"]] == ["n06", "n07", "n08", "n09", "n10"]
+    assert second["total"] == 10
+
+
+def test_manage_list_groups_by_game_type_before_name(logged_in_games):
+    """排序先按 GAME_TYPES 的类型顺序分组、组内再按名称：flash 排在 nes 之前。"""
+    _create_game(logged_in_games, "zeta", "z.nes")
+    _create_game(logged_in_games, "alpha", "a.swf")
+
+    data = logged_in_games.get("/api/games/manage").json()["data"]
+    assert [item["name"] for item in data["items"]] == ["alpha", "zeta"]
+
+
+def test_manage_pagination_params_are_clamped(logged_in_games):
+    """越界参数在 service 里收敛成合法值，返回 200 而不是 422（422 会绕开统一错误信封）。"""
+    _create_game(logged_in_games, "A", "a.swf")
+
+    zero = logged_in_games.get("/api/games/manage", params={"page": 0})
+    assert zero.status_code == 200
+    assert zero.json()["data"]["page"] == 1
+
+    negative = logged_in_games.get("/api/games/manage", params={"page": -5})
+    assert negative.json()["data"]["page"] == 1
+
+    # page_size=0 与「没传」同义（`page_size or 默认值`），回落默认的 5；负数才收敛到 1
+    zero_size = logged_in_games.get("/api/games/manage", params={"page_size": 0})
+    assert zero_size.json()["data"]["page_size"] == 5
+
+    negative_size = logged_in_games.get("/api/games/manage", params={"page_size": -3})
+    assert negative_size.json()["data"]["page_size"] == 1
+
+    huge = logged_in_games.get("/api/games/manage", params={"page_size": 100000})
+    assert huge.status_code == 200
+    assert huge.json()["data"]["page_size"] == 100
+
+
+def test_manage_page_beyond_range_returns_empty_items(logged_in_games):
+    """页码越界不是错误：items 空、total 照给（与检索页同一口径），页码收敛交给前端。"""
+    for name in ("a", "b", "c"):
+        _create_game(logged_in_games, name, "a.swf")
+
+    data = logged_in_games.get("/api/games/manage", params={"page": 99}).json()["data"]
+    assert data["items"] == []
+    assert (data["total"], data["page"]) == (3, 99)
+
+
+def test_manage_filter_combines_with_pagination(logged_in_games):
+    """筛选与分页组合：total 是筛选后的总数，不是全表总数。"""
+    for name in ("n1", "n2", "n3", "n4", "n5"):
+        _create_game(logged_in_games, name, "a.swf")
+    _create_game(logged_in_games, "rom", "r.nes")
+
+    typed = logged_in_games.get(
+        "/api/games/manage", params={"game_type": "flash", "page": 2, "page_size": 2}
+    ).json()["data"]
+    assert (typed["total"], typed["page"], typed["page_size"]) == (5, 2, 2)
+    assert [item["name"] for item in typed["items"]] == ["n3", "n4"]
+
+    searched = logged_in_games.get(
+        "/api/games/manage", params={"q": "n", "page_size": 3}
+    ).json()["data"]
+    assert searched["total"] == 5
+    assert [item["name"] for item in searched["items"]] == ["n1", "n2", "n3"]
 
 
 @pytest.mark.parametrize(
@@ -617,7 +693,7 @@ def test_create_requires_cartridge_id(logged_in_games):
     )
     assert response.status_code == 400
     assert "卡带" in response.json()["message"]
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
 
 
 def test_cartridge_id_is_uppercased_and_used_as_directory(logged_in_games, storage_root):
@@ -674,7 +750,7 @@ def test_create_rejects_illegal_game_name(logged_in_games):
     response = _create_game(logged_in_games, "魂斗罗/30条命", "a.nes", b"nes-body")
     assert response.status_code == 400
     assert "/" in response.json()["message"]
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
 
 
 def test_description_length_limit(logged_in_games):
@@ -874,7 +950,7 @@ def test_manage_filter_emulator_type(logged_in_games):
         "/api/games/manage", params={"game_type": "segaMD"}
     )
     assert filtered.status_code == 200
-    names = [item["name"] for item in filtered.json()["data"]]
+    names = [item["name"] for item in filtered.json()["data"]["items"]]
     assert names == ["Md game"]
 
 
@@ -1795,7 +1871,7 @@ def test_import_same_file_twice_rejected(logged_in_games, monkeypatch):
     assert again.status_code == 400
     assert "搬运过" in again.json()["message"]
     # 第二次不该再建出条目
-    assert len(logged_in_games.get("/api/games/manage").json()["data"]) == 1
+    assert len(logged_in_games.get("/api/games/manage").json()["data"]["items"]) == 1
 
 
 def test_import_sanitizes_illegal_title(logged_in_games, monkeypatch):
@@ -1820,7 +1896,7 @@ def test_import_rejects_unknown_site(logged_in_games, storage_root):
     )
     assert response.status_code == 400
     # 同时不应留下半成品条目
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
 
 
 def test_import_cleans_up_when_download_fails(logged_in_games, storage_root, monkeypatch):
@@ -1833,7 +1909,7 @@ def test_import_cleans_up_when_download_fails(logged_in_games, storage_root, mon
     )
     assert response.status_code == 400
     assert response.json()["message"] == "页面解析失败"
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
 
 
 def test_import_requires_login(client):
@@ -1872,7 +1948,7 @@ def test_import_h5_packaging_failure_cleans_up(logged_in_games, monkeypatch):
     )
     assert response.status_code == 400
     assert "index.html" in response.json()["message"]
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
 
 
 
@@ -1977,7 +2053,7 @@ def test_create_game_from_body_url_type_mismatch_rejected(logged_in_games, remot
     )
     assert response.status_code == 400
     assert "h5" in response.json()["message"] and "gba" in response.json()["message"]
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
 
 
 def test_create_game_from_body_url_requires_game_type(logged_in_games, remote_files):
@@ -1999,7 +2075,7 @@ def test_create_game_from_body_url_rejects_download_failure(
     assert response.status_code == 400
     assert "请求失败" in response.json()["message"]
     assert _files(storage_root) == set()
-    assert logged_in_games.get("/api/games/manage").json()["data"] == []
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
 
 
 def test_create_game_from_body_url_rejects_non_http(logged_in_games):

@@ -14,7 +14,7 @@ from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 from uuid import uuid4
 
-from sqlalchemy import case
+from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
@@ -91,6 +91,11 @@ _COVER_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
 # 最近游玩一次取多少条（列表页顶部一行 rail 的量），上限防手改 query。
 RECENT_LIMIT_DEFAULT = 20
 RECENT_LIMIT_MAX = 50
+
+# 管理列表一页多少条（前端分页条每页 5 行，与 views/games/manage 的 PAGE_SIZE 一致），
+# 上限防手改 query。检索那套在 search_service.py 里另有一组同款常量。
+MANAGE_PAGE_SIZE_DEFAULT = 5
+MANAGE_PAGE_SIZE_MAX = 100
 
 # 搬运的卡带ID 不用手填，由本体（Flash 的 .swf / H5 的 .zip）CRC32 自动生成
 _IMPORT_CARTRIDGE_PREFIX = "F-"
@@ -532,6 +537,16 @@ class GameItem:
         return f"/games/play/{self.id}"
 
 
+@dataclass(frozen=True)
+class ManagePage:
+    """管理列表的一页。字段口径与 search_service.SearchPage 一致（那边多一个 indexed）。"""
+
+    total: int
+    page: int
+    page_size: int
+    items: list[GameItem]
+
+
 def _game_order_clauses() -> tuple:
     """列表排序：按 GAME_TYPES 的类型顺序分组，组内再按名称。
 
@@ -617,17 +632,45 @@ class GameService:
         *,
         game_type: str | None = None,
         keyword: str | None = None,
-    ) -> list[GameItem]:
-        query = select(Game).order_by(*_game_order_clauses())
+        page: int = 1,
+        page_size: int = MANAGE_PAGE_SIZE_DEFAULT,
+    ) -> ManagePage:
+        """管理列表的一页。排序（类型顺序 → 名称 → id）与筛选口径不变。
+
+        越界参数在这里收敛而不是靠 Query(ge=, le=)：参数校验失败走 FastAPI 的 422，
+        会绕开本仓库统一的 {ok, message} 错误信封（同 list_recent 与 search_service 的处理）。
+
+        页码越界**不算错误**：items 空、total 照给，页码收敛交给前端（与检索页同一口径）。
+        """
+        page = max(1, int(page or 1))
+        page_size = max(1, min(int(page_size or MANAGE_PAGE_SIZE_DEFAULT), MANAGE_PAGE_SIZE_MAX))
+
+        filters = []
         if game_type:
-            query = query.where(Game.game_type == game_type)
+            filters.append(col(Game.game_type) == game_type)
         if keyword:
             pattern = f"%{keyword.strip()}%"
-            query = query.where(
+            filters.append(
                 (col(Game.name).like(pattern)) | (col(Game.description).like(pattern))
             )
-        rows = self._session.exec(query).all()
-        return [self._to_item(row) for row in rows]
+
+        # 总数单独查一条：带上同一套 where，否则 total 会变成全表数
+        total = self._session.exec(
+            select(func.count()).select_from(Game).where(*filters)
+        ).one()
+        rows = self._session.exec(
+            select(Game)
+            .where(*filters)
+            .order_by(*_game_order_clauses())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        ).all()
+        return ManagePage(
+            total=int(total),
+            page=page,
+            page_size=page_size,
+            items=[self._to_item(row) for row in rows],
+        )
 
     def get(self, game_id: int) -> GameItem:
         row = self._session.get(Game, game_id)

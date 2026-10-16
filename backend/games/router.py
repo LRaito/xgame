@@ -14,6 +14,7 @@ from backend.errors import NotFoundError, StorageError, ValidationError
 from backend.games.models import PROGRESS_NOT_STARTED
 from backend.games.service import (
     GAME_TYPES,
+    MANAGE_PAGE_SIZE_DEFAULT,
     RECENT_LIMIT_DEFAULT,
     GameUpload,
     GuideUpload,
@@ -158,9 +159,24 @@ def games_manage_list(
     service: GameServiceDep,
     game_type: str | None = Query(None),
     q: str | None = Query(None),
+    page: int = Query(1),
+    page_size: int = Query(MANAGE_PAGE_SIZE_DEFAULT),
 ):
-    items = service.list_manage(game_type=game_type or None, keyword=q or None)
-    return json_ok([_manage_payload(item) for item in items])
+    """管理列表的一页。排序与筛选口径不变；越界参数由 service 收敛（不在这里做范围校验）。"""
+    result = service.list_manage(
+        game_type=game_type or None,
+        keyword=q or None,
+        page=page,
+        page_size=page_size,
+    )
+    return json_ok(
+        {
+            "total": result.total,
+            "page": result.page,
+            "page_size": result.page_size,
+            "items": [_manage_payload(item) for item in result.items],
+        }
+    )
 
 
 @router.get("/manage/{game_id}")

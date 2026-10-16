@@ -102,7 +102,7 @@ frontend/                    # Vue SPA
   src/utils/request.js       # axios 实例 + 拦截器
   src/utils/auth.js          # 非敏感用户信息缓存 + 登出清理清单
   src/views/                 # login / games（index、manage、search、flash-player、emulator-player、h5-player）
-  src/components/common/     # 跨工具复用（必须有）：AppDialog、AppButton、筛选、空状态等
+  src/components/common/     # 跨工具复用（必须有）：AppDialog、AppButton、分页、筛选、空状态等
   src/components/games/      # 游戏专用：GameShell、GameCover(游戏中心卡片的封面渲染：Flash 光盘/GB-GBC 卡带/普通封面)、
                              #   FlashPlayer、FlashSaveManager、EmuSaveManager、
                              #   GameScreenshotGallery(详情图片栏)、ScreenshotManagerDialog、ScreenshotConfirmDialog、
@@ -297,7 +297,7 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 | POST | `/api/games/stats/playtime` | 累加一段游玩时长（body `{game_id, seconds}`，播放页心跳 best-effort 上报） |
 | PUT | `/api/games/stats/<id>/playtime` | 手动设置总时长（body `{hours}`，覆盖为该值） |
 | PUT | `/api/games/stats/<id>/progress` | 手动设置游戏进度（body `{progress}`：`not_started`/`in_progress`/`completed`） |
-| GET / POST | `/api/games/manage`；GET / PUT / DELETE `/manage/<id>` | 游戏管理（POST 为 multipart：name/cartridge_id/description/file[+cover]，一步建条目并按本体扩展名定类型；本体/封面也可改用直链 `body_url`+`body_game_type` / `cover_url`） |
+| GET / POST | `/api/games/manage`；GET / PUT / DELETE `/manage/<id>` | 游戏管理（POST 为 multipart：name/cartridge_id/description/file[+cover]，一步建条目并按本体扩展名定类型；本体/封面也可改用直链 `body_url`+`body_game_type` / `cover_url`）。**GET 是服务端分页**：`page`（默认 1）/ `page_size`（默认 5，上限 100）+ `game_type` / `q` 过滤，返回 `{total, page, page_size, items}`；排序固定为 GAME_TYPES 类型顺序分组 → 组内按名称 → id（`_game_order_clauses()`）；越界参数在 service 里收敛（不返回 422），页码越界返回空 items + 真 total，页码收敛交给前端 |
 | POST | `/api/games/manage/<id>/assets` | 换本体/换封面（kind=game\|cover，给 `file` 或直链 `url`[+`game_type`]；h5 传 .zip 由后端解包）。换本体会按新扩展名切换类型，但**本体 CRC32 已锁定时只接受同一个文件**（不一致返回 400，且不覆盖旧文件） |
 | POST | `/api/games/manage/import` | 从 7k7k/4399/flash.homes 游戏页地址搬运（body `{url, cartridge_id}`，解析下载后入库，Flash 或 H5） |
 | POST | `/api/games/manage/<id>/guide` | 整目录上传攻略（multipart：`files` 多个文件 + `paths` 与之一一对应的文件夹内相对路径 JSON 数组；前端已剥掉最外层目录名，根目录必须含 `index.html`） |
@@ -327,7 +327,8 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 2. **`permission.js`：** 白名单 `/login`；未登录去登录页；已登录访问登录页去 `/`。
 3. **`auth.js`：** 可缓存用户名等展示字段。登出必须清约定 key 清单；新增「记住的页面状态」时同步维护。
 4. **路由 meta：** `title`、`hiddenInMenu`、`icon`。Layout 里 `buildMenuFromRoutes()` 生成菜单。新增页面 = 加一条带 meta 的子路由。
-5. **`components/common/`：** 跨工具复用目录，必须存在。自定义弹窗 `AppDialog`、按钮 `AppButton`、筛选 `AppFilterBar`、空状态 `AppEmpty`、复制 `CopyButton` 放这里；在 Element Plus 上包一层，不要在 `views/` 里堆样式。小件（按钮、空状态、复制）在 `main.js` 全局注册；弹窗/筛选按需引入。Vite 别名 `@components` → `src/components`。
+5. **`components/common/`：** 跨工具复用目录，必须存在。自定义弹窗 `AppDialog`、按钮 `AppButton`、分页 `AppPagination`、筛选 `AppFilterBar`、空状态 `AppEmpty`、复制 `CopyButton` 放这里；在 Element Plus 上包一层，不要在 `views/` 里堆样式。小件（按钮、空状态、复制、分页）在 `main.js` 全局注册；弹窗/筛选按需引入。Vite 别名 `@components` → `src/components`。
+   分页条 `AppPagination`（游戏管理 / 游戏检索共用）：父级给 `page` / `total` / `pageSize`，翻页时先发 `update:page` 再发 `change`（父级的 `change` 处理函数读自己的 page ref，顺序反了会拿旧页码去请求）；**只有一页时整块不渲染**；**左右方向键翻页**在组件内部（挂在 window 冒泡阶段），守卫：带修饰键的放行（`Alt+←` 是后退、`Ctrl/Shift+←` 是选词）、按住连发与输入法组字忽略、焦点在 input/textarea/contenteditable/`.el-select/.el-popper` 里放行、`body.el-popup-parent--hidden`（Element Plus 的 `useLockscreen`，dialog/message-box/drawer 都加）时放行、单页时不拦默认行为。
 6. **Pinia：** 不要把 Fernet 密钥放进 store。不要做参考项目那种全表列配置，除非以后明确要求。
 7. **不要**上 WebSocket，除非以后某个工具明确需要实时。
 
