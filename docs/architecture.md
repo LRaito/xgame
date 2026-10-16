@@ -172,13 +172,13 @@ backend/
                               标题栏按钮（自左向右）：截图 → 保存配置 → 窗口倍率 → 显示游戏机（GBA / FC / GBC 有）→ 存档管理；
                               显示游戏机：把机壳图按「洞宽 = 画面宽」放大后盖在画面上，洞正好露出游戏画面，
                               画面尺寸一变就跟着缩放。图与洞的几何按游戏类型放在 emulator-player.vue 的 SHELLS 表里，
-                              FC 还按显示比例分两套（切比例一起换）：GBA = public/gba-shell.png（带透明屏幕洞的
-                              机身，洞 1920×1280 = 精确 3:2 且居整图正中）；GBC = public/gbc-shell.png
+                              FC 还按显示比例分两套（切比例一起换）：GBA = src/assets/shells/gba-shell.png（带透明屏幕洞的
+                              机身，洞 1920×1280 = 精确 3:2 且居整图正中）；GBC = src/assets/shells/gbc-shell.png
                               （GBC 正面机身，洞 1285×1156.5 = 10:9，正是 GB/GBC 的 160×144；原素材
                               左右留白差 17px，入项目前从左边裁掉 17px 让屏幕左右对称）；FC 的「像素完美」列 =
-                              public/nes-shell.png（CRT 电视机壳，洞 1084×948.5 = 256:224，原素材洞是 4:3，
+                              src/assets/shells/nes-shell.png（CRT 电视机壳，洞 1084×948.5 = 256:224，原素材洞是 4:3，
                               入项目前把屏幕那段纵向拉长 7/6、下面带按键的控制条等比不动，再裁掉透明留白）；
-                              FC 的「4:3」列 = public/nes-shell-43.png（原素材本身，洞 1084×813 = 4:3，
+                              FC 的「4:3」列 = src/assets/shells/nes-shell-43.png（原素材本身，洞 1084×813 = 4:3，
                               只裁掉顶部留白）。机壳比画面大得多（GBA 那张宽是画面的两倍），
                               故用 position: fixed 定位以免被 .game-shell__body 的 overflow 裁掉/顶出滚动条；
                               倍率调大后超出浏览器视口的部分看不见即可，不裁剪也不隐藏

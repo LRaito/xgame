@@ -12,9 +12,12 @@ description: 把卡带成品图里贴纸窗那一整块（封面图案 + 左右�
 补色**默认取窗外那圈机身色**；窗外不是机身时（透明壳的卡带，窗外透出来的是下层电路板）
 用 `--color` 手工指定。
 
-本技能在**本项目**里用来做「美化封面」的卡带底图（`frontend/public/*-cart.png`）：
+本技能在**本项目**里用来做「美化封面」的卡带底图（`frontend/src/assets/carts/*-cart.png`）：
 产出的底图交给 `frontend/src/constants/coverStyles.js` 的 `CART_STYLES`，
 **脚本打印的最后那行几何就是该填进去的 `image` / `hole` / `radius`**。
+底图放 `src/assets/` 下由 Vite 加内容哈希，换图后 URL 自动变、浏览器缓存必然失效；
+**别放 `public/`**——那里文件名固定，而 nginx 对这些文件不带 Cache-Control，
+改内容不改名会被浏览器的启发式缓存顶住。
 
 ## 用法
 

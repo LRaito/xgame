@@ -41,7 +41,23 @@
  * （`clear_scene.py --radius 0,0,10,10`）。
  *
  * 底图本身带透明的地方只有卡带轮廓之外（缺口、四角），与洞口无关。
+ *
+ * ---------------------------------------------------------------
+ * 素材位置
+ * ---------------------------------------------------------------
+ * 底图与盘心标志都放在 `src/assets/` 下，**用 import 取 URL**，别写回 `"/xxx.png"`：
+ * Vite 会给产物文件名带上内容哈希，重跑底图后 URL 跟着变，浏览器缓存必然失效。
+ * 留在 `public/` 下则是固定文件名，而 nginx 的 `location /`（以及 Windows 包的
+ * `static_site.py`）对这些文件**不带任何 Cache-Control**，浏览器按启发式规则缓存住旧图，
+ * 换图后得手动硬刷新才看得见。同理见 views/games/emulator-player.vue 的机壳图。
  */
+
+import flashLogoUrl from "@/assets/flash-logo.png";
+import gbCartUrl from "@/assets/carts/gb-cart.png";
+import gbcCartUrl from "@/assets/carts/gbc-cart.png";
+import gbaCartUrl from "@/assets/carts/gba-cart.png";
+import nesJpCartUrl from "@/assets/carts/nes-jp-cart.png";
+import nesUsCartUrl from "@/assets/carts/nes-us-cart.png";
 
 /**
  * Flash 光盘的几何（程序化绘制，没有底图）。
@@ -56,7 +72,7 @@ export const FLASH_DISC = {
     // 盘心 Flash 标志的边长占**光盘直径**的比例。
     // 注意基准与渐变不同：反光那几层的百分比是占**盘半径**的，见 coverCompose.js。
     hubRatio: 0.15,
-    logoUrl: "/flash-logo.png",
+    logoUrl: flashLogoUrl,
 };
 
 /**
@@ -74,35 +90,35 @@ export function cornerRadii(radius) {
 export const CART_STYLES = {
     gb: {
         label: "GB卡带",
-        url: "/gb-cart.png",
+        url: gbCartUrl,
         image: { width: 426, height: 500 },
         hole: { x: 53, y: 151, width: 322, height: 287 },
         radius: 8,
     },
     gbc: {
         label: "GBC卡带",
-        url: "/gbc-cart.png",
+        url: gbcCartUrl,
         image: { width: 438, height: 503 },
         hole: { x: 58, y: 163, width: 322, height: 287 },
         radius: 8,
     },
     gba: {
         label: "GBA卡带",
-        url: "/gba-cart.png",
+        url: gbaCartUrl,
         image: { width: 640, height: 370 },
         hole: { x: 88, y: 86, width: 464, height: 235 },
         radius: 12,
     },
     "nes-jp": {
         label: "FC日版",
-        url: "/nes-jp-cart.png",
+        url: nesJpCartUrl,
         image: { width: 700, height: 460 },
         hole: { x: 56, y: 54, width: 592, height: 290 },
         radius: 10,
     },
     "nes-us": {
         label: "FC美版",
-        url: "/nes-us-cart.png",
+        url: nesUsCartUrl,
         image: { width: 700, height: 779 },
         // 洞口上边就是画布顶边（素材的标签上边缘被裁掉了），封面裁切照样四角 r=10，
         // 裁掉的上两角露出的是底图填好的机身色（底图填色时上两角是直角，见文件头）

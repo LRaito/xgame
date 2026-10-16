@@ -146,6 +146,11 @@ import StartGate from "@components/games/StartGate.vue";
 import { hasUserGesture } from "@/utils/userActivation";
 import { reportGamePlayed } from "@/utils/recentGames";
 import { startGamePlaytime, stopGamePlaytime } from "@/utils/gamePlaytime";
+// 机壳图用 import 取 URL（带内容哈希），几何见下面 SHELLS 表的说明
+import gbaShellUrl from "@/assets/shells/gba-shell.png";
+import gbcShellUrl from "@/assets/shells/gbc-shell.png";
+import nesShellUrl from "@/assets/shells/nes-shell.png";
+import nesShell43Url from "@/assets/shells/nes-shell-43.png";
 
 const ENGINE_LOADER = "/emulatorjs/data/loader.js";
 
@@ -166,8 +171,11 @@ const EMU_NATIVE = {
     segaMS: { width: 256, height: 192 },
 };
 
-// 机壳图（frontend/public/ 下按 URL 引用的静态文件）：一张画好的机器外形图，
-// 中间是**全透明的屏幕洞**。把图按「洞宽 = 画面宽」放大后盖在画面上，就是真机在玩。
+// 机壳图（frontend/src/assets/shells/ 下、**用 import 取 URL**，见下面的 import 区）：
+// 一张画好的机器外形图，中间是**全透明的屏幕洞**。把图按「洞宽 = 画面宽」放大后盖在画面上，
+// 就是真机在玩。**必须 import、不要写回 "/xxx-shell.png"**：import 出来的 URL 带内容哈希，
+// 重跑机壳图后缓存自动失效；放 public/ 下文件名固定，而 nginx 的 location /（与 Windows 包的
+// static_site.py）对这些文件不带 Cache-Control，浏览器会一直用启发式缓存里的旧图。
 // 每项里的两组数字是这张图与洞的像素几何，换图必须同步改（洞的位置变了就会错位）。
 // 洞的比例还必须与画面比例一致，否则洞与画面会错开：
 //   GBA 洞 1920×1280 = 3:2，正是 GBA 原生 240×160；
@@ -182,14 +190,14 @@ const EMU_NATIVE = {
 const SHELLS = {
     gba: {
         pp: {
-            url: "/gba-shell.png",
+            url: gbaShellUrl,
             image: { width: 3840, height: 2160 },
             hole: { x: 960, y: 440, width: 1920, height: 1280 },
         },
     },
     gb: {
         pp: {
-            url: "/gbc-shell.png",
+            url: gbcShellUrl,
             image: { width: 2131, height: 1996 },
             // 带小数：10/9 × 1285 = 1156.5，比画出来的洞矮半个像素（见上面的说明）
             hole: { x: 423, y: 338, width: 1285, height: 1156.5 },
@@ -198,14 +206,14 @@ const SHELLS = {
     nes: {
         // 像素完美（8:7）：素材是把原图屏幕那段纵向拉长 7/6 得到的
         pp: {
-            url: "/nes-shell.png",
+            url: nesShellUrl,
             image: { width: 1326, height: 1237 },
             // 带小数：这两个值来自原素材的洞坐标 × 7/6（纵向拉伸倍率）再减去裁掉的那 10 行
             hole: { x: 121, y: 146.3333, width: 1084, height: 948.5 },
         },
         // 4:3：用**未拉伸的原素材**，洞本来就是 4:3，只裁掉了顶部 9 行透明留白
         wide: {
-            url: "/nes-shell-43.png",
+            url: nesShell43Url,
             image: { width: 1326, height: 1077 },
             hole: { x: 121, y: 125, width: 1084, height: 813 },
         },
@@ -226,7 +234,7 @@ const ASPECT_WIDE = "wide";
 //   2) **关掉上下过扫描裁切**，帧缓冲变成完整的 256×240。
 // 必须用完整 240 行：224 行按内核的 4:3 摆放算出来是 ≈1.43（内核按完整帧归一化），
 // 真填进 4:3 的电视屏幕会上下留黑边；完整帧按 4:3 摆放才正好铺满屏幕，
-// 也正是 public/nes-shell-43.png（原素材，屏幕洞本来就 4:3）对应的画面。
+// 也正是 nes-shell-43.png（原素材，屏幕洞本来就 4:3）对应的画面。
 const WIDE_MODE = {
     nes: { aspect: 4 / 3, native: { width: 256, height: 240 } },
 };

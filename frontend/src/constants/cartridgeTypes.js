@@ -8,8 +8,9 @@
  * 「默认」是真实值而不是空值：每个游戏始终有且只有一个卡带类型。
  * 目前只有 FC NES 区分日版/美版，其余游戏类型只有「默认」。
  *
- * UI 上不用文字、只显示国旗（frontend/public/flags/，22×16 的普通静态文件，
- * 与 flash-logo.png / gba-shell.png 一样按 URL 引用）。图片按国家/地区英文全称命名
+ * UI 上不用文字、只显示国旗（frontend/public/flags/，22×16 的普通静态文件，按 URL 引用；
+ * 国旗内容不会变，留 public/ 没问题——会随开发迭代换内容的素材都在 src/assets/ 下 import，
+ * 见 constants/coverStyles.js 的「素材位置」）。图片按国家/地区英文全称命名
  * （Japan.png、USA.png、United Kingdom.png…），目录里已经放好了其它地区
  * （Australia/Brazil/Canada/Europe/France/Germany/Italy/Scandinavia/Spain…），
  * 以后要扩取值只需在后端 CARTRIDGE_TYPES_BY_GAME_TYPE 与这里同时加一项。

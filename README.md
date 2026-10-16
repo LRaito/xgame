@@ -336,15 +336,17 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 | --- | --- | --- |
 | Ruffle（Flash 运行时） | 构建期下载到 `frontend/public/ruffle/`，不随仓库分发 | MIT OR Apache-2.0 |
 | EmulatorJS v4.2.3（主机模拟器） | 构建期下载到 `frontend/public/emulatorjs/`，不随仓库分发 | GPL-3.0 |
-| 国旗图标、游戏机机身图、`flash-logo.png` | `frontend/public/`，随仓库分发 | 版权归各自权利人（见下） |
+| 国旗图标 | `frontend/public/flags/`，随仓库分发 | 版权归各自权利人（见下） |
+| 游戏机机身图、卡带底图、`flash-logo.png` | `frontend/src/assets/`，随仓库分发 | 版权归各自权利人（见下） |
 | 后端依赖 / 前端依赖 | `requirements.txt` / `frontend/package.json` | 各自的上游许可 |
 
 引擎资产由 `frontend/scripts/copy-ruffle.mjs` 与 `fetch-emulatorjs.mjs` 在构建期按固定版本拉取，
 仓库里不含它们的源码，部署与再分发时仍需遵守各自的许可证。上表的许可**以各自上游仓库的声明为准**。
 
-`frontend/public/` 下的国旗图标、游戏机机身图（`gba-shell.png` / `gbc-shell.png` /
-`nes-shell.png` / `nes-shell-43.png`）、卡带底图（`gba-cart.png` / `gbc-cart.png` / `gb-cart.png` /
-`nes-jp-cart.png` / `nes-us-cart.png`）与
+`frontend/public/flags/` 下的国旗图标与 `frontend/src/assets/` 下的游戏机机身图
+（`shells/gba-shell.png` / `shells/gbc-shell.png` / `shells/nes-shell.png` /
+`shells/nes-shell-43.png`）、卡带底图（`carts/gba-cart.png` / `carts/gbc-cart.png` /
+`carts/gb-cart.png` / `carts/nes-jp-cart.png` / `carts/nes-us-cart.png`）与
 `flash-logo.png` 是界面展示素材，版权归各自权利人所有，
 **不在本项目的 MIT 许可范围内**；要再分发或商用请自行确认来源与许可，或换成自己的图。
 
