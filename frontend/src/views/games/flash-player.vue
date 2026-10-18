@@ -34,7 +34,7 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { getPlayableGameAPI, uploadCloudSaveAPI } from "@/api/games";
 import { ensureGameAssetSw, gameSwfUrl } from "@/utils/gameAssetCache";
 import {
@@ -89,6 +89,8 @@ const playerActive = ref(true);
 // 无用户手势（刷新/直链进入）时先展示「开始游戏」，由一次点击后再挂载播放器
 const needsGesture = ref(false);
 const saveManagerRef = ref(null);
+// 「同步至云端」整段（含二次确认框）在跑：挡掉连发，也保证一次只弹一个确认框
+let syncingCloud = false;
 
 function wait(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -141,12 +143,14 @@ function onSaveAction(payload) {
 }
 
 // 「同步至云端」：先把最新进度落盘，再收集当前游戏全部本地存档，整体上传成一个云端快照。
+// 返回是否真的传上去了——快捷键那条路要据此决定弹不弹「已同步至云端」；
+// 存档管理弹框那条路忽略返回值，行为不变。
 async function onUploadCloud(remark = "") {
     const manager = saveManagerRef.value;
     const gameId = Number(game.value?.id) || 0;
     if (!gameId) {
         manager?.afterCloudUploaded();
-        return;
+        return false;
     }
     try {
         // reloadForSave(null) 触发一次“停播放器→落盘→重启”，末尾会刷新本地列表
@@ -155,7 +159,7 @@ async function onUploadCloud(remark = "") {
         if (!items.length) {
             ElMessage.info("本地没有可同步的存档。");
             manager?.afterCloudUploaded();
-            return;
+            return false;
         }
         const form = new FormData();
         form.append("game_id", String(gameId));
@@ -169,9 +173,73 @@ async function onUploadCloud(remark = "") {
         );
         await uploadCloudSaveAPI(form);
         manager?.afterCloudUploaded();
+        return true;
     } catch {
         // 错误已由请求层弹中文提示，这里复位云端按钮状态
         manager?.afterCloudUploaded();
+        return false;
+    }
+}
+
+/**
+ * 快捷键 `·`（Backquote，数字 1 左边那个键）：立即把当前进度同步到云端。
+ * Flash 的「落盘」必须先卸载 Ruffle 再重挂（等于重启游戏，见 reloadForSave），所以先弹二次确认。
+ * 还没点「开始游戏」、游戏没加载出来、存档弹框开着、或已经在同步时不响应。
+ */
+function onSyncCloudHotkey(event) {
+    if (
+        event.code !== "Backquote" ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.repeat
+    ) {
+        return;
+    }
+    const target = event.target;
+    const tag = String(target?.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) {
+        return;
+    }
+    if (
+        syncingCloud ||
+        !swfUrl.value ||
+        needsGesture.value ||
+        loading.value ||
+        saveManagerVisible.value ||
+        !currentGameId.value
+    ) {
+        return;
+    }
+    // 捕获阶段拦下：Ruffle 在同一个文档里也监听键盘，先拿到才不会让 `·` 同时进游戏
+    event.preventDefault();
+    event.stopPropagation();
+    void syncCloudNow();
+}
+
+async function syncCloudNow() {
+    if (syncingCloud) {
+        return;
+    }
+    // 先置位再弹框：确认框开着时再按 `·` 不会再弹一个
+    syncingCloud = true;
+    try {
+        try {
+            await ElMessageBox.confirm(
+                "同步会先让游戏把当前进度落盘，游戏将重新启动。确定现在同步吗？",
+                "同步至云端",
+                { confirmButtonText: "同步", cancelButtonText: "取消", type: "warning" },
+            );
+        } catch {
+            // 取消 / 关闭：不重启也不提示
+            return;
+        }
+        if (await onUploadCloud()) {
+            ElMessage.success("已同步至云端");
+        }
+    } finally {
+        syncingCloud = false;
     }
 }
 
@@ -257,9 +325,16 @@ async function loadGame() {
     }
 }
 
-onMounted(loadGame);
+onMounted(() => {
+    // 捕获阶段：Ruffle 也在同一个文档里监听键盘，只有捕获阶段才拦得住 `·`
+    window.addEventListener("keydown", onSyncCloudHotkey, true);
+    loadGame();
+});
 watch(() => route.params.gameId, loadGame);
-onBeforeUnmount(stopGamePlaytime);
+onBeforeUnmount(() => {
+    window.removeEventListener("keydown", onSyncCloudHotkey, true);
+    stopGamePlaytime();
+});
 </script>
 
 <style scoped>

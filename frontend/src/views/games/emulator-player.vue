@@ -310,6 +310,8 @@ let settingsPrefetch = null;
 let launching = false;
 // 本地档正在读档（回车快捷键会连发，用它挡掉重复的载入）
 let loadingLocal = false;
+// 「捕捉并同步至云端」整段在跑：挡掉连发，也保证一次只发一份快照
+let syncingCloud = false;
 let stageRaf = null;
 // 就绪后只按选中比例纠正内核一次（见 refreshEngineReady）
 let aspectSynced = false;
@@ -740,6 +742,45 @@ function onLoadLocalHotkey(event) {
 }
 
 /**
+ * 快捷键 `·`（Backquote，数字 1 左边那个键）：立刻捕捉当前进度并同步至云端。
+ * 捕捉与上传由 onUploadCloud 顺次完成、成功提示也在里面，这里只认键与防重入。
+ */
+function onSyncCloudHotkey(event) {
+    if (takeBareCode(event, "Backquote", () => !syncingCloud)) {
+        void syncCloudNow();
+    }
+}
+
+async function syncCloudNow() {
+    if (syncingCloud) {
+        return;
+    }
+    syncingCloud = true;
+    try {
+        await onUploadCloud();
+    } finally {
+        syncingCloud = false;
+    }
+}
+
+/**
+ * 快捷键共用的守卫：连发、焦点在输入框里、引擎未就绪、弹框开着、或这一下对当前状态没意义时不接管。
+ */
+function hotkeyUsable(event, ready) {
+    if (event.repeat) {
+        return false;
+    }
+    const target = event.target;
+    const tag = String(target?.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) {
+        return false;
+    }
+    return (
+        engineReady.value && !shotDialogVisible.value && !saveManagerVisible.value && ready()
+    );
+}
+
+/**
  * 两侧 window 共用的快捷键入口：认出来并拦下返回 true（调用方再去做事），否则返回 false 放行。
  * key 为 "s" 时认 Ctrl+Shift+S，为 null 时认回车（不带任何修饰键）。ready 是这一下对当前
  * 状态有没有意义（正在截图 / 本地根本没有存档）。不接管的场景还有：焦点在输入框里（引擎设置
@@ -749,23 +790,39 @@ function takeHotkey(event, key, ready) {
     const matches = key
         ? event.ctrlKey && event.shiftKey && String(event.key || "").toLowerCase() === key
         : event.key === "Enter" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
-    if (!matches || event.repeat) {
-        return false;
-    }
-    const target = event.target;
-    const tag = String(target?.tagName || "").toUpperCase();
-    if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) {
+    if (!matches) {
         return false;
     }
     // 焦点停在标题栏按钮上时，回车是「按下这个按钮」，不跟它抢（点过按钮后焦点会留在那儿）
+    const tag = String(event.target?.tagName || "").toUpperCase();
     if (!key && (tag === "BUTTON" || tag === "A" || tag === "SELECT")) {
         return false;
     }
-    if (!engineReady.value || shotDialogVisible.value || saveManagerVisible.value || !ready()) {
+    if (!hotkeyUsable(event, ready)) {
         return false;
     }
     event.preventDefault();
     // 捕获阶段拦下：引擎自己也监听 keydown（在它的容器上），不拦住的话这一下会同时进游戏
+    event.stopPropagation();
+    return true;
+}
+
+/**
+ * 裸键按 event.code 匹配、且不带任何修饰键：给 `·`（Backquote）这种不该看布局字符的键用
+ * （同一物理键在别的布局/输入法下 event.key 可能是 ` / ~ / ·）。守卫与 takeHotkey 相同。
+ */
+function takeBareCode(event, code, ready) {
+    if (
+        event.code !== code ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        !hotkeyUsable(event, ready)
+    ) {
+        return false;
+    }
+    event.preventDefault();
     event.stopPropagation();
     return true;
 }
@@ -786,6 +843,7 @@ function bindFrameHotkey() {
     // 用捕获阶段：引擎自己也监听 keydown（在它的容器上），要赶在它前面拿到
     frameWindow.addEventListener("keydown", onScreenshotHotkey, true);
     frameWindow.addEventListener("keydown", onLoadLocalHotkey, true);
+    frameWindow.addEventListener("keydown", onSyncCloudHotkey, true);
 }
 
 function unbindFrameHotkey() {
@@ -795,6 +853,7 @@ function unbindFrameHotkey() {
     try {
         hotkeyFrameWindow.removeEventListener("keydown", onScreenshotHotkey, true);
         hotkeyFrameWindow.removeEventListener("keydown", onLoadLocalHotkey, true);
+        hotkeyFrameWindow.removeEventListener("keydown", onSyncCloudHotkey, true);
     } catch {
         // 页面已经换过 iframe / 窗口已销毁，忽略即可
     }
@@ -1068,9 +1127,10 @@ onMounted(() => {
     // 滚动用捕获阶段监听：滚动发生在内层容器（.game-shell__body 等）上，不冒泡到 window
     window.addEventListener("resize", syncStageRect);
     window.addEventListener("scroll", syncStageRect, true);
-    // 焦点在父页面（点标题栏按钮/弹框）时按快捷键也要能截图 / 载入存档
+    // 焦点在父页面（点标题栏按钮/弹框）时按快捷键也要能截图 / 载入存档 / 同步云端
     window.addEventListener("keydown", onScreenshotHotkey);
     window.addEventListener("keydown", onLoadLocalHotkey);
+    window.addEventListener("keydown", onSyncCloudHotkey);
     loadGame();
 });
 watch(() => route.params.gameId, loadGame);
@@ -1079,6 +1139,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("scroll", syncStageRect, true);
     window.removeEventListener("keydown", onScreenshotHotkey);
     window.removeEventListener("keydown", onLoadLocalHotkey);
+    window.removeEventListener("keydown", onSyncCloudHotkey);
     unbindFrameHotkey();
     releaseShot();
     stopGamePlaytime();
