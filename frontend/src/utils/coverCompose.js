@@ -45,7 +45,7 @@ export function loadImage(src) {
 /**
  * 合成入口：按样式 id 出图。
  *
- * @param {string} styleId "flash" | "gb" | "gba"（见 constants/coverStyles.js）
+ * @param {string} styleId "flash" | "gb" | "gbc" | "gba" | "fc" | "nes"（见 constants/coverStyles.js）
  * @param {HTMLImageElement} sourceImg 已载入完成的原封面
  * @returns {Promise<Blob>} PNG
  */

@@ -2,7 +2,8 @@
     <!-- 美化封面：左边原封面、右边合成结果，确认就把合成图存成该游戏的新封面。
          弹出即自动合成（没有「制作」这一步）。**样式由游戏类型给一组**（见
          constants/coverStyles.js 的 beautifyStylesFor），第一个是默认样式；
-         多于一个样式时标题右边出现方框单选，切换只重新合成、不重新下载原封面。
+         标题右边始终有一排方框单选（只有一个样式的类型也出、那一项不可选），
+         切换只重新合成、不重新下载原封面。
 
          入口是游戏管理页编辑弹框「游戏封面」那行的「美化封面」按钮，只在
          类型支持美化且该游戏已有封面时可用。 -->
@@ -13,15 +14,21 @@
         @update:model-value="emit('update:modelValue', $event)"
     >
         <template #header>
-            <!-- 只有一个样式的类型（flash / gba）不出这排单选 -->
+            <!-- 每个样式都在这里露个名字（flash→DISK、gba→GBA 这类只有一个样式的类型
+                 也出，只是那一项点不动）：一排方框单选就是这盘封面会变成什么壳 -->
             <el-radio-group
-                v-if="styles.length > 1"
+                v-if="styles.length"
                 v-model="styleId"
                 class="cover-beautify__styles"
                 size="small"
                 @change="compose"
             >
-                <el-radio-button v-for="item in styles" :key="item.id" :value="item.id">
+                <el-radio-button
+                    v-for="item in styles"
+                    :key="item.id"
+                    :value="item.id"
+                    :disabled="styles.length < 2"
+                >
                     {{ item.label }}
                 </el-radio-button>
             </el-radio-group>
@@ -29,7 +36,7 @@
 
         <div class="cover-beautify">
             <!-- 建议尺寸按样式取：各样式洞口的比例差得很远（GBA 是 1.97:1 的横版，
-                 FC 美版是 0.61:1 的竖版） -->
+                 NES 是 0.61:1 的竖版） -->
             <p class="cover-beautify__hint">{{ styleHint }}</p>
 
             <div class="cover-beautify__panes">
@@ -170,11 +177,9 @@ async function run() {
     if (!list.length || !gameId || !props.game?.cover_path) {
         return;
     }
-    // 默认样式：游戏自己是日版/美版时就选对应的那个（FC 的两种卡带壳靠 cartridge_type 区分，
-    // 见 constants/coverStyles.js 的 cartridgeType），其余类型就是列表第一个
-    const preferred = list.find(
-        (item) => item.cartridgeType && item.cartridgeType === props.game?.cartridge_type
-    );
+    // 默认样式：游戏当前的封面类型命中列表里哪个就选哪个（上次美化用的就是它），
+    // 没设过（新建的游戏都是空的）就是列表第一个
+    const preferred = list.find((item) => item.id === props.game?.cover_type);
     styleId.value = (preferred || list[0]).id;
     const token = ++runToken;
     status.value = "working";
@@ -203,7 +208,8 @@ function onConfirm() {
     if (!blob.value || props.confirmLoading) {
         return;
     }
-    emit("confirm", blob.value);
+    // 样式 id 一起交出去：管理页要把它写进游戏的封面类型（与封面文件同一次提交）
+    emit("confirm", { blob: blob.value, styleId: styleId.value });
 }
 
 // AppDialog 是 destroy-on-close，但它只销毁插槽内容，本组件的 ref 不会重置，
@@ -228,6 +234,17 @@ onBeforeUnmount(reset);
     display: inline-flex;
     margin-left: 16px;
     vertical-align: middle;
+    /* 只有一种样式的类型（flash / gba）那一项是 disabled，但它表示的是「这盘封面
+       就是这种壳」而不是「一个用不了的控件」——Element Plus 默认会给 disabled 的
+       选中项铺一层 --el-border-color-extra-light 的浅灰，这里换回正常选中态的蓝，
+       再把光标改成箭头（见下面那条），看着就是个已经选好的样式名。 */
+    --el-radio-button-disabled-checked-fill: var(--el-color-primary);
+}
+
+.cover-beautify__styles :deep(.el-radio-button.is-disabled .el-radio-button__inner) {
+    color: var(--el-radio-button-checked-text-color, #fff);
+    border-color: var(--el-color-primary);
+    cursor: default;
 }
 
 /* 建议尺寸：一行说明，压在两个预览区上面 */

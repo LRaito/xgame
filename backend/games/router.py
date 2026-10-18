@@ -34,8 +34,8 @@ _ROM_CONTENT_TYPE = "application/octet-stream"
 class UpdateGameBody(BaseModel):
     name: str | None = None
     description: str | None = None
-    # 卡带类型：None = 不改（右滑菜单与编辑弹框都用它单独设过值）
-    cartridge_type: str | None = None
+    # 封面类型（封面样式 id）：None = 不改；空串 = 清空；该游戏类型不认的值 400
+    cover_type: str | None = None
     clear_cover: bool = False
 
 
@@ -52,7 +52,7 @@ def _center_payload(item, stat=None) -> dict:
         "id": item.id,
         "name": item.name,
         "cartridge_id": item.cartridge_id,
-        "cartridge_type": item.cartridge_type,
+        "cover_type": item.cover_type,
         "description": item.description,
         "category": item.game_type,
         "path": item.path,
@@ -78,7 +78,7 @@ def _manage_payload(item) -> dict:
         "id": item.id,
         "name": item.name,
         "cartridge_id": item.cartridge_id,
-        "cartridge_type": item.cartridge_type,
+        "cover_type": item.cover_type,
         "description": item.description,
         "game_type": item.game_type,
         "size": item.size,
@@ -208,7 +208,6 @@ def games_create(
     service: GameServiceDep,
     name: str = Form(...),
     cartridge_id: str = Form(""),
-    cartridge_type: str = Form(""),
     description: str = Form(""),
     file: UploadFile | None = File(None),
     cover: UploadFile | None = File(None),
@@ -230,7 +229,6 @@ def games_create(
             _upload_of(file) if file is not None else None,
             _upload_of(cover) if cover is not None else None,
             cartridge_id=cartridge_id,
-            cartridge_type=cartridge_type,
             body_url=body_url,
             body_game_type=body_game_type,
             cover_url=cover_url,
@@ -250,7 +248,7 @@ def games_update(
             game_id,
             name=body.name,
             description=body.description,
-            cartridge_type=body.cartridge_type,
+            cover_type=body.cover_type,
             clear_cover=body.clear_cover,
         )
     except ValidationError as exc:
@@ -278,11 +276,15 @@ def games_upload_asset(
     file: UploadFile | None = File(None),
     url: str = Form(""),
     game_type: str = Form(""),
+    cover_type: str = Form(""),
 ):
     """一步上传游戏本体或封面：流式写入存储目录 → 删旧文件 → 更新游戏行。
 
     来源可以是本地文件（`file`）或网络直链（`url`）；换本体时游戏类型随新本体的
     扩展名自动切换——直链看不出类型时由 `game_type` 指定，两者必须一致。
+
+    `cover_type`（封面样式 id）**只在 kind="cover" 且非空时生效**，供「美化封面」
+    把所选样式与封面文件一次写进去；kind="game" 时忽略。
     """
     try:
         if file is not None and not file.filename:
@@ -293,6 +295,7 @@ def games_upload_asset(
             upload=_upload_of(file) if file is not None else None,
             url=url,
             game_type=game_type,
+            cover_type=cover_type,
         )
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)

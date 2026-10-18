@@ -115,7 +115,8 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 站点首页就是游戏中心。
 
 - **找游戏** — 工具条上可以按「进度」「类型」筛选，也能按名称搜索。「全部游戏」先按游戏类型分组，
-  组内再按卡带版本（默认 / 日版 / 美版）分块；上面还有一行「最近游玩」。
+  组内再按封面类型（DISK / GB / GBC / GBA / FC / NES）分块，还没定过封面类型的自成一组排在最后；
+  上面还有一行「最近游玩」。
 - **卡片上有什么** — 封面、名称，以及一行进度标签 + 总游玩时长（进度还是「未开始」时这一行不显示内容，
   但仍占住位置，好让同排卡片的标题始终对齐）。
 - **点一下卡片**就开始玩。
@@ -226,11 +227,13 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 
 ### 元数据
 
-- **卡带类型**（卡带版本）— 默认 / 日版 / 美版，用国旗单选。目前只有 FC 区分日版美版。
+- **封面类型** — 这盘封面被美化成了哪种外观（DISK / GB / GBC / GBA / FC / NES）。
+  新建的游戏一律是空的（显示「—」），在**编辑弹框**里用单选随时改，或者用下面的「美化封面」——
+  美化时选的那种外观会自动记进来。
 - **封面** — 可以单独上传或换掉。这盘游戏**已经有封面**时，旁边还能点「**美化封面**」：
   把当前封面合成成卡带（或 Flash 光盘）的外观，确认后直接换掉原封面（**不可逆**）。
-  同一类型有几种外观时，弹框标题右边可以切换（`gb` 是「GB卡带 / GBC卡带」两种，
-  FC 是「FC日版 / FC美版」两种，默认按这盘游戏的卡带版本选）；
+  同一类型有几种外观时，弹框标题右边可以切换（`gb` 是「GB / GBC」两种，
+  `nes` 是「FC / NES」两种，默认按这盘游戏当前的封面类型选）；
   合成用不上的类型（HTML5、SFC 等）不显示这个按钮。
 - **名称** — 同一游戏类型下不能重名。
 - **换本体** — 换了本体就跟着换游戏类型（如 `.swf` 换成 `.nes`）。第一次上传后会记住本体，
@@ -345,17 +348,16 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 | --- | --- | --- |
 | Ruffle（Flash 运行时） | 构建期下载到 `frontend/public/ruffle/`，不随仓库分发 | MIT OR Apache-2.0 |
 | EmulatorJS v4.2.3（主机模拟器） | 构建期下载到 `frontend/public/emulatorjs/`，不随仓库分发 | GPL-3.0 |
-| 国旗图标 | `frontend/public/flags/`，随仓库分发 | 版权归各自权利人（见下） |
 | 游戏机机身图、卡带底图、`flash-logo.png` | `frontend/src/assets/`，随仓库分发 | 版权归各自权利人（见下） |
 | 后端依赖 / 前端依赖 | `requirements.txt` / `frontend/package.json` | 各自的上游许可 |
 
 引擎资产由 `frontend/scripts/copy-ruffle.mjs` 与 `fetch-emulatorjs.mjs` 在构建期按固定版本拉取，
 仓库里不含它们的源码，部署与再分发时仍需遵守各自的许可证。上表的许可**以各自上游仓库的声明为准**。
 
-`frontend/public/flags/` 下的国旗图标与 `frontend/src/assets/` 下的游戏机机身图
+`frontend/src/assets/` 下的游戏机机身图
 （`shells/gba-shell.png` / `shells/gbc-shell.png` / `shells/nes-shell.png` /
 `shells/nes-shell-43.png`）、卡带底图（`carts/gba-cart.png` / `carts/gbc-cart.png` /
-`carts/gb-cart.png` / `carts/nes-jp-cart.png` / `carts/nes-us-cart.png`）与
+`carts/gb-cart.png` / `carts/fc-cart.png` / `carts/nes-cart.png`）与
 `flash-logo.png` 是界面展示素材，版权归各自权利人所有，
 **不在本项目的 MIT 许可范围内**；要再分发或商用请自行确认来源与许可，或换成自己的图。
 

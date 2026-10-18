@@ -145,21 +145,21 @@
                         <el-form-item label="游戏类型">
                             <span class="game-manage__type-value">{{ typeFieldText }}</span>
                         </el-form-item>
-                        <!-- 选项由「这次会落成的游戏类型」决定：选了新本体就按新类型给，
-                             还没选本体（新建时）只给「默认」。见 cartridgeTypeOptions -->
-                        <el-form-item label="卡带类型">
-                            <el-radio-group v-model="form.cartridgeType">
-                                <!-- 与详情一致：只显示国旗，不显示文字（中文名放 alt） -->
+                        <!-- 封面类型：这盘封面被美化成的外观，值就是封面样式 id。
+                             选项由「这次会落成的游戏类型」决定（见 coverTypeOptions）；
+                             新建时不给这一行——新建一律留空，只有编辑能改、或美化封面时自动写。
+                             不支持美化封面的类型（h5/snes/sega*）没有选项，整行也不显示。 -->
+                        <el-form-item
+                            v-if="formMode === 'edit' && coverTypeOptions.length"
+                            label="封面类型"
+                        >
+                            <el-radio-group v-model="form.coverType">
                                 <el-radio
-                                    v-for="item in cartridgeTypeOptions"
-                                    :key="item.value"
-                                    :value="item.value"
+                                    v-for="item in coverTypeOptions"
+                                    :key="item.id"
+                                    :value="item.id"
                                 >
-                                    <img
-                                        class="game-manage__cartridge-flag"
-                                        :src="item.flag"
-                                        :alt="item.label"
-                                    />
+                                    {{ item.label }}
                                 </el-radio>
                             </el-radio-group>
                         </el-form-item>
@@ -456,11 +456,6 @@ import {
     uploadGameAssetAPI,
     uploadGuideAPI,
 } from "@/api/games";
-import {
-    CARTRIDGE_TYPE_DEFAULT,
-    cartridgeTypesFor,
-    sortedCartridgeTypes,
-} from "@/constants/cartridgeTypes";
 import { beautifyStylesFor } from "@/constants/coverStyles";
 import {
     ALL_GAME_EXTENSIONS,
@@ -498,7 +493,8 @@ const guideFiles = ref([]);
 const form = reactive({
     name: "",
     cartridgeId: "",
-    cartridgeType: CARTRIDGE_TYPE_DEFAULT,
+    // 封面类型（封面样式 id）：空 = 没有。新建一律留空，编辑里可随时改
+    coverType: "",
     description: "",
     gameFile: null,
     coverFile: null,
@@ -575,20 +571,18 @@ const bodySourceType = computed(() => {
 const hasBodySource = computed(() => Boolean(form.gameFile || form.bodyUrl));
 const gameAccept = computed(() => bodyExtensions.value.join(","));
 
-// 卡带类型的候选：按「这次保存后会落成的游戏类型」给——选了新本体就按新类型的扩展名，
-// 否则用当前类型（编辑时）；都没有（新建还没选本体）就只剩「默认」。
-// 顺序：「默认」固定第一，其余按取值字符串排（见 sortedCartridgeTypes）。
+// 封面类型的候选：按「这次保存后会落成的游戏类型」给——选了新本体就按新类型的扩展名，
+// 否则用当前类型（编辑时）；不支持美化封面的类型与「新建还没选本体」都是空数组（那一行不显示）。
 const effectiveGameType = computed(
     () => bodySourceType.value || editingItem.value?.game_type || ""
 );
-const cartridgeTypeOptions = computed(() =>
-    sortedCartridgeTypes(cartridgeTypesFor(effectiveGameType.value))
-);
+const coverTypeOptions = computed(() => beautifyStylesFor(effectiveGameType.value));
 
-// 类型变了（如编辑时改选成另一机种的本体）后，原来选的日版/美版可能不再合法，回落「默认」
-watch(cartridgeTypeOptions, (options) => {
-    if (!options.some((item) => item.value === form.cartridgeType)) {
-        form.cartridgeType = CARTRIDGE_TYPE_DEFAULT;
+// 类型变了（如编辑时改选成另一机种的本体）后，原来选的封面类型可能不再合法，清空它
+// （后端换本体时也会按新类型清一遍，这里先清是为了表单里不留一个存不下去的值）
+watch(coverTypeOptions, (options) => {
+    if (form.coverType && !options.some((item) => item.id === form.coverType)) {
+        form.coverType = "";
     }
 });
 const typeFieldText = computed(() => {
@@ -760,7 +754,7 @@ function clearRemoteBody() {
 function resetForm() {
     form.name = "";
     form.cartridgeId = "";
-    form.cartridgeType = CARTRIDGE_TYPE_DEFAULT;
+    form.coverType = "";
     form.description = "";
     clearGameFile();
     clearCoverFile();
@@ -789,7 +783,7 @@ async function openEdit(id) {
     editingItem.value = await getManageGameAPI(id);
     form.name = editingItem.value.name;
     form.description = editingItem.value.description;
-    form.cartridgeType = editingItem.value.cartridge_type || CARTRIDGE_TYPE_DEFAULT;
+    form.coverType = editingItem.value.cover_type || "";
     formVisible.value = true;
 }
 
@@ -951,7 +945,12 @@ function confirmRemoteCover() {
     remoteCoverVisible.value = false;
 }
 
-async function uploadAsset(gameId, kind, { file = null, url = "", gameType = "" }) {
+// coverType 只有「美化封面」那条路会传：样式 id 与封面文件同一次提交写进去
+async function uploadAsset(
+    gameId,
+    kind,
+    { file = null, url = "", gameType = "", coverType = "" }
+) {
     const data = new FormData();
     data.append("kind", kind);
     if (file) {
@@ -960,6 +959,9 @@ async function uploadAsset(gameId, kind, { file = null, url = "", gameType = "" 
     if (url) {
         data.append("url", url);
         data.append("game_type", gameType);
+    }
+    if (coverType) {
+        data.append("cover_type", coverType);
     }
     await uploadGameAssetAPI(gameId, data);
 }
@@ -970,16 +972,19 @@ async function uploadAsset(gameId, kind, { file = null, url = "", gameType = "" 
  * 合成图是 canvas 出来的 Blob，没有名字——后端靠文件名的后缀定扩展名（并决定落盘的
  * cover.{后缀}），所以必须包一层带 .png 的 File 再交给 uploadAsset。
  */
-async function onBeautifyConfirm(blob) {
+async function onBeautifyConfirm({ blob, styleId }) {
     beautifySaving.value = true;
     try {
+        // 一次提交里把「换成哪种壳」也带上：封面类型就是这次选的样式 id
         await uploadAsset(editingId.value, "cover", {
             file: new File([blob], "cover.png", { type: "image/png" }),
+            coverType: styleId,
         });
         beautifyVisible.value = false;
         ElMessage.success("封面已更新");
         // 封面路径与 updated_at 都变了：刷新编辑弹框里「当前：…」与预览，再刷新列表缩略图
         editingItem.value = await getManageGameAPI(editingId.value);
+        form.coverType = editingItem.value.cover_type || "";
         await reload();
     } catch (err) {
         if (!err.reported) {
@@ -1008,7 +1013,6 @@ async function onCreate() {
     const data = new FormData();
     data.append("name", form.name);
     data.append("cartridge_id", form.cartridgeId);
-    data.append("cartridge_type", form.cartridgeType);
     data.append("description", form.description);
     if (form.gameFile) {
         data.append("file", form.gameFile);
@@ -1063,7 +1067,7 @@ async function onSave() {
             await updateManageGameAPI(editingId.value, {
                 name: form.name,
                 description: form.description,
-                cartridge_type: form.cartridgeType,
+                cover_type: form.coverType,
             });
             if (form.gameFile || form.bodyUrl) {
                 await uploadAsset(editingId.value, "game", {
@@ -1431,13 +1435,7 @@ onBeforeUnmount(() => {
     width: 100%;
 }
 
-/* 卡带类型的单选项里只有国旗（22×16 原尺寸），与单选圆点垂直居中对齐 */
-.game-manage__cartridge-flag {
-    display: block;
-    width: 22px;
-    height: 16px;
-}
-
+/* 封面类型的单选项是纯文字（样式名），与单选圆点垂直居中对齐 */
 .game-manage__form :deep(.el-radio) {
     margin-right: 20px;
     align-items: center;

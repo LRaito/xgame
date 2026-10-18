@@ -25,17 +25,8 @@
                     </dd>
                 </div>
                 <div><dt>类型</dt><dd>{{ typeLabel(detail.game_type) }}</dd></div>
-                <div>
-                    <dt>卡带类型</dt>
-                    <!-- 只给国旗，不叠文字：alt 里带中文名，读屏与图挂掉时仍有意义 -->
-                    <dd>
-                        <img
-                            class="game-detail__flag"
-                            :src="cartridgeTypeFlag(detail.cartridge_type)"
-                            :alt="cartridgeTypeLabel(detail.cartridge_type)"
-                        />
-                    </dd>
-                </div>
+                <!-- 封面类型 = 这盘封面被美化成的外观；没美化过就是空的（同页其它缺失项一样给「—」） -->
+                <div><dt>封面类型</dt><dd>{{ coverTypeLabel(detail.cover_type) || "—" }}</dd></div>
                 <div><dt>大小</dt><dd>{{ formatSize(detail.size) }}</dd></div>
                 <div>
                     <dt>CRC32</dt>
@@ -125,7 +116,7 @@ import {
     listScreenshotsAPI,
     uploadScreenshotAPI,
 } from "@/api/games";
-import { cartridgeTypeFlag, cartridgeTypeLabel } from "@/constants/cartridgeTypes";
+import { coverTypeLabel } from "@/constants/coverStyles";
 import { gameTypeLabel as typeLabel } from "@/constants/gameTypes";
 import AppDialog from "@components/common/AppDialog.vue";
 import GameScreenshotGallery from "@components/games/GameScreenshotGallery.vue";
@@ -351,13 +342,6 @@ function formatDateTime(value) {
     display: flex;
     align-items: center;
     gap: 8px;
-}
-
-/* 卡带类型：原尺寸（22×16）显示国旗，不放大也不裁切 */
-.game-detail__flag {
-    display: block;
-    width: 22px;
-    height: 16px;
 }
 
 /* 卡带 ID 与 CRC32 的值：窄了就省略 */

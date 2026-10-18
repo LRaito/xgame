@@ -90,9 +90,12 @@ def _create_game(
     cover: tuple[str, bytes, str] | None = None,
     cartridge_id: str | None = None,
     description: str = "",
-    cartridge_type: str | None = None,
+    cover_type: str | None = None,
 ):
-    """按新流程建游戏：一次请求提交名称/卡带ID/描述/本体（可选封面），类型由后端识别。"""
+    """按新流程建游戏：一次请求提交名称/卡带ID/描述/本体（可选封面），类型由后端识别。
+
+    `cover_type` 只是给「新建不接受这个字段」的用例硬塞用的，正常调用别传。
+    """
     files = {"file": (filename, body, mime)}
     if cover is not None:
         files["cover"] = cover
@@ -101,8 +104,8 @@ def _create_game(
         "cartridge_id": cartridge_id or _next_cartridge_id(),
         "description": description,
     }
-    if cartridge_type is not None:
-        data["cartridge_type"] = cartridge_type
+    if cover_type is not None:
+        data["cover_type"] = cover_type
     return client.post("/api/games/manage", data=data, files=files)
 
 
@@ -833,83 +836,140 @@ def test_failed_switch_keeps_old_asset(game_service, storage_root):
     assert _read(storage_root, "game/flash/KEEP1/game.swf") == b"swf-body"
 
 
-def test_cartridge_type_defaults_to_default(logged_in_games):
-    """卡带类型始终有值：新建没传就是「默认」，中心列表与管理详情都带着它。"""
-    nes = _create_game(logged_in_games, "CT 默认", "a.nes", b"nes-body").json()["data"]
-    assert nes["cartridge_type"] == "default"
+def test_create_leaves_cover_type_empty(logged_in_games):
+    """新建一律没有封面类型（表单里硬塞也当没给）：只有编辑与美化封面才写它。"""
+    nes = _create_game(logged_in_games, "CT 空", "a.nes", b"nes-body").json()["data"]
+    assert nes["cover_type"] is None
+
+    sneaky = _create_game(
+        logged_in_games, "CT 硬塞", "b.gb", b"gb-body", cover_type="gb"
+    )
+    assert sneaky.status_code == 201, sneaky.text
+    assert sneaky.json()["data"]["cover_type"] is None
 
     center = logged_in_games.get("/api/games").json()["data"]
-    assert center[0]["cartridge_type"] == "default"
-    assert logged_in_games.get(f"/api/games/manage/{nes['id']}").json()["data"][
-        "cartridge_type"
-    ] == "default"
+    assert [item["cover_type"] for item in center] == [None, None]
+    detail = logged_in_games.get(f"/api/games/manage/{nes['id']}").json()["data"]
+    assert detail["cover_type"] is None
 
 
-def test_create_accepts_cartridge_type_for_nes(logged_in_games):
-    """新建时按所选本体落成的类型收卡带类型；与类型对不上就 400。"""
-    ok = _create_game(
-        logged_in_games, "CT 新建", "a.nes", b"nes-body", cartridge_type="us"
-    )
-    assert ok.status_code == 201, ok.text
-    assert ok.json()["data"]["cartridge_type"] == "us"
-
-    bad = _create_game(
-        logged_in_games, "CT 新建不合法", "b.sfc", b"sfc-body", cartridge_type="us"
-    )
-    assert bad.status_code == 400
-    assert "卡带类型" in bad.json()["message"]
-
-
-def test_update_cartridge_type(logged_in_games):
-    """FC NES 可设日版/美版；空值回落「默认」。"""
-    nes = _create_game(logged_in_games, "CT 日版", "a.nes", b"nes-body").json()["data"]
+def test_update_cover_type(logged_in_games):
+    """编辑弹框可随时改封面类型；空串清空；该游戏类型不认的值 400 且原值不变。"""
+    nes = _create_game(logged_in_games, "CT 改", "a.nes", b"nes-body").json()["data"]
     updated = logged_in_games.put(
-        f"/api/games/manage/{nes['id']}", json={"cartridge_type": "jp"}
+        f"/api/games/manage/{nes['id']}", json={"cover_type": "fc"}
     )
     assert updated.status_code == 200
-    assert updated.json()["data"]["cartridge_type"] == "jp"
+    assert updated.json()["data"]["cover_type"] == "fc"
+
+    rejected = logged_in_games.put(
+        f"/api/games/manage/{nes['id']}", json={"cover_type": "gb"}
+    )
+    assert rejected.status_code == 400
+    assert "封面类型" in rejected.json()["message"]
+    detail = logged_in_games.get(f"/api/games/manage/{nes['id']}").json()["data"]
+    assert detail["cover_type"] == "fc"
 
     cleared = logged_in_games.put(
-        f"/api/games/manage/{nes['id']}", json={"cartridge_type": ""}
+        f"/api/games/manage/{nes['id']}", json={"cover_type": ""}
     )
-    assert cleared.json()["data"]["cartridge_type"] == "default"
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["cover_type"] is None
 
 
-def test_cartridge_type_rejects_value_not_allowed_by_type(logged_in_games):
-    """只有 FC NES 区分日版/美版，其余游戏类型设这两个值一律 400。"""
+def test_cover_type_rejects_for_unsupported_type(logged_in_games):
+    """不支持美化封面的类型（snes）永远没有封面类型：设值 400、空值照收。"""
     snes = _create_game(logged_in_games, "CT SNES", "a.sfc", b"sfc-body").json()["data"]
-    for value in ("jp", "us", "xx"):
+    for value in ("gb", "fc", "xx"):
         rejected = logged_in_games.put(
-            f"/api/games/manage/{snes['id']}", json={"cartridge_type": value}
+            f"/api/games/manage/{snes['id']}", json={"cover_type": value}
         )
         assert rejected.status_code == 400, value
-        assert "卡带类型" in rejected.json()["message"]
-    # 被拒后原值不变
-    detail = logged_in_games.get(f"/api/games/manage/{snes['id']}").json()["data"]
-    assert detail["cartridge_type"] == "default"
-
-
-def test_type_switch_resets_cartridge_type(logged_in_games, storage_root):
-    """换本体换类型后，新类型不认的卡带类型回落「默认」。"""
-    nes = _create_game(logged_in_games, "CT 换类型", "a.nes", b"nes-body").json()["data"]
-    logged_in_games.put(
-        f"/api/games/manage/{nes['id']}", json={"cartridge_type": "jp"}
+        assert "封面类型" in rejected.json()["message"]
+    # 空值合法：编辑弹框对这类游戏根本不显示那一行，表单照样会把空串发上来
+    blank = logged_in_games.put(
+        f"/api/games/manage/{snes['id']}", json={"cover_type": ""}
     )
-    _unlock_body(logged_in_games.app, nes["id"])
+    assert blank.status_code == 200
+    assert blank.json()["data"]["cover_type"] is None
+
+
+def test_type_switch_clears_cover_type(logged_in_games, storage_root):
+    """换本体换类型后，新类型不认原来的封面类型就清空。"""
+    gb = _create_game(logged_in_games, "CT 换类型", "a.gb", b"gb-body").json()["data"]
+    logged_in_games.put(f"/api/games/manage/{gb['id']}", json={"cover_type": "gbc"})
+    _unlock_body(logged_in_games.app, gb["id"])
 
     switched = logged_in_games.post(
-        f"/api/games/manage/{nes['id']}/assets",
+        f"/api/games/manage/{gb['id']}/assets",
         data={"kind": "game"},
-        files={"file": ("a.sfc", b"sfc-body", "application/octet-stream")},
+        files={"file": ("a.nes", b"nes-body", "application/octet-stream")},
     )
     assert switched.status_code == 201, switched.text
     body = switched.json()["data"]
-    assert body["game_type"] == "snes"
-    assert body["cartridge_type"] == "default"
+    assert body["game_type"] == "nes"
+    assert body["cover_type"] is None
 
 
-def test_init_db_adds_missing_cartridge_type_column(tmp_path):
-    """老库的 games 表没有 cartridge_type：启动时补上这一列，旧行取「默认」。"""
+def test_assets_writes_cover_type_with_cover(logged_in_games, storage_root):
+    """美化封面：样式 id 与封面文件在同一次 assets 调用里写进去。"""
+    gb = _create_game(
+        logged_in_games,
+        "CT 美化",
+        "a.gb",
+        b"gb-body",
+        cover=("cover.png", b"old-cover", "image/png"),
+    ).json()["data"]
+
+    saved = logged_in_games.post(
+        f"/api/games/manage/{gb['id']}/assets",
+        data={"kind": "cover", "cover_type": "gbc"},
+        files={"file": ("cover.png", b"new-cover", "image/png")},
+    )
+    assert saved.status_code == 201, saved.text
+    assert saved.json()["data"]["cover_type"] == "gbc"
+    assert _read(storage_root, saved.json()["data"]["cover_path"]) == b"new-cover"
+
+
+def test_assets_rejects_bad_cover_type(logged_in_games, storage_root):
+    """样式 id 非法时整次调用失败：封面文件也不换，不留半截状态。"""
+    gb = _create_game(
+        logged_in_games,
+        "CT 美化失败",
+        "a.gb",
+        b"gb-body",
+        cover=("cover.png", b"old-cover", "image/png"),
+    ).json()["data"]
+
+    rejected = logged_in_games.post(
+        f"/api/games/manage/{gb['id']}/assets",
+        data={"kind": "cover", "cover_type": "zzz"},
+        files={"file": ("cover.png", b"new-cover", "image/png")},
+    )
+    assert rejected.status_code == 400
+    assert "封面类型" in rejected.json()["message"]
+
+    detail = logged_in_games.get(f"/api/games/manage/{gb['id']}").json()["data"]
+    assert detail["cover_type"] is None
+    assert _read(storage_root, detail["cover_path"]) == b"old-cover"
+
+
+def test_assets_ignores_cover_type_for_game_kind(logged_in_games):
+    """换本体（kind=game）不认这个字段，封面类型不会被顺带写进去。"""
+    gb = _create_game(logged_in_games, "CT 本体", "a.gb", b"gb-body").json()["data"]
+    _unlock_body(logged_in_games.app, gb["id"])
+
+    uploaded = logged_in_games.post(
+        f"/api/games/manage/{gb['id']}/assets",
+        data={"kind": "game", "cover_type": "gbc"},
+        files={"file": ("b.gb", b"gb-body-2", "application/octet-stream")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    assert uploaded.json()["data"]["cover_type"] is None
+
+
+def test_init_db_adds_missing_cover_type_column(tmp_path):
+    """老库的 games 表没有 cover_type：启动时补上这一列，旧行是空（可空列）。"""
     from sqlalchemy import inspect as sa_inspect
     from sqlmodel import create_engine
 
@@ -935,9 +995,11 @@ def test_init_db_adds_missing_cartridge_type_column(tmp_path):
 
     init_db(engine)
 
-    assert "cartridge_type" in {c["name"] for c in sa_inspect(engine).get_columns("games")}
+    columns = {c["name"]: c for c in sa_inspect(engine).get_columns("games")}
+    assert "cover_type" in columns
+    assert columns["cover_type"]["nullable"] is True
     with Session(engine) as session:
-        assert session.get(Game, 1).cartridge_type == "default"
+        assert session.get(Game, 1).cover_type is None
 
 
 def test_update_ignores_manual_game_type(logged_in_games):

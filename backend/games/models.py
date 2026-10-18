@@ -26,25 +26,32 @@ PROGRESS_NOT_STARTED = "not_started"
 PROGRESS_IN_PROGRESS = "in_progress"
 PROGRESS_COMPLETED = "completed"
 
-# 卡带类型（卡带版本）：目前只有 FC NES 区分日版/美版，其余类型只有「默认」。
-# 「默认」是真实值而不是空值——每个游戏始终有且只有一个卡带类型。
-CARTRIDGE_TYPE_DEFAULT = "default"
-CARTRIDGE_TYPE_JP = "jp"
-CARTRIDGE_TYPE_US = "us"
-CARTRIDGE_TYPE_LABELS = {
-    CARTRIDGE_TYPE_JP: "日版",
-    CARTRIDGE_TYPE_US: "美版",
-    CARTRIDGE_TYPE_DEFAULT: "默认",
+# 封面类型：这盘游戏的封面被「美化」成了哪种外观（值就是封面样式 id，见
+# frontend/src/constants/coverStyles.js 的 CART_STYLES / STYLE_META）。
+# **可空**——空 = 没有封面类型：新建（手动上传/网络上传/搬运）一律留空，
+# 只有编辑弹框里手动选、或「美化封面」时自动写入，才会落值。
+# id 集合与顺序必须与前端镜像 coverStyles.js 的 STYLE_BY_GAME_TYPE 逐字一致
+# （后端是权威来源，接口只认这里的取值）。
+COVER_TYPES_BY_GAME_TYPE = {
+    "flash": ("flash",),
+    "gb": ("gb", "gbc"),
+    "gba": ("gba",),
+    "nes": ("fc", "nes"),
 }
-# 各游戏类型可选的卡带类型，顺序即展示顺序（前端 constants/cartridgeTypes.js 与此同步）
-CARTRIDGE_TYPES_BY_GAME_TYPE = {
-    "nes": (CARTRIDGE_TYPE_JP, CARTRIDGE_TYPE_US, CARTRIDGE_TYPE_DEFAULT),
+# 只用于中文报错文案；与前端 STYLE_META 里各样式的 label 同义
+COVER_TYPE_LABELS = {
+    "flash": "DISK",
+    "gb": "GB",
+    "gbc": "GBC",
+    "gba": "GBA",
+    "fc": "FC",
+    "nes": "NES",
 }
 
 
-def cartridge_types_for(game_type: str) -> tuple[str, ...]:
-    """该游戏类型可选的卡带类型；没收录的类型只有「默认」。"""
-    return CARTRIDGE_TYPES_BY_GAME_TYPE.get(game_type, (CARTRIDGE_TYPE_DEFAULT,))
+def cover_types_for(game_type: str) -> tuple[str, ...]:
+    """该游戏类型可选的封面类型；不支持美化封面的类型返回空元组（它永远没有封面类型）。"""
+    return COVER_TYPES_BY_GAME_TYPE.get(game_type, ())
 
 
 def _utcnow() -> datetime:
@@ -68,7 +75,7 @@ class Game(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     name: str = Field(max_length=GAME_NAME_MAX_LENGTH, index=True)
     cartridge_id: str = Field(max_length=CARTRIDGE_ID_MAX_LENGTH)
-    cartridge_type: str = Field(default=CARTRIDGE_TYPE_DEFAULT, max_length=20)
+    cover_type: str | None = Field(default=None, max_length=20)
     description: str = Field(default="", max_length=DESCRIPTION_MAX_LENGTH)
     game_type: str = Field(max_length=50, index=True)
     size: int = Field(default=0)

@@ -60,8 +60,8 @@
                     />
                 </div>
 
-                <!-- 一种「游戏类型 + 卡带类型」一个网格：同一行里只会有同一种类型的同一种卡带，
-                    跨类型（含日版/美版/默认之间）自然换行。
+                <!-- 一种「游戏类型 + 封面类型」一个网格：同一行里只会有同一种类型的同一种封面，
+                    跨类型（含封面类型之间、以及没有封面类型的那一组）自然换行。
                     不传 aspect = 卡片高度自适应：封面按正方形限制框缩放，卡片高就是封面高，
                     同一类型的封面形状一致，整行仍然齐平 -->
                 <div class="games-groups">
@@ -133,11 +133,8 @@ import {
     setGamePlaytimeAPI,
     setGameProgressAPI,
 } from "@/api/games";
-import {
-    CARTRIDGE_TYPE_DEFAULT,
-    cartridgeTypesFor,
-} from "@/constants/cartridgeTypes";
 import { CARD_ASPECT_RAIL } from "@/constants/gameCardAspect";
+import { coverTypesFor } from "@/constants/coverStyles";
 import { GAME_PROGRESS_LIST, PROGRESS_NOT_STARTED } from "@/constants/gameProgress";
 import { GAME_TYPE_LIST, gameTypeLabel } from "@/constants/gameTypes";
 import { ensureGameAssetSw } from "@/utils/gameAssetCache";
@@ -188,9 +185,10 @@ const filteredGames = computed(() => {
 });
 
 // 「全部游戏」分行：CSS 网格是「按顺序填格」，混着放就会让一行里出现两种类型，
-// 所以先在游戏类型内按卡带类型再分一层（同一种卡带严格同一行），一层装一个网格容器。
+// 所以先在游戏类型内按封面类型再分一层（同一种封面严格同一行），一层装一个网格容器。
 // 游戏类型顺序跟类型下拉一致（/status.game_types 的顺序），没见过的类型排最后；
-// 卡带类型顺序用 cartridgeTypesFor()（日版、美版、默认），认不出的值兜到该类型末尾。
+// 封面类型顺序用 coverTypesFor()（该类型支持的那几种），认不出的值兜到该类型末尾，
+// 没有封面类型的那一组（新建的都是空的，不支持美化的类型永远空）固定排最后。
 const gameRows = computed(() => {
     const groups = new Map();
     for (const game of filteredGames.value) {
@@ -198,12 +196,12 @@ const gameRows = computed(() => {
         if (!groups.has(slug)) {
             groups.set(slug, new Map());
         }
-        const byCartridge = groups.get(slug);
-        const value = game.cartridge_type || CARTRIDGE_TYPE_DEFAULT;
-        if (!byCartridge.has(value)) {
-            byCartridge.set(value, []);
+        const byCover = groups.get(slug);
+        const value = game.cover_type || "";
+        if (!byCover.has(value)) {
+            byCover.set(value, []);
         }
-        byCartridge.get(value).push(game);
+        byCover.get(value).push(game);
     }
     const rank = (slug) => {
         const index = typeOrder.value.indexOf(slug);
@@ -211,15 +209,21 @@ const gameRows = computed(() => {
     };
     return [...groups.entries()]
         .sort((a, b) => rank(a[0]) - rank(b[0]))
-        .flatMap(([slug, byCartridge]) => {
-            const order = cartridgeTypesFor(slug).map((item) => item.value);
-            const extra = [...byCartridge.keys()].filter((value) => !order.includes(value));
-            return [...order, ...extra]
-                .filter((value) => byCartridge.has(value))
+        .flatMap(([slug, byCover]) => {
+            const order = coverTypesFor(slug);
+            const extra = [...byCover.keys()].filter(
+                (value) => value && !order.includes(value)
+            );
+            const rows = [...order, ...extra]
+                .filter((value) => byCover.has(value))
                 .map((value) => ({
                     key: `${slug}:${value}`,
-                    games: byCartridge.get(value),
+                    games: byCover.get(value),
                 }));
+            if (byCover.has("")) {
+                rows.push({ key: `${slug}:`, games: byCover.get("") });
+            }
+            return rows;
         });
 });
 

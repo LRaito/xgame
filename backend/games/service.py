@@ -23,8 +23,7 @@ from backend.games import importer, paths, remote
 from backend.games.models import (
     CARTRIDGE_ID_MAX_LENGTH,
     CARTRIDGE_ID_PATTERN,
-    CARTRIDGE_TYPE_DEFAULT,
-    CARTRIDGE_TYPE_LABELS,
+    COVER_TYPE_LABELS,
     DESCRIPTION_MAX_LENGTH,
     GAME_NAME_MAX_LENGTH,
     Game,
@@ -35,7 +34,7 @@ from backend.games.models import (
     GameRecentPlay,
     GameScreenshot,
     GameUserStat,
-    cartridge_types_for,
+    cover_types_for,
 )
 from backend.storage.types import StorageBackend
 
@@ -259,16 +258,21 @@ def validate_cartridge_id(raw: str) -> str:
     return value
 
 
-def validate_cartridge_type(game_type: str, raw: str) -> str:
-    """校验并返回卡带类型；空值取「默认」（这个字段始终有值）。
+def validate_cover_type(game_type: str, raw: str | None) -> str | None:
+    """校验并返回封面类型（封面样式 id）；空值合法、返回 None。
 
-    可选集合由游戏类型决定：目前只有 FC NES 区分日版/美版，其余类型只有「默认」。
+    先判空再判类型：不支持美化封面的游戏类型收到空串是正常的（编辑弹框根本不显示
+    那一行，表单照样会把空串发上来），不能因此报错。
     """
-    value = (raw or "").strip().lower() or CARTRIDGE_TYPE_DEFAULT
-    allowed = cartridge_types_for(game_type)
+    value = (raw or "").strip().lower()
+    if not value:
+        return None
+    allowed = cover_types_for(game_type)
+    if not allowed:
+        raise ValidationError("该游戏类型不支持美化封面，不能设置封面类型。")
     if value not in allowed:
-        labels = "、".join(CARTRIDGE_TYPE_LABELS[item] for item in allowed)
-        raise ValidationError(f"卡带类型只能是：{labels}。")
+        labels = "、".join(COVER_TYPE_LABELS[item] for item in allowed)
+        raise ValidationError(f"封面类型只能是：{labels}。")
     return value
 
 
@@ -516,7 +520,7 @@ class GameItem:
     id: int
     name: str
     cartridge_id: str
-    cartridge_type: str
+    cover_type: str | None
     description: str
     game_type: str
     size: int
@@ -696,7 +700,6 @@ class GameService:
         cover: GameUpload | None = None,
         *,
         cartridge_id: str,
-        cartridge_type: str = "",
         body_url: str = "",
         body_game_type: str = "",
         cover_url: str = "",
@@ -706,6 +709,8 @@ class GameService:
         卡带ID 必填、创建后不可改（只能删掉重建）；本体/封面各自可以是本地文件
         （`body`/`cover`）或网络直链（`*_url`），走直链时先下到临时目录再走同一条
         上传管线，原始文件名不落盘。
+
+        **不接受封面类型**：新建一律留空，只有编辑弹框手动选或美化封面时才落值。
         """
         cartridge_id = validate_cartridge_id(cartridge_id)
         self._ensure_cartridge_free(cartridge_id)
@@ -718,7 +723,6 @@ class GameService:
                 body,
                 cover,
                 cartridge_id=cartridge_id,
-                cartridge_type=cartridge_type,
             )
         # 下载来的文件要在整个上传期间保持可读，所以临时目录与句柄都包住 _create
         with tempfile.TemporaryDirectory(prefix="x-game-fetch-") as tmp:
@@ -736,7 +740,6 @@ class GameService:
                     body,
                     cover,
                     cartridge_id=cartridge_id,
-                    cartridge_type=cartridge_type,
                 )
 
     def _create(
@@ -747,19 +750,16 @@ class GameService:
         cover: GameUpload | None = None,
         *,
         cartridge_id: str,
-        cartridge_type: str = "",
     ) -> GameItem:
-        """建条目并上传本体（可选封面）：类型由本体文件名判定，卡带类型按该类型校验。"""
+        """建条目并上传本体（可选封面）：类型由本体文件名判定，封面类型留空。"""
         name = validate_game_name(name)
         description = validate_description(description)
         game_type = detect_game_type(body.filename)
-        cartridge_type = validate_cartridge_type(game_type, cartridge_type)
         self._ensure_name_free(game_type, name)
         now = datetime.now(timezone.utc)
         row = Game(
             name=name,
             cartridge_id=cartridge_id,
-            cartridge_type=cartridge_type,
             description=description,
             game_type=game_type,
             created_at=now,
@@ -784,14 +784,14 @@ class GameService:
         *,
         name: str | None = None,
         description: str | None = None,
-        cartridge_type: str | None = None,
+        cover_type: str | None = None,
         clear_cover: bool = False,
     ) -> GameItem:
         row = self._session.get(Game, game_id)
         if row is None:
             raise NotFoundError("游戏不存在。")
-        if cartridge_type is not None:
-            row.cartridge_type = validate_cartridge_type(row.game_type, cartridge_type)
+        if cover_type is not None:
+            row.cover_type = validate_cover_type(row.game_type, cover_type)
         if name is not None:
             name = validate_game_name(name)
             if name != row.name:
@@ -872,18 +872,24 @@ class GameService:
         upload: GameUpload | None = None,
         url: str = "",
         game_type: str = "",
+        cover_type: str = "",
     ) -> GameItem:
         """一步完成：按文件名定类型/后缀 → 分块上传 → 删旧对象 → 更新行。
 
         来源可以是本地文件（`upload`）或网络直链（`url`，本体要带上 `game_type`）；
         失败即整体回滚：切换类型时只改行状态不动对象，新本体就位后才清理旧档。
+
+        `cover_type` 只在 kind="cover" 且非空时生效——美化封面时把所选样式 id 与
+        封面文件一次写进去（分两步会有「封面换了、类型没跟上」的中间态）。
         """
         if kind not in ("game", "cover"):
             raise ValidationError("无效的上传类型。")
         if not url:
             if upload is None:
                 raise ValidationError("请选择要上传的文件或填写下载地址。")
-            return self._upload_asset_now(game_id, kind=kind, upload=upload)
+            return self._upload_asset_now(
+                game_id, kind=kind, upload=upload, cover_type=cover_type
+            )
         # 下载来的文件要在整个上传期间保持可读，临时目录包住这次上传
         with tempfile.TemporaryDirectory(prefix="x-game-fetch-") as tmp:
             with ExitStack() as stack:
@@ -891,14 +897,18 @@ class GameService:
                     prepared = self._remote_body(stack, Path(tmp), url, game_type)
                 else:
                     prepared = self._remote_cover(stack, Path(tmp), url)
-                return self._upload_asset_now(game_id, kind=kind, upload=prepared)
+                return self._upload_asset_now(
+                    game_id, kind=kind, upload=prepared, cover_type=cover_type
+                )
 
-    def _upload_asset_now(self, game_id: int, *, kind: str, upload: GameUpload) -> GameItem:
+    def _upload_asset_now(
+        self, game_id: int, *, kind: str, upload: GameUpload, cover_type: str = ""
+    ) -> GameItem:
         row = self._session.get(Game, game_id)
         if row is None:
             raise NotFoundError("游戏不存在。")
         try:
-            return self._upload_asset(row, kind=kind, upload=upload)
+            return self._upload_asset(row, kind=kind, upload=upload, cover_type=cover_type)
         except Exception:
             self._session.rollback()
             raise
@@ -930,7 +940,9 @@ class GameService:
             raise ValidationError(f"封面仅支持 {allowed} 图片，请填写指向图片的直链。")
         return self._fetch_remote(stack, work_dir, f"remote{extension}", url)
 
-    def _upload_asset(self, row: Game, *, kind: str, upload: GameUpload) -> GameItem:
+    def _upload_asset(
+        self, row: Game, *, kind: str, upload: GameUpload, cover_type: str = ""
+    ) -> GameItem:
         filename = (upload.filename or "").strip()
         if not filename:
             raise ValidationError("请选择要上传的文件。")
@@ -959,6 +971,9 @@ class GameService:
         elif kind == "cover":
             if extension not in _COVER_EXTENSIONS:
                 raise ValidationError("封面仅支持 jpg、png、gif、webp 图片。")
+            if cover_type:
+                # 美化封面：样式 id 与封面文件同一次提交，校验不过就连文件都不写
+                row.cover_type = validate_cover_type(row.game_type, cover_type)
             path = paths.cover_path(row.game_type, row.cartridge_id, extension)
         else:
             raise ValidationError("无效的上传类型。")
@@ -1017,9 +1032,9 @@ class GameService:
         row.game_path = ""
         row.size = 0
         row.game_type = game_type
-        # 卡带类型跟着游戏类型走：新类型不认原来的值（如 NES「日版」换成 SNES）就回「默认」
-        if row.cartridge_type not in cartridge_types_for(game_type):
-            row.cartridge_type = CARTRIDGE_TYPE_DEFAULT
+        # 封面类型跟着游戏类型走：新类型不认当前值（如 NES 的 FC 壳换成 SNES）就清空
+        if row.cover_type is not None and row.cover_type not in cover_types_for(game_type):
+            row.cover_type = None
         return switch
 
     def _finish_type_switch(self, switch: _TypeSwitch | None) -> None:
@@ -1455,7 +1470,7 @@ class GameService:
             id=row.id,
             name=row.name,
             cartridge_id=row.cartridge_id,
-            cartridge_type=row.cartridge_type,
+            cover_type=row.cover_type,
             description=row.description,
             game_type=row.game_type,
             size=row.size,

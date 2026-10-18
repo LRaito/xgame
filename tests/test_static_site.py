@@ -19,8 +19,8 @@ def dist(tmp_path):
     (root / "assets" / "app-abc123.js").write_bytes(b"console.log(1)")
     (root / "ruffle" / "ruffle.wasm").write_bytes(b"\x00asm")
     (root / "emulatorjs" / "data" / "fceumm-wasm.data").write_bytes(b"core")
-    (root / "flags").mkdir()
-    (root / "flags" / "Japan.png").write_bytes(b"\x89PNG")
+    (root / "media").mkdir()
+    (root / "media" / "cover.png").write_bytes(b"\x89PNG")
     return root
 
 
@@ -86,8 +86,8 @@ def test_emulator_host_is_no_cache(site):
 
 
 def test_other_static_files_get_no_cache_header(site):
-    """其余静态文件（机壳图、国旗、Service Worker）与 nginx 一样不额外加缓存头。"""
-    response = site.get("/flags/Japan.png")
+    """其余静态文件（机壳图、封面图、Service Worker）与 nginx 一样不额外加缓存头。"""
+    response = site.get("/media/cover.png")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert "cache-control" not in response.headers
@@ -115,7 +115,7 @@ def test_api_routes_still_work_with_site_mounted(site):
         "/%2e%2e%2f%2e%2e%2fetc/passwd",
         "/assets/%2e%2e%2f%2e%2e%2findex.html",
         "/..%5c..%5cwindows%5cwin.ini",
-        "/flags/Japan.png%00.html",
+        "/media/cover.png%00.html",
     ],
 )
 def test_path_traversal_is_rejected(site, path):
@@ -145,7 +145,7 @@ def test_normalize_keeps_legal_paths():
     from backend.static_site import _normalize
 
     assert _normalize("assets/app.js") == "assets/app.js"
-    assert _normalize("./flags/Japan.png") == "flags/Japan.png"
+    assert _normalize("./media/cover.png") == "media/cover.png"
     # 前导斜杠按「站点根下的相对路径」处理（与 nginx 把 $uri 当 root 下路径一致），
     # 不是绝对路径——绝对路径才是危险的
     assert _normalize("/emulatorjs/data/x.data") == "emulatorjs/data/x.data"

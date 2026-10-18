@@ -98,7 +98,7 @@ server {
     # 浏览器按启发式规则缓存。所以「会随开发迭代换内容、文件名又不变」的素材一律别放
     # public/——放 src/assets/ 下 import，让 Vite 给产物加内容哈希，落到上面的
     # /assets/ 那条 immutable 上，改内容即改 URL，缓存自然失效。目前 public/ 只剩
-    # 国旗（内容不变）与两个固定路径的入口（emulator-host.html、game-asset-sw.js，
+    # 两个固定路径的入口（emulator-host.html、game-asset-sw.js，
     # Service Worker 脚本必须在固定路径）。
     location / {
         try_files $uri $uri/ /index.html;
