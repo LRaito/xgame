@@ -136,7 +136,7 @@ backend/
 
 ```
 管理列表（登录）：GET /api/games/manage?page=1&page_size=5[&game_type=][&q=]
-  服务端分页，返回 {total, page, page_size, items}；排序固定为 GAME_TYPES 类型顺序分组 → 组内按名称 → id
+  服务端分页，返回 {total, page, page_size, items}；排序固定为更新时间倒序 → id（最近改动的排最前）
   管理页每页 5 行，翻页条与游戏检索共用 components/common/AppPagination.vue（两页都支持左右方向键翻页）
 
 管理（登录）：POST /api/games/manage（multipart：name/cartridge_id/description/file[+cover]）
