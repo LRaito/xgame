@@ -9,25 +9,28 @@
         <game-cover class="game-card__cover" :game="game" :aspect="aspect" />
         <div class="game-card__info">
             <h3 class="game-card__name">{{ game.name }}</h3>
-            <!-- 进度「未开始」就整行不渲染（既没有进度标签，也不显示时长） -->
-            <div v-if="showMeta" class="game-card__meta">
-                <!-- 进度标签（进行中 / 已通关）与时长依次排开 -->
-                <span
-                    v-if="game.progress === PROGRESS_COMPLETED"
-                    class="game-card__tag game-card__tag--completed"
-                >
-                    <span class="game-card__check">✓</span>已通关
-                </span>
-                <span
-                    v-else-if="game.progress === PROGRESS_IN_PROGRESS"
-                    class="game-card__tag game-card__tag--playing"
-                >
-                    <span class="game-card__dot" />进行中
-                </span>
-                <span v-if="playSeconds" class="game-card__playtime">
-                    <span class="game-card__playtime-icon">🕒</span>
-                    {{ formatPlayHours(playSeconds) }}
-                </span>
+            <!-- 状态行容器始终渲染并占住一行：进度「未开始」时只是不画内容，
+                 由 CSS 留出这一行的高度，同排卡片有没有状态都不会把标题顶上去 -->
+            <div class="game-card__meta">
+                <template v-if="showMeta">
+                    <!-- 进度标签（进行中 / 已通关）与时长依次排开 -->
+                    <span
+                        v-if="game.progress === PROGRESS_COMPLETED"
+                        class="game-card__tag game-card__tag--completed"
+                    >
+                        <span class="game-card__check">✓</span>已通关
+                    </span>
+                    <span
+                        v-else-if="game.progress === PROGRESS_IN_PROGRESS"
+                        class="game-card__tag game-card__tag--playing"
+                    >
+                        <span class="game-card__dot" />进行中
+                    </span>
+                    <span v-if="playSeconds" class="game-card__playtime">
+                        <span class="game-card__playtime-icon">🕒</span>
+                        {{ formatPlayHours(playSeconds) }}
+                    </span>
+                </template>
             </div>
         </div>
     </router-link>
@@ -56,7 +59,9 @@ const emit = defineEmits(["contextmenu"]);
 
 const playSeconds = computed(() => Number(props.game.play_seconds) || 0);
 
-// 进度不是「未开始」才渲染状态行：未开始既不显示进度标签，也不显示时长。
+// 进度不是「未开始」才渲染状态行的内容：未开始既不显示进度标签，也不显示时长。
+// 但容器 .game-card__meta 始终渲染并由 min-height 占住一行——同排卡片的标题
+// 才不会因为有没有状态而相差一行高度。
 // 也就是说「有时长但没标过进度」的卡片这里什么都不显示——时长只在标了进度之后才有意义。
 const showMeta = computed(
     () => (props.game.progress || PROGRESS_NOT_STARTED) !== PROGRESS_NOT_STARTED
@@ -111,12 +116,15 @@ const showMeta = computed(
     word-break: break-all;
 }
 
-/* 状态 + 时长：居中一排，两行文字同高 */
+/* 状态 + 时长：居中一排，两行文字同高。
+   容器始终存在，min-height 与 line-height 取同一个 14px：没有内容时也占住这一行，
+   否则贴底对齐的信息块会少 14px，同排未开始的卡片标题就比有状态的卡片低一行。 */
 .game-card__meta {
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
+    min-height: 14px;
     font-size: 11px;
     line-height: 14px;
     white-space: nowrap;
