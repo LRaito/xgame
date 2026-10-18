@@ -561,6 +561,16 @@ def _game_order_clauses() -> tuple:
     return (type_rank, col(Game.name), col(Game.id))
 
 
+def _manage_order_clauses() -> tuple:
+    """管理列表排序：按更新时间倒序（最近动过的排最前），id 兜底保证翻页稳定。
+
+    与游戏中心的 `_game_order_clauses()`（类型顺序 → 名称）不同：管理页是
+    「最近动过什么」的工作台视图，中心页则要保持类型分组。`updated_at` 在编辑、
+    换本体/封面、传攻略等改动时都会刷新，所以它就是管理页展示的那一列。
+    """
+    return (col(Game.updated_at).desc(), col(Game.id).desc())
+
+
 class GameService:
     def __init__(self, session: Session, storage: StorageBackend) -> None:
         self._session = session
@@ -635,7 +645,7 @@ class GameService:
         page: int = 1,
         page_size: int = MANAGE_PAGE_SIZE_DEFAULT,
     ) -> ManagePage:
-        """管理列表的一页。排序（类型顺序 → 名称 → id）与筛选口径不变。
+        """管理列表的一页。排序按更新时间倒序（最近改动的排最前），筛选口径不变。
 
         越界参数在这里收敛而不是靠 Query(ge=, le=)：参数校验失败走 FastAPI 的 422，
         会绕开本仓库统一的 {ok, message} 错误信封（同 list_recent 与 search_service 的处理）。
@@ -661,7 +671,7 @@ class GameService:
         rows = self._session.exec(
             select(Game)
             .where(*filters)
-            .order_by(*_game_order_clauses())
+            .order_by(*_manage_order_clauses())
             .offset((page - 1) * page_size)
             .limit(page_size)
         ).all()

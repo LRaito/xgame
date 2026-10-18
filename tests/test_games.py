@@ -190,8 +190,8 @@ def test_games_list_empty(logged_in):
     assert body["data"] == []
 
 
-def test_games_list_sorted_by_name_asc(game_service):
-    """游戏中心与管理页的游戏列表都按游戏名称升序（与插入/更新时间无关）。"""
+def test_games_list_orders(game_service):
+    """游戏中心按名称升序；管理页按更新时间倒序（最近动过的排最前）。"""
     # 故意打乱插入顺序；中心列表只收已传本体的游戏
     for name in ("delta", "bravo", "charlie"):
         game_service.create(
@@ -201,7 +201,8 @@ def test_games_list_sorted_by_name_asc(game_service):
     center = [g.name for g in game_service.list_center()]
     manage = [g.name for g in game_service.list_manage().items]
     assert center == ["bravo", "charlie", "delta"]
-    assert manage == ["bravo", "charlie", "delta"]
+    # 后建的排最前；同一微秒内建成时按 id 兜底，结果一致
+    assert manage == ["charlie", "bravo", "delta"]
 
 
 def test_asset_paths_follow_cartridge_id():
@@ -434,20 +435,28 @@ def test_manage_list_is_paged(logged_in_games):
     first = logged_in_games.get("/api/games/manage").json()["data"]
     assert set(first) == {"total", "page", "page_size", "items"}
     assert (first["total"], first["page"], first["page_size"]) == (10, 1, 5)
-    assert [item["name"] for item in first["items"]] == ["n01", "n02", "n03", "n04", "n05"]
+    # 更新时间倒序 = 建库顺序的逆序
+    assert [item["name"] for item in first["items"]] == ["n07", "n05", "n10", "n03", "n08"]
 
     second = logged_in_games.get("/api/games/manage", params={"page": 2}).json()["data"]
-    assert [item["name"] for item in second["items"]] == ["n06", "n07", "n08", "n09", "n10"]
+    assert [item["name"] for item in second["items"]] == ["n01", "n04", "n09", "n02", "n06"]
     assert second["total"] == 10
 
 
-def test_manage_list_groups_by_game_type_before_name(logged_in_games):
-    """排序先按 GAME_TYPES 的类型顺序分组、组内再按名称：flash 排在 nes 之前。"""
-    _create_game(logged_in_games, "zeta", "z.nes")
+def test_manage_list_sorted_by_updated_at_desc(logged_in_games):
+    """排序按更新时间倒序，与类型、名称都无关；改过的游戏回到最前面。"""
+    first = _create_game(logged_in_games, "zeta", "z.nes").json()["data"]
     _create_game(logged_in_games, "alpha", "a.swf")
 
     data = logged_in_games.get("/api/games/manage").json()["data"]
     assert [item["name"] for item in data["items"]] == ["alpha", "zeta"]
+
+    # 编辑先建的那条：它的 updated_at 被刷新，于是排到最前（类型顺序、名称都不参与）
+    logged_in_games.put(
+        f"/api/games/manage/{first['id']}", json={"description": "改过"}
+    )
+    data = logged_in_games.get("/api/games/manage").json()["data"]
+    assert [item["name"] for item in data["items"]] == ["zeta", "alpha"]
 
 
 def test_manage_pagination_params_are_clamped(logged_in_games):
