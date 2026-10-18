@@ -4,6 +4,20 @@
             <span class="emulator-player__hint">{{ platformHint }}</span>
         </template>
         <template #actions>
+            <!-- 持续加速：按一次一直加速、再按恢复。开关的就是引擎自己的「Fast Forward」设置项，
+                 所以与设置菜单里那一项同步、也会随「保存配置」进账号；关着时用户自己绑的
+                 快进快捷键行为不变 -->
+            <button
+                v-if="game"
+                type="button"
+                class="emulator-player__action"
+                :class="{ 'emulator-player__action--on': fastForwardOn }"
+                :aria-pressed="fastForwardOn"
+                :disabled="!engineReady"
+                @click="toggleFastForward"
+            >
+                加速模式
+            </button>
             <!-- 截当前画面（Ctrl+Shift+S 同效）：先弹确认框预览+填描述，确认后存入图库 -->
             <button
                 v-if="game"
@@ -41,7 +55,7 @@
                 :aria-pressed="shellOn"
                 @click="toggleShell"
             >
-                {{ shellOn ? "隐藏游戏机" : "显示游戏机" }}
+                显示机壳
             </button>
             <button
                 v-if="game"
@@ -294,6 +308,9 @@ const windowMode = ref(loadStoredWindow());
 const stageSize = ref(null);
 // 是否盖上机壳：本地记住的偏好，进游戏时按它恢复
 const shellVisible = ref(loadStoredShell());
+// 是否处于持续加速（引擎自己的 Fast Forward 设置项）。真相在引擎里，这里只是它的镜像：
+// 进游戏时按引擎读到的值点亮，用户在引擎设置菜单里改过也会在下一秒跟上
+const fastForwardOn = ref(false);
 // 舞台在视口里的位置。机壳是 position: fixed（见样式里的说明），要用视口坐标，
 // 而这只能从 DOM 现读，滚动 / 缩放窗口 / 全屏之后都得重新同步一次
 const stageEl = ref(null);
@@ -468,6 +485,12 @@ function refreshEngineReady() {
         engineAspect.value = aspect;
         scheduleApplyStage();
     }
+    // 加速状态同理以引擎为准：设置文件里本来就开着（上次点过「保存配置」同步过来的），
+    // 或者用户刚在引擎设置菜单里改过，按钮都在这里跟上
+    const fastForward = readEngineFastForward(rpc);
+    if (fastForward !== null && fastForward !== fastForwardOn.value) {
+        fastForwardOn.value = fastForward;
+    }
     // 就绪后按窗口选择器里选的那一列纠正一次显示比例：窗口选择器是显示比例的**唯一入口**，
     // 所以引擎自己存过的设置、或拉起 iframe 之后用户又改过比例，都在这里掰回来——机壳的洞
     // 是按选中的比例做的，比例不一致洞就会与画面错开。
@@ -489,6 +512,15 @@ function readEngineAspect(rpc) {
     }
 }
 
+/** 读引擎的加速状态；未开始游戏时宿主页返回 null，就当没读到（保留当前显示）。 */
+function readEngineFastForward(rpc) {
+    try {
+        return typeof rpc.fastForward === "boolean" ? rpc.fastForward : null;
+    } catch {
+        return null;
+    }
+}
+
 function startEnginePoll() {
     stopEnginePoll();
     refreshEngineReady();
@@ -497,6 +529,8 @@ function startEnginePoll() {
 
 function onFrameLoad() {
     engineReady.value = false;
+    // 新引擎起来之前加速状态无从谈起，先灭灯，就绪后由轮询按引擎实际值点亮
+    fastForwardOn.value = false;
     // iframe 每次重挂都要重新挂快捷键：焦点在引擎画布上时事件只在 iframe 内部走
     bindFrameHotkey();
     refreshEngineReady();
@@ -660,6 +694,30 @@ async function saveEngineSettings() {
 
 function notifyManager() {
     saveManagerRef.value?.afterOperation();
+}
+
+// ---------- 加速模式（持续快进） ----------
+
+/**
+ * 「加速模式」：按一次一直加速、再按恢复。开关的是引擎自己的 Fast Forward 设置项，
+ * 因此与引擎设置菜单里那一项是同一份状态，也会随「保存配置」进账号（下次进游戏直接加速）。
+ * 关着时引擎原有的快进快捷键行为不受影响——这里从头到尾不碰按键。
+ */
+async function toggleFastForward() {
+    if (!engineReady.value) {
+        return;
+    }
+    try {
+        const result = await callRpc("setFastForward", !fastForwardOn.value);
+        if (!result.ok) {
+            ElMessage.error(result.message || "切换加速模式失败。");
+            return;
+        }
+        // 以引擎实际状态为准（引擎可能因为别的原因没切成）
+        fastForwardOn.value = result.fastForward === true;
+    } catch {
+        ElMessage.error("切换加速模式失败。");
+    }
 }
 
 // ---------- 截图（截宿主页里的引擎画布 → 确认框填描述 → 存入图库） ----------
@@ -1017,6 +1075,7 @@ async function loadGame() {
         shotDialogVisible.value = false;
         unbindFrameHotkey();
         engineReady.value = false;
+        fastForwardOn.value = false;
         engineAspect.value = null;
         aspectSynced = false;
         resetSettingsSync();
@@ -1033,6 +1092,7 @@ async function loadGame() {
     shotDialogVisible.value = false;
     unbindFrameHotkey();
     engineReady.value = false;
+    fastForwardOn.value = false;
     engineAspect.value = null;
     aspectSynced = false;
     resetSettingsSync();
@@ -1230,7 +1290,7 @@ onBeforeUnmount(() => {
     cursor: default;
 }
 
-/* 「显示游戏机」开着时的状态：按钮点亮，一眼能看出当前盖着机壳 */
+/* 开着时的状态（「加速模式」「显示机壳」共用）：按钮点亮，一眼能看出当前是开着的 */
 .emulator-player__action--on {
     background: rgba(37, 99, 235, 0.85);
     border-color: rgba(96, 165, 250, 0.6);

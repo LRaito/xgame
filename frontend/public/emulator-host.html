@@ -277,6 +277,54 @@
                     }
                 },
 
+                /**
+                 * 当前是否在持续加速：读引擎自己的标志（用户在引擎设置菜单里把 Fast Forward
+                 * 改成 Enabled 也认），未开始游戏时返回 null。
+                 */
+                get fastForward() {
+                    const inst = window.EJS_emulator;
+                    if (!inst || !inst.started) {
+                        return null;
+                    }
+                    return inst.isFastForward === true;
+                },
+
+                /**
+                 * 持续加速开关（父页面标题栏的「加速模式」）。走引擎自己的「Fast Forward」
+                 * 设置项——与设置菜单里那一项是同一份状态：changeSettingOption 会设好
+                 * settings/allSettings，再经设置行的监听触发 menuOptionChanged →
+                 * handleSpecialOptions，把 isFastForward 与 toggle_fastforward 一起改掉，
+                 * 同时刷新菜单里的单选高亮并 saveSettings()，所以点过「保存配置」后能随账号同步。
+                 *
+                 * 刻意不直接调 gameManager.toggleFastForward：那样 isFastForward 不同步，
+                 * 状态读不回来，引擎自带的快进快捷键也会把状态带乱。也刻意不碰 controls /
+                 * 不拦 keydown——加速模式关着时用户自己绑的快进键行为必须与改动前一致。
+                 */
+                async setFastForward(on) {
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再切换加速模式。" };
+                    }
+                    if (typeof inst.changeSettingOption !== "function") {
+                        return { ok: false, message: "当前内核不支持加速。" };
+                    }
+                    const value = on ? "enabled" : "disabled";
+                    try {
+                        inst.changeSettingOption("fastForward", value);
+                        // 设置行被 hideSettings 隐藏时监听不会注册，changeSettingOption 就只写值
+                        // 不生效；这里补一次直接派发，保证速度一定跟着变（settings 上面已写好）。
+                        if ((inst.isFastForward === true) !== Boolean(on)) {
+                            inst.menuOptionChanged("fastForward", value);
+                        }
+                    } catch {
+                        return { ok: false, message: "切换加速模式失败。" };
+                    }
+                    return { ok: true, fastForward: inst.isFastForward === true };
+                },
+
                 /** 捕捉“当前进度”：触发引擎把状态写入浏览器档，读回字节 → base64 */
                 async capture() {
                     if (!window.EJS_emulator || !window.__ejsReady) {

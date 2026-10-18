@@ -173,8 +173,11 @@ backend/
   Flash  → /games/flash/{id}   Ruffle 播放，SW（game-asset-sw.js）按 key+updated_at 缓存资源
   主机   → /games/play/{id}    外层 SPA 壳内嵌 iframe /emulator-host.html → EmulatorJS；
                               ROM 直连 /api/games/{id}/play（EmulatorJS 自带 IndexedDB 缓存 core/ROM）
-                              标题栏按钮（自左向右）：截图 → 保存配置 → 窗口倍率 → 显示游戏机（GBA / FC / GBC 有）→ 存档管理；
-                              显示游戏机：把机壳图按「洞宽 = 画面宽」放大后盖在画面上，洞正好露出游戏画面，
+                              标题栏按钮（自左向右）：加速模式 → 截图 → 保存配置 → 窗口倍率 → 显示机壳（GBA / FC / GBC 有）→ 存档管理；
+                              加速模式：持续快进开关，开关的是引擎自己的 Fast Forward 设置项（__ejsRpc.setFastForward →
+                              changeSettingOption → menuOptionChanged → handleSpecialOptions），因此与引擎设置菜单里那一项同源、
+                              随「保存配置」进账号，按钮亮灭由轮询读 __ejsRpc.fastForward 对齐；不碰用户自己绑的快进键；
+                              显示机壳：把机壳图按「洞宽 = 画面宽」放大后盖在画面上，洞正好露出游戏画面，
                               画面尺寸一变就跟着缩放。图与洞的几何按游戏类型放在 emulator-player.vue 的 SHELLS 表里，
                               FC 还按显示比例分两套（切比例一起换）：GBA = src/assets/shells/gba-shell.png（带透明屏幕洞的
                               机身，洞 1920×1280 = 精确 3:2 且居整图正中）；GBC = src/assets/shells/gbc-shell.png
