@@ -14,6 +14,12 @@
 
 榜单单独建表、单独一个版本号：它的表结构变化不影响检索的 `schema_version`，补榜单失败也不会
 把检索一起变成「版本过旧」。
+
+**机种归一**：两份 CSV 里的「机种」都是自由文本（检索写 `任天堂GB`、榜单写 `GB/GBC`），
+建库时一律经 `backend/games/platforms.py` 的词表解析成统一机种（id 是 EmulatorJS 的
+system key）。所以检索侧同一个机种的多个原始名（`任天堂GB` + `任天堂GBC`）**在库里就是同一行
+console**，页面的机种下拉天然不会出现两个同名项；认不出机种的（Wii、3DS、CD-I…）保留原文、
+`platform_id` 留空，自成一组。
 """
 
 import csv
@@ -30,6 +36,7 @@ from datetime import datetime
 from pathlib import Path
 
 from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, Settings
+from backend.games.platforms import PLATFORMS, normalize_name, resolve_platform
 from backend.games.search_text import index_text
 
 logger = logging.getLogger(__name__)
@@ -37,18 +44,30 @@ logger = logging.getLogger(__name__)
 # 索引结构的版本。改了检索表结构就加一，运行期读到不匹配的版本会直接报「请重新构建」，
 # 而不是在旧库上跑出新代码的诡异结果。**榜单表不在这个版本的管理范围内**（见 RANKING_SCHEMA_VERSION）：
 # 往老库里加榜单表是纯新增，不该让已经能用的检索库被判成过旧。
-SCHEMA_VERSION = "1"
+# 2：机种归一（console 表加 platform_id / raw_names，同一机种合并成一行）
+SCHEMA_VERSION = "2"
 
 # 榜单表结构的版本，独立于上面的检索版本。
-RANKING_SCHEMA_VERSION = "1"
+# 2：机种归一（ranking 表加 platform 列，主键从 (console, rank) 改成 (platform, rank)）
+RANKING_SCHEMA_VERSION = "2"
 
 # 建库语句。game_fts 是 contentless（content=''）表：只存倒排索引、不重复存正文，
 # 正文永远从 game 表取——所以 snippet()/highlight() 在它上面恒返回 NULL，高亮必须在前端做。
+#
+# console 一行 = 一个**统一机种**（不是 CSV 里的一个原始机种名）：`name` 是词表里的统一显示名、
+# `platform_id` 是 EmulatorJS 的 system key、`raw_names` 记下被合并进来的原始写法（溯源用）。
+# 认不出机种的保留原文当 name、`platform_id` 留空。`name` 上的 UNIQUE 因此等价于
+# 「下拉里不会出现两个同名项」——别名索引把 `label` 也当别名收了，所以原文撞上统一名时
+# 会被解析成那个机种，不会变成一个撞车的「未收录」行。
 _SEARCH_SCHEMA = """
 CREATE TABLE console(
-    id   INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE
+    id          INTEGER PRIMARY KEY,
+    name        TEXT NOT NULL UNIQUE,
+    platform_id TEXT,
+    raw_names   TEXT NOT NULL DEFAULT '[]'
 );
+
+CREATE INDEX idx_console_platform ON console(platform_id);
 
 CREATE TABLE game(
     id         INTEGER PRIMARY KEY,
@@ -71,17 +90,22 @@ CREATE VIRTUAL TABLE game_fts USING fts5(
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
-# 榜单表。`PRIMARY KEY (console, rank)` 同时满足两种查询：`SELECT DISTINCT console`（小表全扫）
-# 与 `WHERE console = ? ORDER BY rank`（主键前缀有序，不必再建索引）。机种存名称而不是外键，
-# 因为榜单的机种未必出现在检索名录里，复用 console 表会污染检索的机种下拉。
+# 榜单表。`platform` 是统一机种键（认得出机种就是 EmulatorJS 的 system key，认不出就用原文），
+# `console` 留一份 CSV 原文供溯源与展示兜底。`PRIMARY KEY (platform, rank)` 同时满足两种查询：
+# `SELECT platform, MIN(console) … GROUP BY platform`（小表全扫）与
+# `WHERE platform = ? ORDER BY rank`（主键前缀有序，不必再建索引）。
+#
+# 机种存文本而不是外键到 console 表：榜单的机种未必出现在检索名录里，复用 console 表会污染
+# 检索的机种下拉（两个页面各自维护自己的机种清单，只是**用同一份词表归一**）。
 # cartridge_ids 存 JSON 数组文本：每行 0~2 个，读取时 json.loads 即可，不需要子表与 join。
 _RANKING_SCHEMA = """
 CREATE TABLE IF NOT EXISTS ranking(
+    platform      TEXT NOT NULL,
     console       TEXT NOT NULL,
     rank          INTEGER NOT NULL CHECK (rank >= 1),
     title         TEXT NOT NULL,
     cartridge_ids TEXT NOT NULL,
-    PRIMARY KEY (console, rank)
+    PRIMARY KEY (platform, rank)
 ) WITHOUT ROWID;
 """
 
@@ -117,7 +141,8 @@ class BuildStats:
 
 @dataclass(frozen=True)
 class RankingRow:
-    console: str
+    platform: str  # 统一机种键（认不出机种时就是 CSV 原文）
+    console: str  # CSV 原文，仅作溯源与展示兜底
     rank: int
     title: str
     cartridge_ids: tuple[str, ...]
@@ -126,7 +151,7 @@ class RankingRow:
 @dataclass(frozen=True)
 class RankingData:
     rows: tuple[RankingRow, ...]
-    consoles: tuple[str, ...]
+    platforms: tuple[str, ...]  # 归一后的机种键（去重，按首次出现顺序）
     fingerprint: str
     source: str
 
@@ -166,10 +191,14 @@ def ensure_game_index(
         ranking_path = Path(ranking_csv) if ranking_csv else None
 
     target = settings.game_index_path
-    if target.is_file():
-        # 库已经在：只把榜单补进去（源 CSV 没变时这个调用一个字节都不写）
+    if target.is_file() and _index_version_matches(target):
+        # 库已经在且版本对得上：只把榜单补进去（源 CSV 没变时这个调用一个字节都不写）
         _load_ranking_best_effort(target, ranking_path)
         return None
+    if target.is_file():
+        # 版本对不上 = 老库配新代码，运行期一律 503。这里直接整库重建一次，别让人为了
+        # 升级去手工跑 make index（Docker 与 Windows 包两条路线都不该有这个步骤）。
+        logger.info("游戏检索索引版本与当前代码不符，自动重建：%s", target)
 
     source = Path(csv_dir) if csv_dir else SEARCH_CSV_DIR
     if not source.is_dir():
@@ -297,7 +326,7 @@ def ensure_ranking_loaded(
         return None
 
     stats = RankingLoadStats(
-        rows=len(data.rows), consoles=len(data.consoles), fingerprint=data.fingerprint
+        rows=len(data.rows), consoles=len(data.platforms), fingerprint=data.fingerprint
     )
 
     # 第一步：只读预检。指纹一致就到此为止，绝不打开读写连接。
@@ -399,9 +428,12 @@ def _write_database(
     conn = sqlite3.connect(temp_path)
     try:
         conn.executescript(_SCHEMA)
-        console_ids: dict[str, int] = {}
+
+        # 第一遍：读完名录（按 (机种, 中文, 英文) 三元组去重）并按统一机种分组。
+        # 行数只有五万级，整份读进内存换「机种 id 可以按词表顺序分配」是划算的。
+        rows: list[tuple[str, str, str, str]] = []  # (分组键, 中文, 英文, 来源 CSV)
         seen: set[tuple[str, str, str]] = set()
-        row_id = 0
+        groups: dict[str, list[str]] = {}  # 分组键 -> 该组的原始机种名（按首次出现顺序）
 
         for csv_file in csv_files:
             for line_no, row in enumerate(_read_csv(csv_file), start=1):
@@ -419,27 +451,28 @@ def _write_database(
                     continue
                 seen.add(key)
 
-                console_id = console_ids.get(console_name)
-                if console_id is None:
-                    console_id = len(console_ids) + 1
-                    console_ids[console_name] = console_id
-                    conn.execute(
-                        "INSERT INTO console(id, name) VALUES(?, ?)",
-                        (console_id, console_name),
-                    )
+                group = _console_group(console_name)
+                rows.append((group, zh, en, csv_file.name))
+                raw_names = groups.setdefault(group, [])
+                if console_name not in raw_names:
+                    raw_names.append(console_name)
 
-                row_id += 1
-                conn.execute(
-                    "INSERT INTO game(id, console_id, zh, en, src) VALUES(?, ?, ?, ?, ?)",
-                    (row_id, console_id, zh, en, csv_file.name),
-                )
-                conn.execute(
-                    "INSERT INTO game_fts(rowid, zh_uni, en_uni) VALUES(?, ?, ?)",
-                    (row_id, index_text(zh), index_text(en)),
-                )
-
-        if row_id == 0:
+        if not rows:
             raise IndexBuildError(f"{csv_files[0].parent} 下的 CSV 一行数据都没有。")
+
+        console_ids = _write_consoles(conn, groups)
+
+        row_id = 0
+        for group, zh, en, src in rows:
+            row_id += 1
+            conn.execute(
+                "INSERT INTO game(id, console_id, zh, en, src) VALUES(?, ?, ?, ?, ?)",
+                (row_id, console_ids[group], zh, en, src),
+            )
+            conn.execute(
+                "INSERT INTO game_fts(rowid, zh_uni, en_uni) VALUES(?, ?, ?)",
+                (row_id, index_text(zh), index_text(en)),
+            )
 
         now = datetime.now().isoformat(timespec="seconds")
         meta = {
@@ -479,6 +512,48 @@ def _write_database(
     return row_id, len(console_ids), ranking_rows, ranking_consoles
 
 
+# 认不出机种的原始名自成一组时的分组键前缀（加前缀是为了与机种 id 分得开）
+_RAW_GROUP_PREFIX = "raw:"
+
+
+def _console_group(console_name: str) -> str:
+    """原始机种名 → 分组键：认得出机种就用机种 id，认不出就按原文归一后自成一组。
+
+    归一是为了把大小写/空白的写法差异并到一起（`CD-I` 与 `cd-i` 是同一组），
+    归一后仍不同的（`CD-I` 与 `CD I`）就当两个机种——总比把不相干的机器并了强。
+    """
+    platform = resolve_platform(console_name)
+    if platform is not None:
+        return platform.id
+    return _RAW_GROUP_PREFIX + normalize_name(console_name)
+
+
+def _write_consoles(conn: sqlite3.Connection, groups: dict[str, list[str]]) -> dict[str, int]:
+    """写 console 表，返回「分组键 → console.id」。
+
+    顺序：**已收录机种按词表顺序**（下拉因此按厂商分组，且不再随 CSV 文件名变化），
+    未收录的按在 CSV 里首次出现的顺序跟在后面。id 从 1 起连续分配。
+    """
+    ordered: list[str] = [platform.id for platform in PLATFORMS if platform.id in groups]
+    ordered += [group for group in groups if group.startswith(_RAW_GROUP_PREFIX)]
+
+    console_ids: dict[str, int] = {}
+    for index, group in enumerate(ordered, start=1):
+        raw_names = groups[group]
+        platform = resolve_platform(group) if not group.startswith(_RAW_GROUP_PREFIX) else None
+        conn.execute(
+            "INSERT INTO console(id, name, platform_id, raw_names) VALUES(?, ?, ?, ?)",
+            (
+                index,
+                platform.label if platform else raw_names[0],
+                platform.id if platform else None,
+                json.dumps(raw_names, ensure_ascii=False),
+            ),
+        )
+        console_ids[group] = index
+    return console_ids
+
+
 def _read_csv(csv_file: Path):
     """逐行读一个源 CSV。带 BOM、CRLF，所以用 utf-8-sig + newline='' 交给 csv 模块处理引号。"""
     with csv_file.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -495,7 +570,7 @@ def _load_ranking_csv(csv_path: Path) -> RankingData:
         raise RankingCsvError(f"{csv_path.name} 不是 UTF-8 编码，请另存为 UTF-8 后重试。") from exc
 
     rows: list[RankingRow] = []
-    consoles: dict[str, str] = {}  # casefold 后的机种 -> 首次出现的写法
+    consoles: dict[str, str] = {}  # 归一后的机种键 -> 首次出现的 CSV 原文（溯源/展示兜底）
     seen_ranks: set[tuple[str, int]] = set()
     first_row = True
 
@@ -543,24 +618,32 @@ def _load_ranking_csv(csv_path: Path) -> RankingData:
                 f"{csv_path.name} 第 {line_no} 行有 {len(ids)} 个游戏卡带ID，最多 2 个。"
             )
 
-        key = console.casefold()
-        stored = consoles.get(key)
-        if stored is None:
-            stored = console
-            consoles[key] = stored
+        # 机种经词表归一：`GBA` 与 `gba`、`MD` 与 `世嘉MD` 都落到同一个机种键上，
+        # 「同一机种内序号唯一」这条契约因此比按原始名比更准。
+        key = _console_group(console)
+        if key not in consoles:
+            consoles[key] = console
         if (key, rank) in seen_ranks:
             raise RankingCsvError(
-                f"{csv_path.name} 第 {line_no} 行：机种「{stored}」的序号 {rank} 重复。"
+                f"{csv_path.name} 第 {line_no} 行：机种「{consoles[key]}」的序号 {rank} 重复。"
             )
         seen_ranks.add((key, rank))
-        rows.append(RankingRow(console=stored, rank=rank, title=title, cartridge_ids=tuple(ids)))
+        rows.append(
+            RankingRow(
+                platform=key,
+                console=console,
+                rank=rank,
+                title=title,
+                cartridge_ids=tuple(ids),
+            )
+        )
 
     if not rows:
         raise RankingCsvError(f"{csv_path.name} 一行榜单数据都没有（空文件，或只有表头）。")
 
     return RankingData(
         rows=tuple(rows),
-        consoles=tuple(consoles.values()),
+        platforms=tuple(consoles),
         fingerprint=fingerprint,
         source=csv_path.name,
     )
@@ -569,9 +652,16 @@ def _load_ranking_csv(csv_path: Path) -> RankingData:
 def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, int]:
     """把榜单整份写进 `ranking` 表并更新 meta（调用方负责事务与建表）。"""
     conn.executemany(
-        "INSERT INTO ranking(console, rank, title, cartridge_ids) VALUES(?, ?, ?, ?)",
+        "INSERT INTO ranking(platform, console, rank, title, cartridge_ids) "
+        "VALUES(?, ?, ?, ?, ?)",
         [
-            (row.console, row.rank, row.title, json.dumps(list(row.cartridge_ids), ensure_ascii=False))
+            (
+                row.platform,
+                row.console,
+                row.rank,
+                row.title,
+                json.dumps(list(row.cartridge_ids), ensure_ascii=False),
+            )
             for row in data.rows
         ],
     )
@@ -582,11 +672,11 @@ def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, in
             "ranking_fingerprint": data.fingerprint,
             "ranking_source": data.source,
             "ranking_rows": str(len(data.rows)),
-            "ranking_consoles": str(len(data.consoles)),
+            "ranking_consoles": str(len(data.platforms)),
             "ranking_loaded_at": datetime.now().isoformat(timespec="seconds"),
         },
     )
-    return len(data.rows), len(data.consoles)
+    return len(data.rows), len(data.platforms)
 
 
 def _upsert_meta(conn: sqlite3.Connection, values: dict[str, str]) -> None:
@@ -595,6 +685,22 @@ def _upsert_meta(conn: sqlite3.Connection, values: dict[str, str]) -> None:
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         values.items(),
     )
+
+
+def _index_version_matches(db_path: Path) -> bool:
+    """库文件里的检索版本与当前代码是否一致。读不出来（坏库、没权限）一律当不一致，
+    让调用方走整库重建那条路——重建失败也只会记 warning。"""
+    try:
+        conn = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:  # pragma: no cover - 路径都由代码拼，打不开只可能是环境问题
+        return False
+    try:
+        conn.execute("PRAGMA query_only = 1")
+        return _search_schema_matches(conn)
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
 
 
 def _search_schema_matches(conn: sqlite3.Connection) -> bool:

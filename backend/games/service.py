@@ -36,6 +36,7 @@ from backend.games.models import (
     GameUserStat,
     cover_types_for,
 )
+from backend.games.platforms import playable_platforms
 from backend.storage.types import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -45,16 +46,17 @@ GAME_TYPE_H5 = "h5"
 
 # 游戏类型（game_type 落库值）。顺序即 /status 与前端下拉/分组顺序。
 # h5 走 ZIP 解包 + 沙箱 iframe 播放；flash 走 Ruffle；其余为 EmulatorJS。
-GAME_TYPES = (
+#
+# **机种那部分从 `backend/games/platforms.py` 的机种词表派生**（id 就是 EJS 的 system key，
+# 也就是 game_type 的值），所以「哪些机种能上传」只需要改那张表——但 `extensions` 非空的
+# 机种才会出现在这里：词表里还有 29 个 EJS 支持、本项目还没打包 core 的机种（n64/psx/nds…），
+# 它们只用来给游戏发现的外部名录「对上号」，不开放上传。
+#
+# flash 与 h5 **不是机种**（是载体类型），所以不来自词表、写在这里，永远排在最前。
+GAME_TYPES: tuple[str, ...] = (
     GAME_TYPE_FLASH,
     GAME_TYPE_H5,
-    "nes",
-    "snes",
-    "gb",      # Game Boy / Game Boy Color（EJS 无独立 gbc core，共用一个）
-    "gba",
-    "segaMD",  # Mega Drive / Genesis
-    "segaGG",  # Game Gear
-    "segaMS",  # Sega Master System
+    *(platform.id for platform in playable_platforms()),
 )
 
 # 各类型允许的本体扩展名白名单（封面统一走 _COVER_EXTENSIONS）。
@@ -63,26 +65,23 @@ GAME_TYPES = (
 _GAME_TYPE_EXTENSIONS: dict[str, frozenset[str]] = {
     GAME_TYPE_FLASH: frozenset({".swf"}),
     GAME_TYPE_H5: frozenset({".zip"}),
-    "nes": frozenset({".nes"}),
-    "snes": frozenset({".sfc", ".smc"}),
-    "gb": frozenset({".gb", ".gbc"}),
-    "gba": frozenset({".gba"}),
-    "segaMD": frozenset({".md", ".gen"}),
-    "segaGG": frozenset({".gg"}),
-    "segaMS": frozenset({".sms"}),
+    **{platform.id: frozenset(platform.extensions) for platform in playable_platforms()},
 }
 
 # 网络上传时地址看不出扩展名（如网盘直链），用各类型最常用的那个后缀补上
 _DEFAULT_EXTENSIONS: dict[str, str] = {
     GAME_TYPE_FLASH: ".swf",
     GAME_TYPE_H5: ".zip",
-    "nes": ".nes",
-    "snes": ".sfc",
-    "gb": ".gb",
-    "gba": ".gba",
-    "segaMD": ".md",
-    "segaGG": ".gg",
-    "segaMS": ".sms",
+    **{platform.id: platform.default_extension for platform in playable_platforms()},
+}
+
+# 各类型的显示名，只用于后端拼中文报错文案（与 COVER_TYPE_LABELS 同一用途）。
+# 前端展示层镜像在 `frontend/src/constants/gameTypes.js` 的 label 字段（可玩机种那 7 条），
+# 两边必须逐字一致，由 `tests/test_platforms.py` 钉住。
+GAME_TYPE_LABELS: dict[str, str] = {
+    GAME_TYPE_FLASH: "Flash",
+    GAME_TYPE_H5: "HTML5",
+    **{platform.id: platform.label for platform in playable_platforms()},
 }
 
 _COVER_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif", ".webp"}
@@ -205,8 +204,10 @@ def _remote_body_filename(url: str, game_type: str) -> str:
     extension = _remote_extension(url)
     detected = game_type_of_extension(extension) if extension else None
     if detected is not None and detected != game_type:
+        # 报错文案用显示名（任天堂 FC / 世嘉 MD…），不用 `nes`/`segaMD` 这种内部键值
         raise ValidationError(
-            f"该地址的文件属于 {detected} 类型，与所选的 {game_type} 不符，请确认后重试。"
+            f"该地址的文件属于「{GAME_TYPE_LABELS[detected]}」，"
+            f"与所选的「{GAME_TYPE_LABELS[game_type]}」不符，请确认后重试。"
         )
     return f"remote{extension if detected else _DEFAULT_EXTENSIONS[game_type]}"
 

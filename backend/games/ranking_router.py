@@ -21,7 +21,10 @@ def game_ranking(
     service: GameRankingServiceDep,
     console: str = Query(""),
 ):
-    """取某个机种的整份榜单。榜单没加载时返回 `has_ranking: false` + 空列表（不是错误）。"""
+    """取某个机种的整份榜单（`console` 是统一机种键，取自 `/consoles`）。
+
+    榜单没加载时返回 `has_ranking: false` + 空列表（不是错误）。
+    """
     try:
         page = service.get(console=console or None)
     except IndexUnavailableError as exc:
@@ -45,7 +48,11 @@ def game_ranking(
 
 @router.get("/consoles")
 def game_ranking_consoles(_user: CurrentUser, service: GameRankingServiceDep):
-    """机种下拉的候选项（只列榜单 CSV 里出现过的机种）与默认机种。"""
+    """机种下拉的候选项（只列榜单 CSV 里出现过的机种）与默认机种。
+
+    每项 `{platform, label, playable}`：`platform` 是统一机种键（请求榜单时原样回传），
+    `label` 是与游戏管理/检索共用的统一显示名，`playable` 表示本平台是否已收录该机种。
+    """
     try:
         result = service.list_consoles()
     except IndexUnavailableError as exc:
@@ -54,7 +61,14 @@ def game_ranking_consoles(_user: CurrentUser, service: GameRankingServiceDep):
         {
             "indexed": result.indexed,
             "has_ranking": result.has_ranking,
-            "consoles": result.consoles,
+            "consoles": [
+                {
+                    "platform": item.platform,
+                    "label": item.label,
+                    "playable": item.playable,
+                }
+                for item in result.consoles
+            ],
             "default_console": result.default_console,
         }
     )

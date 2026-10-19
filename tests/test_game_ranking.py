@@ -31,7 +31,10 @@ _SEARCH_ROWS = [
 ]
 
 _RANKING_HEADER = ["序号", "机种名称", "游戏名称", "游戏卡带ID"]
+# FC 排在最前是为了测「默认机种是 FC」——页面打开时不选也是它
 _RANKING_ROWS = [
+    ["1", "FC", "超级马里奥兄弟", "NES-SM"],
+    ["2", "FC", "银河战士", "NES-MT"],
     ["1", "GBA", "精灵宝可梦 火红", "POKEMON FIRE RED"],
     ["2", "GBA", "黄金太阳", "GSAE"],
     ["3", "GBA", "双版本示例", "ID1;ID2"],
@@ -39,6 +42,8 @@ _RANKING_ROWS = [
     ["1", "GBC", "塞尔达传说 不可思议的果实", "ZELDA"],
     ["2", "GBC", "分隔符示例", "A1/ A2"],
 ]
+# 归一后的机种：FC→nes、GBA→gba、GBC→gb（同一个机种，所以序号各自独立）
+_RANKING_PLATFORMS = 3
 
 
 def _write_csv(path, rows, *, encoding="utf-8-sig"):
@@ -116,8 +121,10 @@ def test_parse_ranking_csv_handles_real_format(tmp_path):
     assert data.fingerprint == hashlib.sha256(path.read_bytes()).hexdigest()
     assert [row.title for row in data.rows] == ["含,逗号的名字", "普通游戏", "小写机种"]
     assert data.rows[1].cartridge_ids == ("ID2", "ID3")
-    # 机种按大小写不敏感合并，落库用首次出现的写法
-    assert data.consoles == ("GBA", "gbc")
+    # 机种经词表归一：`GBA` 与 `gbc` 分别落到机种键 `gba` 与 `gb`（`gbc` 是 `gb` 的别名），
+    # 原文照旧留在行上（rows[*].console）供溯源
+    assert data.platforms == ("gba", "gb")
+    assert [row.console for row in data.rows] == ["GBA", "GBA", "gbc"]
 
 
 def test_parse_ranking_csv_without_header(tmp_path):
@@ -196,20 +203,22 @@ def test_build_index_writes_ranking(csv_dir, ranking_csv, index_path):
     stats = build_index(csv_dir, index_path, ranking_csv=ranking_csv)
 
     assert stats.ranking_rows == len(_RANKING_ROWS)
-    assert stats.ranking_consoles == 2
+    assert stats.ranking_consoles == _RANKING_PLATFORMS
     assert _meta(index_path, "schema_version") == SCHEMA_VERSION
     assert _meta(index_path, "ranking_schema_version") == RANKING_SCHEMA_VERSION
     assert _meta(index_path, "ranking_fingerprint") == hashlib.sha256(
         ranking_csv.read_bytes()
     ).hexdigest()
     assert _meta(index_path, "ranking_source") == "ranking.csv"
+    # _ranking_rows 按 console 原文排序：FC(2) → GBA(4) → GBC(2)
     rows = _ranking_rows(index_path)
-    assert rows[0][0] == "GBA"
-    assert rows[0][2] == "精灵宝可梦 火红"
-    assert rows[2][3] == '["ID1", "ID2"]'
+    assert rows[0][0] == "FC"
+    assert rows[2][0] == "GBA"
+    assert rows[2][2] == "精灵宝可梦 火红"
+    assert rows[4][3] == '["ID1", "ID2"]'
     # 没编号的行落成空数组，前端显示「—」
-    assert rows[3][2] == "查不到编号的游戏"
-    assert rows[3][3] == "[]"
+    assert rows[5][2] == "查不到编号的游戏"
+    assert rows[5][3] == "[]"
 
 
 def test_build_index_without_ranking_leaves_empty_table(csv_dir, index_path):
@@ -265,7 +274,7 @@ def test_ensure_ranking_loaded_into_search_only_index(csv_dir, ranking_csv, inde
     assert stats is not None
     assert stats.rows == len(_RANKING_ROWS)
     assert len(_ranking_rows(index_path)) == len(_RANKING_ROWS)
-    # 检索表一点没动，检索版本也还是 1
+    # 检索表一点没动，检索版本也没变
     assert _meta(index_path, "schema_version") == SCHEMA_VERSION
 
 
@@ -408,14 +417,28 @@ def test_ranking_consoles_and_default(ranked, logged_in):
 
     assert data["indexed"] is True
     assert data["has_ranking"] is True
-    assert data["consoles"] == ["GBA", "GBC"]
-    assert data["default_console"] == "GBA"
+    # 机种键 = EmulatorJS 的 system key，展示名与游戏管理/检索共用一套（词表顺序：FC → GB/GBC → GBA）
+    assert data["consoles"] == [
+        {"platform": "nes", "label": "任天堂 FC", "playable": True},
+        {"platform": "gb", "label": "任天堂 GB/GBC", "playable": True},
+        {"platform": "gba", "label": "任天堂 GBA", "playable": True},
+    ]
+    assert data["default_console"] == "nes"
 
 
-def test_ranking_default_console_prefers_gba(ranked, logged_in):
+def test_ranking_defaults_to_fc(ranked, logged_in):
+    """页面打开时不选机种就是 FC。"""
     page = _get(logged_in, RANKING_URL)
 
-    assert page["console"] == "GBA"
+    assert page["console"] == "nes"
+    assert [item["rank"] for item in page["items"]] == [1, 2]
+    assert page["items"][0]["title"] == "超级马里奥兄弟"
+    assert page["items"][0]["cartridge_ids"] == ["NES-SM"]
+
+
+def test_ranking_gba_page(ranked, logged_in):
+    page = _get(logged_in, RANKING_URL, console="gba")
+
     assert [item["rank"] for item in page["items"]] == [1, 2, 3, 4]
     assert page["items"][0]["title"] == "精灵宝可梦 火红"
     assert page["items"][0]["cartridge_ids"] == ["POKEMON FIRE RED"]
@@ -425,9 +448,10 @@ def test_ranking_default_console_prefers_gba(ranked, logged_in):
 
 
 def test_ranking_specific_console_and_separators(ranked, logged_in):
-    page = _get(logged_in, RANKING_URL, console="GBC")
+    # CSV 里写的是 `GBC`，归一后的机种键是 `gb`（与 `GB` 同一个机种）
+    page = _get(logged_in, RANKING_URL, console="gb")
 
-    assert page["console"] == "GBC"
+    assert page["console"] == "gb"
     assert [item["title"] for item in page["items"]] == [
         "塞尔达传说 不可思议的果实",
         "分隔符示例",
@@ -466,7 +490,7 @@ def test_ranking_runtime_never_writes_the_index(ranked, logged_in, index_path):
     before = _digest(index_path)
     _get(logged_in, RANKING_CONSOLES_URL)
     _get(logged_in, RANKING_URL)
-    _get(logged_in, RANKING_URL, console="GBC")
+    _get(logged_in, RANKING_URL, console="gb")
     _get(logged_in, RANKING_URL, console="NOPE")
     assert _digest(index_path) == before
 
@@ -477,8 +501,10 @@ def test_ranking_routes_are_not_shadowed(ranked, logged_in):
     assert "consoles" in _get(logged_in, RANKING_CONSOLES_URL)
 
 
-def test_pick_default_console_accepts_gba_in_longer_names():
-    assert _pick_default(["任天堂GBA", "任天堂FC"]) == "任天堂GBA"
-    assert _pick_default(["GBC", "GBA"]) == "GBA"
-    assert _pick_default(["FC", "SFC"]) == "FC"
+def test_pick_default_console_prefers_fc_then_registry_order():
+    """默认机种按统一机种键挑：有 FC 就选它，否则取词表里最靠前的（未收录的排最后）。"""
+    assert _pick_default(["gb", "gba", "nes"]) == "nes"
+    assert _pick_default(["gb", "gba"]) == "gb"  # 词表里 GB/GBC 在 GBA 前
+    assert _pick_default(["snes", "nes"]) == "nes"  # 词表里 FC 在 SFC 前
+    assert _pick_default(["raw:3ds", "snes"]) == "snes"  # 未收录的抢不到默认位
     assert _pick_default([]) is None

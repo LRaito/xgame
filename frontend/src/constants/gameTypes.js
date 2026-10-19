@@ -5,6 +5,11 @@
  * 的权威来源；这里只负责 UI 展示与播放器接线：显示名（纯展示，不进键名/路径）、
  * 中心分组文案、上传 accept 提示、以及 EmulatorJS 的 core（system key）。
  * 两者新增/修改类型时需同步。
+ *
+ * **label 是 backend/games/platforms.py 那份机种词表的镜像**：机种的 slug 就是 EmulatorJS
+ * 的 system key，label 是词表里的统一显示名（游戏管理、游戏检索、游戏榜单三处共用同一个名字，
+ * 所以「任天堂 FC」在哪儿都写作「任天堂 FC」）。`flash` / `h5` 不是机种（是载体类型），
+ * 名字不来自词表。`tests/test_platforms.py` 钉住两边逐字一致。
  */
 
 const GAME_TYPE_LIST = [
@@ -30,7 +35,7 @@ const GAME_TYPE_LIST = [
     },
     {
         slug: "nes",
-        label: "FC NES",
+        label: "任天堂 FC",
         kind: "emulator",
         core: "nes",
         extensions: [".nes"],
@@ -39,7 +44,7 @@ const GAME_TYPE_LIST = [
     },
     {
         slug: "snes",
-        label: "SFC SNES",
+        label: "任天堂 SFC",
         kind: "emulator",
         core: "snes",
         extensions: [".sfc", ".smc"],
@@ -48,7 +53,7 @@ const GAME_TYPE_LIST = [
     },
     {
         slug: "gb",
-        label: "Game_Boy Color",
+        label: "任天堂 GB/GBC",
         kind: "emulator",
         core: "gb",
         extensions: [".gb", ".gbc"],
@@ -57,7 +62,7 @@ const GAME_TYPE_LIST = [
     },
     {
         slug: "gba",
-        label: "Game_Boy_Advance",
+        label: "任天堂 GBA",
         kind: "emulator",
         core: "gba",
         extensions: [".gba"],
@@ -66,7 +71,7 @@ const GAME_TYPE_LIST = [
     },
     {
         slug: "segaMD",
-        label: "Mega_Drive Genesis",
+        label: "世嘉 MD",
         kind: "emulator",
         core: "segaMD",
         extensions: [".md", ".gen"],
@@ -75,7 +80,7 @@ const GAME_TYPE_LIST = [
     },
     {
         slug: "segaGG",
-        label: "Game_Gear",
+        label: "世嘉 GG",
         kind: "emulator",
         core: "segaGG",
         extensions: [".gg"],
@@ -84,7 +89,7 @@ const GAME_TYPE_LIST = [
     },
     {
         slug: "segaMS",
-        label: "Sega_Master_System",
+        label: "世嘉 SMS",
         kind: "emulator",
         core: "segaMS",
         extensions: [".sms"],

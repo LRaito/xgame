@@ -50,7 +50,11 @@ def game_search(
 
 @router.get("/consoles")
 def game_search_consoles(_user: CurrentUser, service: GameSearchServiceDep):
-    """机种下拉的候选项（按 id 排 = 源文件顺序）。"""
+    """机种下拉的候选项（按 id 排 = 词表顺序，同一厂商的机种相邻）。
+
+    一行 = 一个统一机种（`任天堂GB` 与 `任天堂GBC` 是同一行「任天堂 GB/GBC」），
+    `platform_id` 是 EmulatorJS 的 system key，未收录机种为 null。
+    """
     try:
         consoles = service.list_consoles()
     except IndexUnavailableError as exc:
@@ -58,6 +62,9 @@ def game_search_consoles(_user: CurrentUser, service: GameSearchServiceDep):
     return json_ok(
         {
             "indexed": service.is_indexed(),
-            "consoles": [{"id": item.id, "name": item.name} for item in consoles],
+            "consoles": [
+                {"id": item.id, "name": item.name, "platform_id": item.platform_id}
+                for item in consoles
+            ],
         }
     )

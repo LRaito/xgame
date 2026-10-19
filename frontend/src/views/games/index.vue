@@ -44,7 +44,7 @@
                         clearable
                         class="games-filter-type"
                     >
-                        <el-option label="全部类型" value="" />
+                        <el-option label="全部游戏类型" value="" />
                         <el-option
                             v-for="type in typeOrder"
                             :key="type"

@@ -15,12 +15,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from backend.errors import IndexUnavailableError
+from backend.games.platforms import PLATFORM_BY_ID, platform_label, platform_order
 from backend.games.search_index import RANKING_SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
 
-# 榜单页默认选中的机种：先精确匹配 GBA，再退到名称里含 GBA 的（兼容「任天堂GBA」）。
-_DEFAULT_CONSOLE = "GBA"
+# 榜单页默认选中的机种（统一机种键，也就是 EmulatorJS 的 system key）：FC。
+_DEFAULT_PLATFORM = "nes"
 
 
 @dataclass(frozen=True)
@@ -31,10 +32,19 @@ class RankingItem:
 
 
 @dataclass(frozen=True)
+class RankingConsole:
+    """榜单里的一个机种：统一机种键 + 统一显示名 + 本机种在平台上能不能玩。"""
+
+    platform: str
+    label: str
+    playable: bool
+
+
+@dataclass(frozen=True)
 class RankingPage:
     indexed: bool
     has_ranking: bool
-    console: str | None
+    console: str | None  # 回显的是统一机种键
     items: list[RankingItem]
 
 
@@ -42,7 +52,7 @@ class RankingPage:
 class RankingConsoles:
     indexed: bool
     has_ranking: bool
-    consoles: list[str]
+    consoles: list[RankingConsole]
     default_console: str | None
 
 
@@ -55,7 +65,11 @@ class GameRankingService:
         return self._db_path.is_file()
 
     def list_consoles(self) -> RankingConsoles:
-        """机种清单（去重、按名称排序）与默认机种。"""
+        """机种清单（去重、按词表顺序）与默认机种。
+
+        `MIN(console)` 取的是该机种在 CSV 里出现过的写法中最小的一条，只用于「认不出机种」
+        的那些（`3DS`、`CD-I`）当显示名；认得出的用词表里的统一显示名。
+        """
         if not self.is_indexed():
             return RankingConsoles(False, False, [], None)
         with self._connect() as conn:
@@ -63,12 +77,17 @@ class GameRankingService:
                 return RankingConsoles(True, False, [], None)
             try:
                 rows = conn.execute(
-                    "SELECT DISTINCT console FROM ranking ORDER BY console"
+                    "SELECT platform, MIN(console) FROM ranking GROUP BY platform"
                 ).fetchall()
             except sqlite3.Error as exc:
                 raise _broken(exc) from exc
-        consoles = [row[0] for row in rows]
-        return RankingConsoles(True, True, consoles, _pick_default(consoles))
+        consoles = sorted(
+            (_to_console(row[0], row[1]) for row in rows),
+            key=lambda item: (platform_order(item.platform), item.platform),
+        )
+        return RankingConsoles(
+            True, True, consoles, _pick_default([item.platform for item in consoles])
+        )
 
     def get(self, console: str | None = None) -> RankingPage:
         """取某个机种的整份榜单（不分页）。机种为空时用默认机种。"""
@@ -79,19 +98,21 @@ class GameRankingService:
             if not _ranking_ready(conn):
                 return RankingPage(True, False, None, [])
             try:
-                rows = conn.execute(
-                    "SELECT DISTINCT console FROM ranking ORDER BY console"
-                ).fetchall()
-                consoles = [row[0] for row in rows]
-                if not consoles:
+                rows = conn.execute("SELECT DISTINCT platform FROM ranking").fetchall()
+                platforms = [row[0] for row in rows]
+                if not platforms:
                     return RankingPage(True, True, None, [])
-                chosen = _pick_default(consoles) if not requested else _match_console(consoles, requested)
+                chosen = (
+                    _pick_default(platforms)
+                    if not requested
+                    else _match_platform(platforms, requested)
+                )
                 if chosen is None:
                     # 机种不在榜单里：回显请求值 + 空列表，与检索页的过滤语义一致
                     return RankingPage(True, True, requested, [])
                 items = conn.execute(
                     "SELECT rank, title, cartridge_ids FROM ranking "
-                    "WHERE console = ? ORDER BY rank",
+                    "WHERE platform = ? ORDER BY rank",
                     (chosen,),
                 ).fetchall()
             except sqlite3.Error as exc:
@@ -139,28 +160,33 @@ def _ranking_ready(conn: sqlite3.Connection) -> bool:
     return bool(version and fingerprint and table)
 
 
-def _pick_default(consoles: list[str]) -> str | None:
-    """默认机种：GBA（不区分大小写）→ 名称里含 GBA 的 → 排序后的第一个。"""
-    if not consoles:
+def _pick_default(platforms: list[str]) -> str | None:
+    """默认机种：FC → 词表里最靠前的那个（认不出机种的排在词表之后，不会抢到默认位）。"""
+    if not platforms:
         return None
-    for name in consoles:
-        if name.casefold() == _DEFAULT_CONSOLE.casefold():
-            return name
-    for name in consoles:
-        if _DEFAULT_CONSOLE.casefold() in name.casefold():
-            return name
-    return consoles[0]
+    if _DEFAULT_PLATFORM in platforms:
+        return _DEFAULT_PLATFORM
+    return min(platforms, key=lambda item: (platform_order(item), item))
 
 
-def _match_console(consoles: list[str], requested: str) -> str | None:
-    """把请求里的机种名对回库里的写法：先精确，再大小写不敏感。"""
-    if requested in consoles:
+def _match_platform(platforms: list[str], requested: str) -> str | None:
+    """把请求里的机种键对回库里的写法：先精确，再大小写不敏感（`raw:` 那些是归一后的原文）。"""
+    if requested in platforms:
         return requested
     folded = requested.casefold()
-    for name in consoles:
-        if name.casefold() == folded:
-            return name
+    for platform in platforms:
+        if platform.casefold() == folded:
+            return platform
     return None
+
+
+def _to_console(platform: str, raw_console: str) -> RankingConsole:
+    """库里的一行机种 → 展示用的机种项。认得出机种就用统一显示名，认不出用 CSV 原文。"""
+    return RankingConsole(
+        platform=platform,
+        label=platform_label(platform, raw_console),
+        playable=platform in PLATFORM_BY_ID and bool(PLATFORM_BY_ID[platform].extensions),
+    )
 
 
 def _to_item(row: tuple) -> RankingItem:

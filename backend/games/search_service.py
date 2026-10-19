@@ -64,14 +64,15 @@ _LIST_COUNT_SQL = "SELECT count(*) FROM game g{where}"
 @dataclass(frozen=True)
 class ConsoleItem:
     id: int
-    name: str
+    name: str  # 统一显示名（认不出机种时是源 CSV 的原文）
+    platform_id: str | None  # 统一机种（EmulatorJS system key）；未收录机种为 None
 
 
 @dataclass(frozen=True)
 class SearchItem:
     id: int
     console_id: int
-    console: str
+    console: str  # 统一显示名，同 ConsoleItem.name
     zh: str
     en: str
 
@@ -94,16 +95,18 @@ class GameSearchService:
         return self._db_path.is_file()
 
     def list_consoles(self) -> list[ConsoleItem]:
-        """机种清单。按 id 排（= 源文件的读取顺序，同一厂商的机种相邻）。"""
+        """机种清单。按 id 排——建库时就是按词表顺序（厂商分组）分配的，所以这里不用再排。"""
         if not self.is_indexed():
             return []
         with self._connect() as conn:
             _check_schema(conn)
             try:
-                rows = conn.execute("SELECT id, name FROM console ORDER BY id").fetchall()
+                rows = conn.execute(
+                    "SELECT id, name, platform_id FROM console ORDER BY id"
+                ).fetchall()
             except sqlite3.Error as exc:
                 raise _broken(exc) from exc
-        return [ConsoleItem(id=row[0], name=row[1]) for row in rows]
+        return [ConsoleItem(id=row[0], name=row[1], platform_id=row[2]) for row in rows]
 
     def search(
         self,

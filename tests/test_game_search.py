@@ -43,8 +43,10 @@ _DUP_ACROSS_FILES = ("世嘉MD", "索尼克", "Sonic the Hedgehog (USA)")
 
 # 落库行数：_ROWS 12 行里有 1 行完全重复 → 11，再加跨文件重复但只该留一条的索尼克 → 12
 _EXPECTED_ROWS = 12
-# 机种按 id 排 = 源文件的读取顺序（文件名排序），不是 CSV 里出现的顺序
-_EXPECTED_CONSOLES = ["世嘉MD", "任天堂FC", "任天堂SFC", "索尼PS2"]
+# 机种按 id 排 = 词表顺序（厂商分组），认不出机种的（索尼PS2）排在最后用原文
+_EXPECTED_CONSOLES = ["任天堂 FC", "任天堂 SFC", "世嘉 MD", "索尼PS2"]
+# 上面每一项对应的机种键（未收录机种为 None）
+_EXPECTED_PLATFORMS = ["nes", "snes", "segaMD", None]
 
 
 def _write_csv(path, rows):
@@ -150,7 +152,7 @@ def test_build_index_stats_and_schema(csv_dir, index_path):
 
     with sqlite3.connect(index_path) as conn:
         meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
-        assert meta["schema_version"] == "1"
+        assert meta["schema_version"] == "2"
         assert meta["rows"] == str(stats.rows)
         assert meta["consoles"] == str(len(_EXPECTED_CONSOLES))
         assert meta["built_at"]
@@ -236,6 +238,35 @@ def test_ensure_game_index_skips_when_present(csv_dir, tmp_path):
 
     assert ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None) is None
     assert _digest(index_path) == before
+
+
+def test_ensure_game_index_rebuilds_on_stale_version(csv_dir, tmp_path):
+    """老库（版本号对不上）会被接口一律判 503，所以启动时直接整库重建，升级不用人工跑 make index。"""
+    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
+    index_path = tmp_path / "storage" / "db" / "game.db"
+    with sqlite3.connect(index_path) as conn:
+        conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
+        conn.commit()
+
+    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
+
+    assert stats is not None
+    with sqlite3.connect(index_path) as conn:
+        assert conn.execute(
+            "SELECT value FROM meta WHERE key = 'schema_version'"
+        ).fetchone()[0] == "2"
+
+
+def test_ensure_game_index_keeps_old_index_when_rebuild_fails(csv_dir, tmp_path):
+    """重建失败（源 CSV 没了）时不能把好端端的旧库删掉，也不能拦住启动。"""
+    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
+    index_path = tmp_path / "storage" / "db" / "game.db"
+    with sqlite3.connect(index_path) as conn:
+        conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
+        conn.commit()
+
+    assert ensure_game_index(_settings(tmp_path), csv_dir=tmp_path / "nope") is None
+    assert index_path.is_file()
 
 
 def test_ensure_game_index_skips_when_testing(tmp_path):
@@ -362,12 +393,14 @@ def test_console_filter(built, logged_in):
     consoles = logged_in.get(CONSOLES_URL).json()["data"]
     assert consoles["indexed"] is True
     assert [c["name"] for c in consoles["consoles"]] == _EXPECTED_CONSOLES
+    # 认得出机种的带 EmulatorJS system key，认不出的（索尼PS2）为 null
+    assert [c["platform_id"] for c in consoles["consoles"]] == _EXPECTED_PLATFORMS
 
-    fc_id = next(c["id"] for c in consoles["consoles"] if c["name"] == "任天堂FC")
+    fc_id = next(c["id"] for c in consoles["consoles"] if c["name"] == "任天堂 FC")
     all_rows = _search(logged_in, page_size=100)
     fc_rows = _search(logged_in, console_id=fc_id, page_size=100)
     assert 0 < fc_rows["total"] < all_rows["total"]
-    assert all(item["console"] == "任天堂FC" for item in fc_rows["items"])
+    assert all(item["console"] == "任天堂 FC" for item in fc_rows["items"])
 
     # 关键词 + 机种过滤可以叠加
     assert _search(logged_in, q="mario", console_id=fc_id)["total"] > 0

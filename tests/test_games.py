@@ -2124,7 +2124,9 @@ def test_create_game_from_body_url_type_mismatch_rejected(logged_in_games, remot
         logged_in_games, "选错类型", "https://cdn.test/demo.zip", "gba"
     )
     assert response.status_code == 400
-    assert "h5" in response.json()["message"] and "gba" in response.json()["message"]
+    # 报错文案用统一显示名（HTML5 / 任天堂 GBA），不甩 nes / segaMD 这种内部键值
+    message = response.json()["message"]
+    assert "HTML5" in message and "任天堂 GBA" in message
     assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
 
 

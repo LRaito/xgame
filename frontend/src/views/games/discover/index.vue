@@ -1,7 +1,13 @@
 <template>
     <div class="game-discover">
-        <!-- 单选栏：页面上不再有「游戏检索」标题，标签本身就是页头 -->
-        <el-segmented v-model="activeTab" :options="TABS" class="game-discover__tabs" />
+        <!-- 单选栏：页面上不再有「游戏检索」标题，这两个按钮本身就是页头。
+             刻意不用 el-segmented —— 它那块跟着选项滑动的底片就是一种「切换效果」，
+             这里要的是一对更正式、更沉稳的大按钮。 -->
+        <el-radio-group v-model="activeTab" class="game-discover__tabs" size="large">
+            <el-radio-button v-for="tab in TABS" :key="tab.value" :value="tab.value">
+                {{ tab.label }}
+            </el-radio-button>
+        </el-radio-group>
 
         <!-- 游戏检索 -->
         <section v-show="activeTab === 'search'" class="game-discover__panel">
@@ -9,11 +15,11 @@
                 <el-select
                     v-model="searchConsole"
                     class="game-discover__console"
-                    placeholder="机种"
+                    placeholder="游戏类型"
                     clearable
                     @change="searchNow"
                 >
-                    <el-option label="全部机种" value="" />
+                    <el-option label="全部游戏类型" value="" />
                     <el-option
                         v-for="item in searchConsoles"
                         :key="item.id"
@@ -36,7 +42,7 @@
                 <table v-if="searchItems.length" class="game-discover__table">
                     <thead>
                         <tr>
-                            <th class="game-discover__col-console">机种</th>
+                            <th class="game-discover__col-console">游戏类型</th>
                             <th class="game-discover__col-zh">中文名</th>
                             <th>英文名</th>
                         </tr>
@@ -86,18 +92,17 @@
                 <el-select
                     v-model="rankingConsole"
                     class="game-discover__console"
-                    placeholder="机种"
+                    placeholder="游戏类型"
                     :disabled="!rankingConsoles.length"
                     @change="loadRanking"
                 >
                     <el-option
-                        v-for="name in rankingConsoles"
-                        :key="name"
-                        :label="name"
-                        :value="name"
+                        v-for="item in rankingConsoles"
+                        :key="item.platform"
+                        :label="item.label"
+                        :value="item.platform"
                     />
                 </el-select>
-                <span class="game-discover__hint">单击卡带ID可复制</span>
             </div>
 
             <div v-loading="rankingLoading" class="game-discover__body">
@@ -110,7 +115,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="(item, index) in rankingItems" :key="`${item.rank}-${index}`">
+                        <tr v-for="item in rankingPagedItems" :key="item.rank">
                             <td class="game-discover__rank">{{ item.rank }}</td>
                             <td>{{ item.title }}</td>
                             <td>
@@ -133,6 +138,16 @@
                     </tbody>
                 </table>
                 <app-empty v-else :description="rankingEmptyDescription" />
+
+                <!-- 与检索区同款的分页条：榜单也是一页 10 条。**分页在前端做**——一份榜单
+                     （一个机种）一次全取回来，翻页只是换页码、不再打接口。
+                     键盘翻页同样只在榜单标签亮着时开着（同页两个分页条，监听都挂在 window 上） -->
+                <app-pagination
+                    v-model:page="rankingPage"
+                    :total="rankingTotal"
+                    :page-size="RANKING_PAGE_SIZE"
+                    :keyboard="activeTab === 'ranking'"
+                />
             </div>
         </section>
     </div>
@@ -155,6 +170,8 @@ const TABS = [
     { label: "游戏榜单", value: "ranking" },
 ];
 const PAGE_SIZE = 10;
+// 榜单每页条数，与检索区一致
+const RANKING_PAGE_SIZE = 10;
 // 防抖时长：与游戏管理页的关键词筛选一致
 const KEYWORD_DEBOUNCE = 300;
 
@@ -298,7 +315,17 @@ function onKeywordInput() {
 
 const rankingConsoles = ref([]);
 const rankingConsole = ref("");
+// 当前机种的**整份**榜单（一个机种一次全取回来，前端分页的数据源）
 const rankingItems = ref([]);
+const rankingPage = ref(1);
+// 当前这一页真正渲染的行
+const rankingPagedItems = computed(() =>
+    rankingItems.value.slice(
+        (rankingPage.value - 1) * RANKING_PAGE_SIZE,
+        rankingPage.value * RANKING_PAGE_SIZE
+    )
+);
+const rankingTotal = computed(() => rankingItems.value.length);
 const rankingLoading = ref(false);
 const rankingIndexed = ref(true);
 const rankingAvailable = ref(true);
@@ -321,7 +348,7 @@ const rankingEmptyDescription = computed(() => {
     if (!rankingConsoles.value.length) {
         return "榜单暂无数据。";
     }
-    return "该机种暂无榜单数据。";
+    return "该游戏类型暂无榜单数据。";
 });
 
 async function loadRankingConsoles() {
@@ -335,7 +362,8 @@ async function loadRankingConsoles() {
         rankingIndexed.value = data.indexed;
         rankingAvailable.value = data.has_ranking;
         rankingConsoles.value = data.consoles || [];
-        rankingConsole.value = data.default_console || rankingConsoles.value[0] || "";
+        rankingConsole.value =
+            data.default_console || rankingConsoles.value[0]?.platform || "";
         rankingError.value = false;
     } catch {
         rankingConsoles.value = [];
@@ -356,6 +384,8 @@ async function loadRanking() {
     }
     const seq = ++rankingSeq;
     rankingLoading.value = true;
+    // 换了一个机种就回到第 1 页（换了份数据，旧页码未必还存在）
+    rankingPage.value = 1;
     try {
         const data = await getGameRankingAPI({ console: rankingConsole.value });
         if (seq !== rankingSeq) {
@@ -410,8 +440,33 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+/* 页头的两个大单选（游戏检索 / 游戏榜单）。比 Element Plus 的默认尺寸再放大一档：
+   高 46px、字 15px、左右各 48px 内边距，选中态用实心主色，未选中是白底描边——一眼看清
+   现在在哪一块，也没有任何滑动动画。 */
 .game-discover__tabs {
     margin-bottom: 20px;
+}
+
+.game-discover__tabs :deep(.el-radio-button__inner) {
+    padding: 13px 48px;
+    border-color: var(--border);
+    color: var(--text-muted);
+    font-size: 15px;
+    font-weight: 500;
+    letter-spacing: 1px;
+    box-shadow: none;
+    transition: none;
+}
+
+.game-discover__tabs :deep(.el-radio-button__inner:hover) {
+    color: var(--brand-accent);
+}
+
+.game-discover__tabs :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
+    background: var(--brand-accent);
+    border-color: var(--brand-accent);
+    color: #fff;
+    box-shadow: none;
 }
 
 .game-discover__toolbar {
@@ -425,11 +480,6 @@ onMounted(async () => {
 .game-discover__keyword,
 .game-discover__console {
     width: 240px;
-}
-
-.game-discover__hint {
-    color: var(--text-muted);
-    font-size: 13px;
 }
 
 .game-discover__body {
@@ -447,11 +497,15 @@ onMounted(async () => {
     overflow: hidden;
 }
 
+/* **行高 44px（行盒 20px + 上下各 12px 内边距），榜单那张表按这个数对齐**。
+   line-height 显式写死，两张表才不会因为字体默认值不同而差几个像素；
+   榜单那边唯一的变量是卡带 ID 药丸，它的高度压在 20px 以内（见 .game-discover__id） */
 .game-discover__table th,
 .game-discover__table td {
     padding: 12px 16px;
-    text-align: left;
     font-size: 14px;
+    line-height: 20px;
+    text-align: left;
     border-bottom: 1px solid var(--border);
     word-break: break-word;
 }
@@ -467,7 +521,7 @@ onMounted(async () => {
     border-bottom: none;
 }
 
-/* 够放下最长的机种名「任天堂SFC - Sufami Turbo」（约 178px 文字 + 左右各 16px 内边距） */
+/* 够放下最长的游戏类型名「任天堂 Virtual Boy」（约 140px 文字 + 左右各 16px 内边距） */
 .game-discover__col-console {
     width: 220px;
 }
@@ -511,15 +565,17 @@ onMounted(async () => {
     gap: 8px;
 }
 
+/* 药丸整体高 20px（行盒 14 + 上下各 2 + 上下边框各 1）——**榜单的行高是由它决定的**，
+   撑高了整行就比检索区那张表高（检索区的格子只有文字，行盒就是 20px） */
 .game-discover__id {
-    padding: 3px 10px;
+    padding: 2px 8px;
     border: 1px solid var(--border);
     border-radius: 999px;
     background: var(--surface);
     color: inherit;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 13px;
-    line-height: 1.4;
+    font-size: 12px;
+    line-height: 14px;
     cursor: pointer;
     transition: border-color 0.15s ease, color 0.15s ease;
 }

@@ -8,7 +8,7 @@
                 class="game-manage__filter-type"
                 @change="applyFilter"
             >
-                <el-option label="全部类型" value="" />
+                <el-option label="全部游戏类型" value="" />
                 <el-option
                     v-for="type in gameTypes"
                     :key="type"
@@ -1174,7 +1174,7 @@ onBeforeUnmount(() => {
 }
 
 .game-manage__filter-type {
-    /* 足够放下最长的类型名（如 “Sega_Master_System”），避免选中值被截断 */
+    /* 足够放下最长的类型名（如 “任天堂 GB/GBC”），避免选中值被截断 */
     width: 240px;
 }
 
@@ -1277,7 +1277,7 @@ onBeforeUnmount(() => {
     padding: 12px 14px;
 }
 
-/* 除名称列外都只占一行，超长（如 Sega_Master_System）就地省略 */
+/* 除名称列外都只占一行，超长（如 任天堂 GB/GBC）就地省略 */
 .game-manage__nowrap {
     overflow: hidden;
     white-space: nowrap;

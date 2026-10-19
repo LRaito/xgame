@@ -235,7 +235,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | 项 | 值 |
 |----|----|
 | 路径 | `<数据根>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`；容器里就是 `/data/db/game.db`） |
-| 写入方 | 只有 `backend/games/search_index.py` 这一个模块，两条写路径：① `build_index()` 整库重建——**服务启动自动补建**（`create_app()` → `ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning）与 **`make index`**（`Makefile` → `python -m backend.cli index`，手动重建/更新；`--skip-ranking` 只重建检索）；② `ensure_ranking_loaded()` 启动时把榜单 CSV 就地补进已存在的库（指纹一致时连读写连接都不打开）。容器里也能建（CSV 随 `backend/` 进镜像） |
+| 写入方 | 只有 `backend/games/search_index.py` 这一个模块，两条写路径：① `build_index()` 整库重建——**服务启动自动补建**（`create_app()` → `ensure_game_index()`，文件不存在、或库里的 `schema_version` 与代码不符时建，`TESTING` 跳过、失败只记 warning）与 **`make index`**（`Makefile` → `python -m backend.cli index`，手动重建/更新；`--skip-ranking` 只重建检索）；② `ensure_ranking_loaded()` 启动时把榜单 CSV 就地补进已存在的库（指纹一致时连读写连接都不打开）。容器里也能建（CSV 随 `backend/` 进镜像） |
 | 读取方 | `backend/games/search_service.py::GameSearchService` 与 `backend/games/ranking_service.py::GameRankingService`，一律 `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接——**运行期只读，绝不写它** |
 | 是否备份 | **不进备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）。它可从 `backend/search/` 下的 CSV 完整重建 |
 | 源数据 | 检索：`backend/search/csv/` 下 37 个 CSV（3 列无表头、UTF-8 带 BOM、CRLF）；榜单：`backend/search/ranking/ranking.csv`（4 列、表头可选）。都随 `backend/` 一起进 api 镜像 |
@@ -245,15 +245,21 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 | 表 | 用途 |
 |----|------|
-| `console` | 检索的机种（`id` / `name` UNIQUE）。单独一张表是为了不给每行重复存机种名 |
+| `console` | 检索的**统一机种**（`id` / `name` UNIQUE / `platform_id` / `raw_names`）。一行 = 一个机种（不是 CSV 里的一个原始机种名）：`name` 是词表里的统一显示名（如「任天堂 GB/GBC」）、`platform_id` 是 EmulatorJS 的 system key（如 `gb`，未收录机种为 NULL）、`raw_names` 是 JSON 数组文本、记下被合并进来的原始写法（如 `["任天堂GB", "任天堂GBC"]`，溯源用）。单独一张表是为了不给每行重复存机种名 |
 | `game` | 名录一行（`id` / `console_id` / `zh` / `en` / `src`）。`src` 是来源 CSV 文件名，仅作溯源 |
 | `game_fts` | FTS5 全文索引（`zh_uni` / `en_uni`），**contentless**（`content=''`，不重复存正文），`tokenize='unicode61 remove_diacritics 2'`；`rowid` 与 `game.id` 一一对应 |
-| `ranking` | 榜单一行（`console` / `rank` / `title` / `cartridge_ids`）。`PRIMARY KEY (console, rank) WITHOUT ROWID`；`cartridge_ids` 是 JSON 数组文本（0~2 个卡带 ID，查不到编号时是空数组 `[]`）。机种存名称而不是外键——榜单的机种未必出现在检索名录里 |
+| `ranking` | 榜单一行（`platform` / `console` / `rank` / `title` / `cartridge_ids`）。`PRIMARY KEY (platform, rank) WITHOUT ROWID`；`platform` 是归一后的机种键（认不出机种时是 `raw:{归一后的原文}`），`console` 是 CSV 原文（溯源与展示兜底）；`cartridge_ids` 是 JSON 数组文本（0~2 个卡带 ID，查不到编号时是空数组 `[]`）。机种存文本而不是外键——榜单的机种未必出现在检索名录里 |
 | `meta` | 键值元信息。检索：`schema_version`（与 `search_index.SCHEMA_VERSION` 比对，不符时接口 503）/ `built_at` / `rows` / `consoles`。榜单：`ranking_schema_version`（与 `RANKING_SCHEMA_VERSION` 比对，存在但不符时榜单接口 503）/ `ranking_fingerprint`（源 CSV 原始字节的 SHA-256，只有成功加载后才写）/ `ranking_source` / `ranking_rows` / `ranking_consoles` / `ranking_loaded_at` |
 | `idx_game_console` | `game(console_id, en)` 上的普通索引：无关键词时按机种分页排序走它，搜索不走它 |
+| `idx_console_platform` | `console(platform_id)` 上的普通索引 |
 
 ### 约定
 
+- **机种经 `backend/games/platforms.py` 的词表归一**：两份 CSV 的「机种」都是自由文本
+  （检索写 `任天堂GB`、榜单写 `GB/GBC`），建库时一律解析成统一机种，id 就是 EmulatorJS 的
+  system key。`console.id` 按**词表顺序**分配（厂商分组），未收录机种按首次出现顺序排在最后。
+  同一个机种的多个原始名在检索侧**合并成一行 console**（36 个原始机种 → 32 项：23 个统一机种
+  + 9 个未收录）。**加机种名只改词表的 `aliases`，不用动这里。**
 - `game_fts` 里的两列是**处理过**的文本（NFKC → 剥结尾的地区/语言/版本标签 → 汉字逐字拆成 token，
   见 `backend/games/search_text.py::index_text()`）；`game.zh` / `game.en` 存的是**原文**，
   接口返回的也是原文。索引期与查询期共用同一份实现。
