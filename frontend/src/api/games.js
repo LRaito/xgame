@@ -350,3 +350,25 @@ export function searchGamesAPI(params) {
 export function listSearchConsolesAPI() {
     return request({ url: "/api/games/search/consoles", method: "get" });
 }
+
+/**
+ * 游戏榜单的机种下拉候选项（只列榜单里出现过的机种）与默认机种。
+ * 数据与检索同一个只读库，见后端 ranking_router.py。
+ */
+export function listRankingConsolesAPI() {
+    return request({
+        url: "/api/games/search/ranking/consoles",
+        method: "get",
+        notShowError: true,
+    });
+}
+
+/** 游戏榜单：取某个机种的整份榜单（不分页）。失败由页面内联提示，不弹全局 Message。 */
+export function getGameRankingAPI(params) {
+    return request({
+        url: "/api/games/search/ranking",
+        method: "get",
+        params,
+        notShowError: true,
+    });
+}

@@ -174,7 +174,7 @@ def test_tools_requires_login(client, user, do_login):
     response = client.get("/api/tools")
     assert response.status_code == 200
     tools = response.json()["data"]
-    assert [item["id"] for item in tools] == ["games", "games-manage", "games-search"]
+    assert [item["id"] for item in tools] == ["games", "games-manage", "games-discover"]
 
 
 def test_games_status(logged_in):
@@ -505,13 +505,14 @@ def test_manage_filter_combines_with_pagination(logged_in_games):
         "/api/games/manage", params={"game_type": "flash", "page": 2, "page_size": 2}
     ).json()["data"]
     assert (typed["total"], typed["page"], typed["page_size"]) == (5, 2, 2)
-    assert [item["name"] for item in typed["items"]] == ["n3", "n4"]
+    # 管理页按更新时间倒序（后建的排最前），所以第 2 页是 n3、n2
+    assert [item["name"] for item in typed["items"]] == ["n3", "n2"]
 
     searched = logged_in_games.get(
         "/api/games/manage", params={"q": "n", "page_size": 3}
     ).json()["data"]
     assert searched["total"] == 5
-    assert [item["name"] for item in searched["items"]] == ["n1", "n2", "n3"]
+    assert [item["name"] for item in searched["items"]] == ["n5", "n4", "n3"]
 
 
 @pytest.mark.parametrize(

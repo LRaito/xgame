@@ -54,6 +54,11 @@ GAME_INDEX_FILENAME = "game.db"
 # 它随 backend/ 一起进 api 镜像，所以容器里也能在启动时自动补建。
 SEARCH_CSV_DIR = BASE_DIR / "backend" / "search" / "csv"
 
+# 游戏榜单的 CSV（`序号,机种名称,游戏名称,游戏卡带ID` 四列）。它和上面的名录都进同一个
+# `<数据根>/db/game.db`，但**单独一个目录**：上面那个目录会被 build_index 整目录扫成检索索引，
+# 四列的榜单混进去会被当成坏行。这份数据同样随 backend/ 进 api 镜像。
+RANKING_CSV_PATH = BASE_DIR / "backend" / "search" / "ranking" / "ranking.csv"
+
 
 def default_storage_root() -> str:
     """本机开发默认落在仓库下的 data/storage；容器里由 Dockerfile 覆盖成 /data。"""

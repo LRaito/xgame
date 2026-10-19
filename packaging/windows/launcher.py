@@ -153,7 +153,7 @@ def check_runtime() -> None:
             connection.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")
         connection.close()
     except sqlite3.Error:
-        say("提示：本机 Python 的 SQLite 没有 FTS5，「游戏检索」页会一直显示尚未构建索引。")
+        say("提示：本机 Python 的 SQLite 没有 FTS5，「游戏发现」的检索会一直显示尚未构建索引。")
 
 
 def check_data_dir(data_dir: Path) -> None:

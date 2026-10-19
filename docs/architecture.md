@@ -137,7 +137,7 @@ backend/
 ```
 管理列表（登录）：GET /api/games/manage?page=1&page_size=5[&game_type=][&q=]
   服务端分页，返回 {total, page, page_size, items}；排序固定为更新时间倒序 → id（最近改动的排最前）
-  管理页每页 5 行，翻页条与游戏检索共用 components/common/AppPagination.vue（两页都支持左右方向键翻页）
+  管理页每页 5 行，翻页条与游戏发现共用 components/common/AppPagination.vue（两页都支持左右方向键翻页）
 
 管理（登录）：POST /api/games/manage（multipart：name/cartridge_id/description/file[+cover]）
   一步建条目并写本体；**卡带ID 必填、创建后不可改**（只能删掉重建），它全局唯一且是磁盘目录名
@@ -389,12 +389,12 @@ backend/
 **代价：** 同一游戏的截图可能分散在 `image/{用户名}/旧类型/` 与 `image/{用户名}/新类型/` 两个目录里（删游戏时按 `file_path` 反推，两处都会清掉）。详情图片栏里封面恒占第一格，没有封面时第一格留空占位，截图从第二格起排。
 **何时重评：** 若以后要让截图对所有人可见（例如做成公开画廊），需要给表加可见性字段并放宽 `_get_owned` 的过滤。
 
-### 决策 13：游戏检索是独立只读派生库，整库重建 + 原子替换
+### 决策 13：游戏发现是独立只读派生库，整库重建 + 原子替换
 
-**决定：** 「游戏检索」查的是一份**与平台游戏库无关**的外部中英文名录（`backend/search/csv/` 下 37 个 CSV、5 万余行），因此它用**自己一个 SQLite 文件** `<数据根>/db/game.db`，与 `app.db` 无外键关系。这个库**只有一个写入方** `backend/games/search_index.py::build_index()`，两个触发口：`make index`（手动重建/更新）与**服务启动时的自动补建**（`ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning 不拦启动）。构建一律**整库重建**：写同目录临时文件、`os.replace` 原子替换；不开 WAL（否则会留 `-wal`/`-shm`，而替换只换主库）。运行期的所有读都经 `GameSearchService`，用 `mode=ro` + `PRAGMA query_only=1` 打开，每请求一条短连接。它**不参与备份**。分词用 FTS5 `unicode61` + 汉字逐字拆 token，且**索引期与查询期共用 `search_text.py` 的同一份归一化实现**；中英文名结尾的地区/语言/版本标签不进索引，落库与展示仍是原文。
-**原因：** 名录是「外部参考数据」而不是平台业务数据——它可以从 CSV 一键重建、随时重跑，所以既不需要增量更新，也不需要备份，更不该跟业务表混在一个库里（混了就得为它写迁移、写清理、写备份排除）。整库重建把「更新」这件事变成「重新生成一个文件」，没有半更新状态可言；`os.replace` 的 POSIX 语义让正在读旧库的请求继续读旧 inode、新请求自动拿到新库，所以**重建索引不需要重启 api**。只读连接让「运行期绝不写这个库」成为结构上的事实，而不是纪律。启动时自检补建与 `backup_database()` 是同一个套路（启动时做一次、失败只记 warning、绝不拦启动），换来「装好就能用检索」——不用先读文档才知道要跑一条命令。汉字逐字拆 token 是因为裸 `unicode61` 会把整串中文当**一个** token（搜任何子串都 0 命中），而 `trigram` 少于 3 个字全废；一份实现两处调用是因为索引期与查询期只要有任意一处漏了归一化，中文就静默搜不到。
-**代价：** 服务进程持有的那个数据根必须有**写权限**，自动补建才可能成功——数据根被 Docker 以 root 建过时，宿主机上直跑会因权限失败（只记一条 warning，检索页提示尚未构建；容器里是 root，不受影响）。另外这 4MB 名录 CSV 随 `backend/` 进了 api 镜像，换名录数据要重建镜像（换来的是容器首次启动也能自建，不必先跑命令）。英文按整词索引，缩写（`ff vii`）搜不到，不做拼音与错别字容错。
-**何时重评：** 若名录将来变成平台业务数据（可在界面上增删改），它就该并回 `app.db` 并走正常的写入路径；若单次查询的耗时随数据量增长到需要缓存，再考虑加内存索引而不是改库。
+**决定：** 「游戏发现」查的是**与平台游戏库无关**的外部数据（`backend/search/csv/` 下 37 个 CSV、5 万余行的中英文名录，以及 `backend/search/ranking/ranking.csv` 的四列游戏榜单），因此它用**自己一个 SQLite 文件** `<数据根>/db/game.db`，与 `app.db` 无外键关系。这个库**只有一个写入模块** `backend/games/search_index.py`，两条写路径：`build_index()` 整库重建（`make index` 与**服务启动时的自动补建** `ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning 不拦启动），以及 `ensure_ranking_loaded()` 在启动时把榜单 CSV 就地补进一个已经存在的库（源文件 SHA-256 没变就一个字节都不写）。构建一律**整库重建**：写同目录临时文件、`os.replace` 原子替换；不开 WAL（否则会留 `-wal`/`-shm`，而替换只换主库）。运行期的所有读都经 `GameSearchService` 与 `GameRankingService`，用 `mode=ro` + `PRAGMA query_only=1` 打开，每请求一条短连接。它**不参与备份**。分词用 FTS5 `unicode61` + 汉字逐字拆 token，且**索引期与查询期共用 `search_text.py` 的同一份归一化实现**；中英文名结尾的地区/语言/版本标签不进索引，落库与展示仍是原文。
+**原因：** 名录与榜单都是「外部参考数据」而不是平台业务数据——它们可以从 CSV 一键重建、随时重跑，所以既不需要增量更新，也不需要备份，更不该跟业务表混在一个库里（混了就得为它写迁移、写清理、写备份排除）。整库重建把「更新」这件事变成「重新生成一个文件」，没有半更新状态可言；`os.replace` 的 POSIX 语义让正在读旧库的请求继续读旧 inode、新请求自动拿到新库，所以**重建索引不需要重启 api**。只读连接让「运行期绝不写这个库」成为结构上的事实，而不是纪律。启动时自检补建与 `backup_database()` 是同一个套路（启动时做一次、失败只记 warning、绝不拦启动），换来「装好就能用」——不用先读文档才知道要跑一条命令。汉字逐字拆 token 是因为裸 `unicode61` 会把整串中文当**一个** token（搜任何子串都 0 命中），而 `trigram` 少于 3 个字全废；一份实现两处调用是因为索引期与查询期只要有任意一处漏了归一化，中文就静默搜不到。榜单**单独一套版本号**（`meta.ranking_schema_version`，与检索的 `meta.schema_version` 无关）：往老库里加榜单表是纯新增，不该让已经能用的检索库被判成「版本过旧」；榜单补载失败也不能把检索一起变成 503。榜单的就地补载用 SHA-256 指纹判断「库里装的是不是这份 CSV」，而不是 size+mtime——`touch`/`git checkout`/解压会改 mtime 但内容没变，`cp -p`/解压又会保留 mtime，两种都会误判。
+**代价：** 服务进程持有的那个数据根必须有**写权限**，自动补建与榜单补载才可能成功——数据根被 Docker 以 root 建过时，宿主机上直跑会因权限失败（只记一条 warning，页面提示尚未构建/尚未加载；容器里是 root，不受影响）。另外这 4MB 名录 CSV 与榜单 CSV 随 `backend/` 进了 api 镜像，换数据要重建镜像（换来的是容器首次启动也能自建，不必先跑命令）。英文按整词索引，缩写（`ff vii`）搜不到，不做拼音与错别字容错；榜单不分页，假设单机种条目量有限。
+**何时重评：** 若名录或榜单将来变成平台业务数据（可在界面上增删改），它们就该并回 `app.db` 并走正常的写入路径；若单次查询的耗时随数据量增长到需要缓存，再考虑加内存索引而不是改库。
 
 ## 模块依赖
 
@@ -420,7 +420,7 @@ frontend views / api/*
 
 所有 SQLModel 表与文件路径规则见 **[`data_dict.md`](data_dict.md)**（auth 2 表、games 9 表，共 11 张 + 7 类文件路径规则）。模型定义在 `backend/games/models.py` / `backend/auth/models.py`，路径规则定义在 `backend/games/paths.py`；改结构时同步更新 data_dict.md。
 
-另有一个**独立的只读库** `<数据根>/db/game.db`（游戏检索索引），它不属于这些 SQLModel 表、与 `app.db` 无外键关系，由服务启动时的自动补建或 `make index` 从 `backend/search/csv/` 的 CSV 名录重建；结构与约定见 data_dict.md 的「游戏检索索引」。
+另有一个**独立的只读库** `<数据根>/db/game.db`（游戏发现的检索索引 + 游戏榜单），它不属于这些 SQLModel 表、与 `app.db` 无外键关系，由服务启动时的自动补建或 `make index` 从 `backend/search/csv/` 的名录与 `backend/search/ranking/ranking.csv` 重建；结构与约定见 data_dict.md 的「游戏发现索引」。
 
 ## HTTP 表面
 
@@ -438,7 +438,8 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 | `/api/games/screenshots` | 游戏截图：列表 / 上传 / 取图 / 改描述 / 拖动排序 / 删除（按账号隔离，全部需登录） |
 | `/api/games/gallery` | 游戏图集：同一套接口，但**按游戏共享**（不记上传者，任何登录用户都能改） |
 | `/api/games/emulator-settings` | 登录用户的模拟器设置（键位等）按平台读写，存 SQLite |
-| `/api/games/search` | 游戏检索：外部中英文名录的只读全文检索（服务端分页 + 机种过滤）；`/consoles` 给机种下拉。索引是独立只读库，启动时不存在会自动补建，也可用 `make index` 重建 |
+| `/api/games/search` | 游戏发现（检索）：外部中英文名录的只读全文检索（服务端分页 + 机种过滤）；`/consoles` 给机种下拉。索引是独立只读库，启动时不存在会自动补建，也可用 `make index` 重建 |
+| `/api/games/search/ranking` | 游戏发现（榜单）：按机种的整份榜单（不分页），`/ranking/consoles` 给机种下拉与默认机种。榜单 CSV 由 `make index` 或启动时就地补进同一个 `game.db` |
 
 **免登录：** 只有 `/health`、`/api/csrf`、`/api/register`、`/api/login`，以及 H5 解包资源 `GET|HEAD /api/games/{id}/h5/{资源路径}`（沙箱不透明源带不上 cookie，见决策 8）。`/play` 的 content-type 按本体扩展名：`.swf` 保持 Flash 专用值，主机 ROM 与 h5 ZIP 统一 `octet-stream`。其余端点均需登录，写操作另带 `X-CSRFToken`。
 

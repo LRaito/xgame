@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-前后端分离已落地：Vue 3 SPA + FastAPI JSON API。只做游戏：游戏中心（Flash + HTML5 + 8/16-bit 主机 ROM，浏览器内 Ruffle/EmulatorJS/沙箱 iframe 游玩，Flash 与模拟器都支持按账号云端存档，H5 仅游玩）、游戏管理与游戏检索（外部中英文名录的只读全文检索）。SQLite 与文件存储结构以 `docs/data_dict.md` 为 schema 权威。实现时以本文件「目标约定」为准。
+前后端分离已落地：Vue 3 SPA + FastAPI JSON API。只做游戏：游戏中心（Flash + HTML5 + 8/16-bit 主机 ROM，浏览器内 Ruffle/EmulatorJS/沙箱 iframe 游玩，Flash 与模拟器都支持按账号云端存档，H5 仅游玩）、游戏管理与游戏发现（外部中英文名录的只读全文检索 + 按机种的游戏榜单）。SQLite 与文件存储结构以 `docs/data_dict.md` 为 schema 权威。实现时以本文件「目标约定」为准。
 
 两条交付路线并存：Docker（正式运行，nginx + gunicorn + HTTPS）与「解压即用」的 Windows 包
 （`packaging/windows/`，后端自己托管前端 + 单进程 uvicorn + http，见下面那一节）。
@@ -46,7 +46,7 @@
 **界面：** Vue 3 SPA（`frontend/`），纯前端，不承载服务端能力
 **API：** FastAPI JSON（`backend/`），`create_app()` 工厂
 **运行：** Docker Compose：`web`（nginx 托管 SPA）+ `api`（Gunicorn + uvicorn worker）。浏览器打开 `https://localhost`
-**数据：** SQLite（业务库 `app.db` + 只读的检索索引 `game.db`）+ 文件根目录的路径规则见 `docs/data_dict.md`；库单独放在另一个宿主目录（运行时根，默认 `./data/runtime`）
+**数据：** SQLite（业务库 `app.db` + 只读的发现页索引 `game.db`：检索名录 + 游戏榜单）+ 文件根目录的路径规则见 `docs/data_dict.md`；库单独放在另一个宿主目录（运行时根，默认 `./data/runtime`）
 
 ## 明确不做
 
@@ -101,7 +101,7 @@ frontend/                    # Vue SPA
   src/api/                   # 按业务域；导出 xxxAPI
   src/utils/request.js       # axios 实例 + 拦截器
   src/utils/auth.js          # 非敏感用户信息缓存 + 登出清理清单
-  src/views/                 # login / games（index、manage、search、flash-player、emulator-player、h5-player）
+  src/views/                 # login / games（index、manage、discover、flash-player、emulator-player、h5-player）
   src/components/common/     # 跨工具复用（必须有）：AppDialog、AppButton、分页、筛选、空状态等
   src/components/games/      # 游戏专用：GameShell、GameCover(游戏中心卡片的封面渲染：Flash 光盘/GB-GBC 卡带/普通封面)、
                              #   FlashPlayer、FlashSaveManager、EmuSaveManager、
@@ -126,15 +126,16 @@ backend/backup.py            # SQLite 滚动备份（启动一次 + 每小时一
 backend/mount_guard.py       # 启动前的根目录哨兵检查（数据根与运行时根在 Windows 盘挂载前缀下时才查：缺 .mounted 就打日志、等 5 秒、退出）
 backend/deps.py              # 依赖注入：session、登录态、各 service 依赖
 backend/csrf.py              # CSRF 中间件
-backend/cli.py               # init-db / index（构建游戏检索索引）/ serve（本机直跑生产形态，可选托管前端）
+backend/cli.py               # init-db / index（构建游戏检索索引与游戏榜单；--skip-ranking 只重建检索）/ serve（本机直跑生产形态，可选托管前端）
 backend/static_site.py       # 可选：后端托管前端 dist（只有 Windows 包设 STATIC_DIR 时生效，行为对齐 nginx.conf.template）
 backend/request_limit.py     # 请求体上限中间件（顶替 nginx 的 client_max_body_size）
 backend/entrypoint.sh        # api 容器的 ENTRYPOINT：先过哨兵检查，再 exec CMD 里的 gunicorn
 backend/Dockerfile           # api 镜像（ENV STORAGE_ROOT=/data + ENV RUNTIME_ROOT=/runtime + ENTRYPOINT entrypoint.sh + gunicorn）
 backend/auth/                # 注册/登录/退出（密码 + 失败锁定）
 backend/tools/registry.py    # 功能列表（给 /api/tools）
-backend/games/               # 游戏 router/service/paths + 云端存档 save_* + 游戏截图 screenshot_* + 游戏图集 gallery_* + 模拟器设置 settings_* + 游玩统计 stats_* + 检索 search_*(text/index/service/router) + 搬运 importer + 网络上传 remote
+backend/games/               # 游戏 router/service/paths + 云端存档 save_* + 游戏截图 screenshot_* + 游戏图集 gallery_* + 模拟器设置 settings_* + 游玩统计 stats_* + 发现页 search_*(text/index/service/router) 与 ranking_*(service/router) + 搬运 importer + 网络上传 remote
 backend/search/csv/          # 游戏检索的 37 个中英文名录 CSV（纯数据目录，只被建索引读；随 backend/ 进 api 镜像）
+backend/search/ranking/      # 游戏榜单的 ranking.csv（四列：序号/机种名称/游戏名称/游戏卡带ID；纯数据目录，只被建索引读）
 backend/storage/             # 跨模块：types(协议与 StoredObject) / local(LocalStorage) / access(流式下载响应)
 packaging/windows/           # 「解压即用」Windows 包：Dockerfile.build（构建环境镜像，预置运行时/轮子/前端依赖/引擎资产）
                              #   + build-in-docker.sh（make win 入口）+ build-win-dist.sh（组装）
@@ -144,7 +145,7 @@ packaging/windows/           # 「解压即用」Windows 包：Dockerfile.build�
                              #   + smoke_win.py（自检）+ make_zip.py（打包，UTF-8 文件名）+ requirements-win.txt
                              #   + 说明.txt + README.md
                              #   + xgame.png（快捷方式图标的源图，随仓库提交；换图标 = 替换它再跑 make_icon.py 生成 xgame.ico）
-tests/                       # pytest（test_auth / test_backup / test_mount_guard / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats / game_search / static_site / request_limit / win_launcher）
+tests/                       # pytest（test_auth / test_backup / test_mount_guard / test_local_storage / games / game_saves / game_screenshots / game_emulator_settings / game_recent / game_stats / game_search / game_ranking / static_site / request_limit / win_launcher）
 docker-compose.yml           # web + api（宿主目录 bind：STORAGE_HOST_DIR → /data、RUNTIME_HOST_DIR → /runtime）
 requirements.txt
 .env.example
@@ -231,15 +232,15 @@ requirements.txt
 - Flash 本地存档：Ruffle 把 SharedObject 写浏览器 localStorage（落盘时机见 Ruffle issue #798），FlashSaveManager 双 tab（本地/云端）封装读写，SW 缓存本体/封面；**`FlashSaveManager.vue` 与 `EmuSaveManager.vue` 这两个存档管理弹框都支持 ESC 关闭**（`window` 冒泡阶段监听，打开时挂、关闭/卸载时摘）：按层级由内到外收——正在编辑云端描述先结束编辑，开着「同步至云端」描述面板先收面板，否则才关弹窗；监听特意挂在 `window` 而不是 `document`，这样 Element Plus 确认框（`ElMessageBox`）自己吃掉 ESC（它会 `stopPropagation`）时不会连带把存档管理弹框也关掉
 - 模拟器本地存档：**每个游戏固定只有一份**（覆盖式，不做多槽位）。引擎浏览器档只维护单份暂存（`EmulatorJS-states`）；x 用 `frontend/src/utils/emulatorSaves.js` 把它另存为唯一本地档（`.state` 内容存 IndexedDB，键 `x_emusave:{gameId}:state1`，避免 localStorage 配额；元数据索引在 localStorage `x_emusave_index_v1`）——捕捉、导入 `.state`、云端还原都是覆盖这一份，`ensureSingleSlotModel()` 在进入播放页/存档面板时一次性清掉旧版多槽位档。播放宿主 `emulator-host.html` 暴露 `window.__ejsRpc`（`capture`/`load`，走引擎 `storage.states` 与 `elements.bottomBar` 存/读档）供捕捉与放回；`EmuSaveManager.vue` 本地 tab 只展示这一份（载入/下载/删除），云端仍与 Flash 共用一套快照模型、保留多份历史，只是每个快照只含 1 个文件，local_key 即 `x_emusave:{gameId}:state1`。存档固定叫 `save.state`（本地展示/下载与云端快照文件名都用它，名称不随时间变化，时间看展示的更新时间）
 
-## 功能：游戏检索（外部中英文名录的只读检索）
+## 功能：游戏发现（游戏检索 + 游戏榜单）
 
-第三个页面（`/games/search`）。数据是**与平台游戏库完全无关**的一份外部名录：`backend/search/csv/` 下 37 个 `机种,中文,英文` 三列 CSV（5 万余行、36 个机种）。**不做**与 `games` 表的比对、标记或跳转。
+第三个页面，侧栏叫「游戏发现」（`/games/discover`，旧路径 `/games/search` 重定向过来，保留 query）。页内是**单选栏**「游戏检索 / 游戏榜单」，标签状态写在 URL 查询参数里（默认检索，`?tab=ranking` 是榜单）。两块数据都来自**与平台游戏库完全无关**的外部名录，都放在同一个派生只读库 `game.db` 里，**页面与接口全只读**：检索查 `backend/search/csv/` 下 37 个 `机种,中文,英文` 三列 CSV（5 万余行、36 个机种），榜单查 `backend/search/ranking/ranking.csv`（四列，见下）。**不做**与 `games` 表的比对、标记或跳转。
 
-- **独立的只读索引库。** 索引是 `<STORAGE_ROOT>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`；在**数据根**里，**不跟库走**，与 `app.db` **无外键关系**）。写入方**只有 `backend/games/search_index.py::build_index()` 一处**，两个触发口：`make index`（手动重建/更新）与**服务启动时的自动补建**（`ensure_game_index()`，只在文件不存在时建）。平台运行期的读一律经 `backend/games/search_service.py` 的 `GameSearchService`，用 `Path.as_uri()` + `?mode=ro` + `PRAGMA query_only=1` 打开，每请求一条短连接、用完即关，**运行期绝不写它**。**它刻意不参与备份**（`backend/backup.py` 只备份 `app.db`）——它是可从 CSV 重建的派生数据。
+- **独立的只读索引库。** 索引是 `<STORAGE_ROOT>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`；在**数据根**里，**不跟库走**，与 `app.db` **无外键关系**）。写入方**只有 `backend/games/search_index.py` 这一个模块**，两条写路径：① `build_index()` 整库重建（`make index` 与**服务启动时的自动补建** `ensure_game_index()`，后者只在文件不存在时建）；② `ensure_ranking_loaded()` 启动时把榜单 CSV 就地补进已存在的库（源文件指纹没变就一个字节都不写）。平台运行期的读一律经 `backend/games/search_service.py` 的 `GameSearchService` 与 `backend/games/ranking_service.py` 的 `GameRankingService`，都用 `Path.as_uri()` + `?mode=ro` + `PRAGMA query_only=1` 打开，每请求一条短连接、用完即关，**运行期绝不写它**。**它刻意不参与备份**（`backend/backup.py` 只备份 `app.db`）——它是可从 CSV 重建的派生数据。
 - **构建是整库重建 + 原子替换。** `make index` → `python -m backend.cli index` → `build_index()`：写到同目录 `game.db.tmp`、`chmod 0644`、`os.replace()` 覆盖旧库（可重复执行，直接覆盖）。**不开 WAL**（WAL 会留 `-wal`/`-shm`，`os.replace` 只换主库，新库配旧 `-wal` 必坏）。所以**重建索引不需要重启 api**：已打开的连接继续读旧 inode，新请求自动拿到新库。
-- **索引不存在时服务自己补一次。** `create_app()` 启动时调 `ensure_game_index()`（紧跟 `backup_database()`，风格与备份一致）：文件不存在就整库建一次，已存在就跳过；**全程 best-effort，失败只记 warning、绝不拦住启动**（建不出来最多是检索页提示「尚未构建索引」）。`TESTING` 下直接跳过——否则每个测试用例都要白建一次 5 万行的索引，也会让「索引缺失」那组用例失去意义。`make index` 仍是手动重建/更新索引的正规入口（换 CSV、改分词规则之后用它覆盖）。
+- **索引不存在时服务自己补一次。** `create_app()` 启动时调 `ensure_game_index()`（紧跟 `backup_database()`，风格与备份一致）：文件不存在就整库建一次（检索 + 榜单同一次构建），已存在就只就地补榜单；**全程 best-effort，失败只记 warning、绝不拦住启动**（建不出来最多是检索页提示「尚未构建索引」、榜单页提示「榜单尚未加载」）。`TESTING` 下直接跳过——否则每个测试用例都要白建一次 5 万行的索引，也会让「索引缺失」那组用例失去意义。`make index` 仍是手动重建/更新索引的正规入口（换 CSV、改分词规则之后用它覆盖；`--skip-ranking` 可只重建检索）。
 - **宿主机与容器都能补建**：CSV 随 `backend/` 一起进 api 镜像（根目录 `.dockerignore` **没有**排除它），所以容器启动时也能自建一次。两边写的是**同一个数据目录**（bind 进去的），所以在哪边建都一样：宿主机 `make index` 建出来的库容器立刻能读到，不用重建镜像、也不用重启 api。
-- **索引缺失/损坏时的表现**：没有文件 → 接口返回 `indexed:false` + 空列表（200，**不是错误**），页面给中文引导；文件在但打不开 / `meta.schema_version` 不匹配 → 503 + 中文提示（`IndexUnavailableError`）。**接口永不建它**——只有 `build_index()` 那两个触发口（启动补建、`make index`）会。
+- **索引缺失/损坏时的表现**：没有文件 → 接口返回 `indexed:false` + 空列表（200，**不是错误**），页面给中文引导；文件在但打不开 / `meta.schema_version` 不匹配 → 503 + 中文提示（`IndexUnavailableError`）。榜单另有一套状态：`ranking` 表与 `meta.ranking_fingerprint` 都在才算 `has_ranking:true`，缺失一律 200 + 空列表（榜单还没加载不是错误），只有 `meta.ranking_schema_version` **存在但不匹配**才 503。**接口永不建它**——只有 `search_index.py` 那两条写路径会。
 - **写权限是唯一的拦路虎**：数据根若是 Docker 以 root 建的（默认的 `./data/storage` 跑过一次 compose 之后就是这样），**宿主用户**写不进去（容器里跑的是 root，不受影响）。此时宿主机直跑服务时的自动补建会失败（只记一条 warning，检索页提示尚未构建），`make index` 也会先 `test -w` 预检并提示 `sudo chown -R "$USER" "$STORAGE_HOST_DIR"`。
 - **分词选型（别「优化」掉）。** FTS5 用 `unicode61 remove_diacritics 2` + **汉字逐字拆开**：裸 `unicode61` 会把整串中文当一个 token（搜任何子串都 0 命中），`trigram` 少于 3 字全废。所以 `backend/games/search_text.py` 的 `index_text()` 把每个汉字变成独立 token，查询时把词包成**短语**（`"马 里 奥"` ⇒ 子串语义），词间用 `AND`（整句拼一个短语会让 `final fantasy vii` 搜不到 `Final Fantasy VII`）。**索引期与查询期只有这一份实现**（`search_index.py` 与 `search_service.py` 都调它），任一处漏调中文就搜不到。顺带做 NFKC（全角字母/数字与半角互搜）。
 - **结尾的地区/语言/版本标签不进索引**：`(Japan)`、`(En,Ja)`、`(Rev A)`、`[a1]`、`（日版）`、`(美版, 欧版)`、`[PS2]` 都在建库时由 `strip_tags()` 剥掉（名录里 76% 的英文名、38% 的中文名带这种后缀，不剥的话搜 `japan` 命中一万多条）。**落库与展示仍是原文**，剥的只有喂 FTS 的两列；整串都是标签的行回退成保留原串。
@@ -260,8 +261,9 @@ requirements.txt
   - **不能**用 `COUNT(*) OVER ()` 一条查询同时拿 total 和 bm25 排序（实测报 `unable to use function bm25 in the requested context`），total 走同条件的第二条 `count(*)`。
   - 机种过滤按有无拼 `AND g.console_id = :cid` 片段，**不写 `:cid IS NULL OR …`**（OR 会让 SQLite 放弃 `idx_game_console`）。
   - 无关键词时不做 MATCH，走 `ORDER BY g.console_id, g.en, g.id` 的全量分页。
-  - contentless FTS 表没有 `snippet()`/`highlight()`（返回 NULL），**高亮在前端做**：`views/games/search/index.vue` 把命中片段切成数组渲染成 `<mark>`，**不用 `v-html`**（文本来自外部 CSV）。
-- **页面与接口。** `views/games/search/index.vue`（关键词 300ms 防抖 + 回车即搜、机种下拉、三列表格、`<el-pagination>` 服务端分页、请求序号丢弃过期响应）；`api/games.js` 的 `searchGamesAPI()` / `listSearchConsolesAPI()`。`GET /api/games/search`（`q`/`console_id`/`page`/`page_size`，越界在 service 收敛，别放 `Query(ge=,le=)`）与 `GET /api/games/search/consoles`，都要登录。路由 `search_router.py` 路径不会被 `games/router.py` 的 `/{game_id}/…` 抢走（那些第二段字面量只有 cover/play/h5/guide，且没有单段 `/{game_id}`）——以后加单段动态路由就会撞车。
+  - contentless FTS 表没有 `snippet()`/`highlight()`（返回 NULL），**高亮在前端做**：`views/games/discover/index.vue` 把命中片段切成数组渲染成 `<mark>`，**不用 `v-html`**（文本来自外部 CSV）。
+- **页面与接口（检索）。** `views/games/discover/index.vue`（一个组件装两个标签：关键词 300ms 防抖 + 回车即搜、机种下拉、三列表格、`<el-pagination>` 服务端分页、请求序号丢弃过期响应；检索区状态在切标签时保留）；`api/games.js` 的 `searchGamesAPI()` / `listSearchConsolesAPI()`。`GET /api/games/search`（`q`/`console_id`/`page`/`page_size`，越界在 service 收敛，别放 `Query(ge=,le=)`）与 `GET /api/games/search/consoles`，都要登录。路由 `search_router.py` 路径不会被 `games/router.py` 的 `/{game_id}/…` 抢走（那些第二段字面量只有 cover/play/h5/guide，且没有单段 `/{game_id}`）——以后加单段动态路由就会撞车。
+- **游戏榜单（榜单 CSV 与 game.db 里的 `ranking` 表）。** 数据源是 `backend/search/ranking/ranking.csv`（**单独目录**：`backend/search/csv/` 会被整目录扫成检索索引，四列的榜单混进去会被当成坏行；文件格式契约见该目录的 README）。四列固定 `序号,机种名称,游戏名称,游戏卡带ID`，表头可有可无（首行第一格是 `序号`/`排名` 就跳过），UTF-8（可带 BOM）、CRLF/LF 均可。**序号**：正整数、同一机种内唯一（重复报错），页面按它升序展示、原样显示不重排；**机种名称**：非空，`GBA`/`gba` 按 `casefold()` 合并成首次出现的写法，页面下拉直接用这段原文、默认选不区分大小写的 `GBA`（没有就找名称里含 `GBA` 的，再没有取排序第一个）；**游戏卡带ID**：每行 0~2 个，用 `;` 分隔（也兼容 `、` `,` `，` `/` `；`），**空格/连字符/下划线不是分隔符**（卡带 ID 里常有空格），超过 2 个报错；**可以为空**（查不到编号的游戏留空即可，第 4 列可整列省掉，`4,GBA,某游戏` 等价于 `4,GBA,某游戏,`）。空行跳过、Excel 行尾多余空列裁掉，空文件/只有表头报错；解析错误消息必须带**文件名与行号**。落库是单表 `ranking(console, rank, title, cartridge_ids)`（`PRIMARY KEY (console, rank) WITHOUT ROWID`，`cartridge_ids` 存 JSON 数组文本，0~2 个、空就是 `[]`）；meta 记 `ranking_schema_version`（常量 `RANKING_SCHEMA_VERSION`，**独立于检索的 `SCHEMA_VERSION`**）、`ranking_fingerprint`（CSV 原始字节的 SHA-256，只有成功加载后才写）、`ranking_source` / `ranking_rows` / `ranking_consoles` / `ranking_loaded_at`。**不 bump 检索的 `SCHEMA_VERSION`**：加榜单表是纯新增，老库要继续能检索；榜单补载失败也不能把检索变成 503。`ensure_ranking_loaded()` 先用**只读连接**比对指纹，一致就直接返回（**连读写连接都不打开**）；需要更新时 `PRAGMA journal_mode = DELETE` → `BEGIN IMMEDIATE` → 事务内二次比对 → `DROP TABLE IF EXISTS ranking` + 建表 + 全量插入 + upsert meta → commit，异常 rollback 且旧榜单原封不动；CSV 缺失时保留库里已有榜单、不删不改。接口 `GET /api/games/search/ranking/consoles`（`indexed` / `has_ranking` / `consoles` / `default_console`）与 `GET /api/games/search/ranking?console=`（`indexed` / `has_ranking` / `console` / `items[{rank,title,cartridge_ids}]`，**不分页**），都要登录；挂在 `/api/games/search/ranking` 下是为了不与 `/api/games/<单段>` 将来撞车。前端 `api/games.js` 的 `listRankingConsolesAPI()` / `getGameRankingAPI()`；榜单区第一次切到榜单标签才请求（`rankingLoaded` 标记），卡带 ID 是并排的可点按钮，点击复制（复用 `utils/clipboard.js` 的 `writeClipboard()`，`CopyButton.vue` 也用同一份），**不用 `title` / `el-tooltip`**。
 - **已知取舍**：中文为空的约 2,632 行只能靠英文搜到；缩写（`ff vii`）搜不到，因为英文按整词索引；不做拼音、错别字容错、中英互搜。
 
 ## HTTP
@@ -276,7 +278,7 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 |------|------|
 | `/login` | 登录 / 注册（无 Layout，页内切换） |
 | `/` | 重定向到 `/games`（首页即游戏中心） |
-| `/games` `/games/manage` `/games/search` `/games/flash/:gameId` `/games/play/:gameId` `/games/h5/:gameId` | 游戏中心 / 游戏管理 / 游戏检索 / Flash 播放页 / 主机(EmulatorJS)播放页 / H5 播放页 |
+| `/games` `/games/manage` `/games/discover` `/games/flash/:gameId` `/games/play/:gameId` `/games/h5/:gameId` | 游戏中心 / 游戏管理 / 游戏发现（检索 + 榜单） / Flash 播放页 / 主机(EmulatorJS)播放页 / H5 播放页；旧路径 `/games/search` 重定向到 `/games/discover`（保留 query） |
 
 ### 后端（摘要）
 
@@ -317,6 +319,8 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 | POST | `/api/games/gallery/<id>/move` | 拖到指定位置（body `{to_index}`），返回整份有序列表 |
 | GET | `/api/games/search?q=&console_id=&page=&page_size=` | 游戏检索（只读名录索引，服务端分页；索引未构建时返回 `indexed:false` 与空列表） |
 | GET | `/api/games/search/consoles` | 游戏检索的机种下拉候选项 |
+| GET | `/api/games/search/ranking?console=` | 游戏榜单（只读，不分页；榜单未加载时返回 `has_ranking:false` 与空列表） |
+| GET | `/api/games/search/ranking/consoles` | 游戏榜单的机种下拉候选项（只列榜单里出现过的机种）与 `default_console` |
 
 服务端只提供 `/api/` 与 `/health`，没有服务端渲染的页面路由。
 
@@ -327,13 +331,13 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 3. **`auth.js`：** 可缓存用户名等展示字段。登出必须清约定 key 清单；新增「记住的页面状态」时同步维护。
 4. **路由 meta：** `title`、`hiddenInMenu`、`icon`。Layout 里 `buildMenuFromRoutes()` 生成菜单。新增页面 = 加一条带 meta 的子路由。
 5. **`components/common/`：** 跨工具复用目录，必须存在。自定义弹窗 `AppDialog`、按钮 `AppButton`、分页 `AppPagination`、筛选 `AppFilterBar`、空状态 `AppEmpty`、复制 `CopyButton` 放这里；在 Element Plus 上包一层，不要在 `views/` 里堆样式。小件（按钮、空状态、复制、分页）在 `main.js` 全局注册；弹窗/筛选按需引入。Vite 别名 `@components` → `src/components`。
-   分页条 `AppPagination`（游戏管理 / 游戏检索共用）：父级给 `page` / `total` / `pageSize`，翻页时先发 `update:page` 再发 `change`（父级的 `change` 处理函数读自己的 page ref，顺序反了会拿旧页码去请求）；**只有一页时整块不渲染**；**左右方向键翻页**在组件内部（挂在 window 冒泡阶段），守卫：带修饰键的放行（`Alt+←` 是后退、`Ctrl/Shift+←` 是选词）、按住连发与输入法组字忽略、焦点在 input/textarea/contenteditable/`.el-select/.el-popper` 里放行、`body.el-popup-parent--hidden`（Element Plus 的 `useLockscreen`，dialog/message-box/drawer 都加）时放行、单页时不拦默认行为。
+   分页条 `AppPagination`（游戏管理 / 游戏发现共用）：父级给 `page` / `total` / `pageSize`，翻页时先发 `update:page` 再发 `change`（父级的 `change` 处理函数读自己的 page ref，顺序反了会拿旧页码去请求）；**只有一页时整块不渲染**；**左右方向键翻页**在组件内部（挂在 window 冒泡阶段），守卫：带修饰键的放行（`Alt+←` 是后退、`Ctrl/Shift+←` 是选词）、按住连发与输入法组字忽略、焦点在 input/textarea/contenteditable/`.el-select/.el-popper` 里放行、`body.el-popup-parent--hidden`（Element Plus 的 `useLockscreen`，dialog/message-box/drawer 都加）时放行、单页时不拦默认行为。
 6. **Pinia：** 不要把 Fernet 密钥放进 store。不要做参考项目那种全表列配置，除非以后明确要求。
 7. **不要**上 WebSocket，除非以后某个工具明确需要实时。
 
 ## 界面
 
-- Layout：侧栏菜单由路由 `meta` 动态生成，顺序为游戏中心、游戏管理、游戏检索。**侧栏是浮层**：常驻收起、鼠标靠近屏幕左边缘滑出，展开时盖在页面之上，不占位、不挤压内容
+- Layout：侧栏菜单由路由 `meta` 动态生成，顺序为游戏中心、游戏管理、游戏发现。**侧栏是浮层**：常驻收起、鼠标靠近屏幕左边缘滑出，展开时盖在页面之上，不占位、不挤压内容
 - 所有界面文案必须是中文
 - **一律不做鼠标悬浮提示**：图片、按钮、文案都不要 `title`（原生悬浮小黄条）也**不要 `el-tooltip`**。需要说明就写成常驻小字，或者用「点开才看到」的展开层；凡是加内容默认都不加悬浮提示。唯一例外是**模拟器/引擎自己渲染的按钮**（EmulatorJS 播放器内部那套 UI，不是我们写的）。两个保留项也不是悬浮提示，别误删：弹窗标题 `AppDialog` 的 `title` prop、`<iframe title="…">`（无障碍用，浏览器不会弹提示）
 - 表单在 Vue 里提交到 `/api/`；复制密码、上传进度可用少量本地逻辑
@@ -350,7 +354,7 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 - `python:3.12.15-slim-trixie`，工作目录 `/app`
 - 安装根目录 `requirements.txt`，仅复制 `backend/` 包，给 `backend/entrypoint.sh` 加执行位
 - `EXPOSE 8910`
-- 游戏检索的 CSV 名录（`backend/search/csv/`，约 4MB）**随镜像一起走**：`COPY backend/ ./backend/`
+- 游戏检索的 CSV 名录（`backend/search/csv/`，约 4MB）与游戏榜单的 `backend/search/ranking/ranking.csv` **随镜像一起走**：`COPY backend/ ./backend/`
   把它带进 api 镜像，容器启动时才能在缺索引时自建一次。换名录数据要重建镜像。
 - `ENTRYPOINT` 是 `/app/backend/entrypoint.sh`：先调 `backend/mount_guard.py::require_mounted()`（**两个根的宿主路径在 Windows 盘挂载前缀下**——按 compose 传进来的 `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` 判断，前缀可配、默认 `/mnt`——而容器里缺 `.mounted` 哨兵时，打中文日志 → 等 5 秒 → 以非零码退出，退的是**容器主进程**，compose 的 `api.restart: unless-stopped` 随即把容器重新拉起，循环重试直到哨兵出现；宿主目录不在那个前缀下就直接放行），再 `exec "$@"` 跑 CMD。判断与日志只有 `mount_guard.py` 一份，脚本不重复实现
 - `CMD`：`gunicorn backend.asgi:app -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:8910 --workers 1 --threads 8 --timeout 300`（300s 是为了长上传/流式下载不被 worker 超时杀）
@@ -378,7 +382,7 @@ HTML 由 Vue 路由负责，FastAPI **只返回 JSON**。路径一律在 `/api/`
 
 本地开发：`uvicorn backend.asgi:app --reload --port 8910` + `cd frontend && npm run dev`。本机数据根默认是仓库下的 `data/storage`，不在 `/mnt` 下、**不需要哨兵文件**；只有你把数据根（或运行时根）指到 WSL 的 Windows 盘（如 `STORAGE_ROOT=/mnt/x/xgame/storage`）时才要先 `touch /mnt/x/xgame/storage/.mounted`，否则 uvicorn 起来就打一条日志、等 5 秒退出。测试不受影响（`TESTING` 下跳过检查）。
 
-**游戏检索要先建索引**：在项目根目录跑一次 `make index`，它会在 `<数据根>/db/game.db` 生成只读名录索引（可重复执行、直接覆盖）。没建时页面会提示、接口返回 `indexed:false`，不会报错。数据根若是 Docker 以 root 建的（默认 `./data/storage` 跑过一次 compose 之后就是），先 `sudo chown -R "$USER" ./data/storage`——`make index` 也会自己提示这一步。
+**游戏发现要先建索引**：在项目根目录跑一次 `make index`，它会在 `<数据根>/db/game.db` 生成只读名录索引与榜单（可重复执行、直接覆盖）。没建时页面会提示、接口返回 `indexed:false`，不会报错；榜单 CSV 后放进来的话，重启服务也会就地补一次。数据根若是 Docker 以 root 建的（默认 `./data/storage` 跑过一次 compose 之后就是），先 `sudo chown -R "$USER" ./data/storage`——`make index` 也会自己提示这一步。
 
 ## Windows 解压即用包（第二条交付路线，与 Docker 并存）
 
@@ -506,7 +510,7 @@ make test
 - 云端存档按 (user, game) 隔离：读他人快照返回 404
 - 游戏截图按 (user, game) 隔离（列表看不到、图片/改描述/移动/删除一律 404）、落盘 `image/{用户名}/{类型}/{卡带ID}/{uuid}.{后缀}`、认不出的图片内容 / 空文件 / 超限 / 描述超 15 字 / 拖动下标越界返回 400、分数耗尽时的整份重排后顺序仍正确、删游戏后行与文件都不留
 - 模拟器设置写接口未登录 401、按 (user, game_type) 隔离、非法 game_type 或 payload 返回 400
-- 游戏检索：未登录 401；索引缺失时返回 `indexed:false` + 空列表且**服务端不建文件**；坏库/版本不符 503（中文 message）；结尾标签不进索引而主标题搜得到；三元组去重口径；归一化不变量（中文名中间取两个相邻汉字必命中）；`ORDER BY` 的 `g.id` tiebreaker 让翻页不重不漏；**跑完全部只读路径后索引文件逐字节与 mtime 都不变**、库文件与目录置为只读后接口照常工作
+- 游戏发现：未登录 401；索引缺失时返回 `indexed:false` + 空列表且**服务端不建文件**；坏库/版本不符 503（中文 message）；结尾标签不进索引而主标题搜得到；三元组去重口径；归一化不变量（中文名中间取两个相邻汉字必命中）；`ORDER BY` 的 `g.id` tiebreaker 让翻页不重不漏；**跑完全部只读路径后索引文件逐字节与 mtime 都不变**、库文件与目录置为只读后接口照常工作。榜单：CSV 解析边界（BOM/CRLF/表头/引号内逗号/机种大小写合并/卡带 ID 分隔符与数量上限/列数与序号错误带行号）、`build_index` 的 strict 与非 strict、**启动就地补载幂等（指纹一致时字节与 mtime 都不变）**、内容变了要按 SHA-256 重载、CSV 缺失保留旧榜单、只读库降级、榜单接口的 `indexed`/`has_ranking`/默认机种/未知机种/版本过旧 503
 
 ## 首次搭建已完成
 

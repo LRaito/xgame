@@ -11,6 +11,7 @@ from backend.config import LOG_FORMAT, SECRET_KEY, settings_from_overrides
 from backend.csrf import CSRFMiddleware
 from backend.database import ensure_data_dir, init_db, make_engine
 from backend.games.gallery_router import router as game_gallery_router
+from backend.games.ranking_router import router as game_ranking_router
 from backend.games.router import router as games_router
 from backend.games.save_router import router as game_saves_router
 from backend.games.screenshot_router import router as game_screenshots_router
@@ -76,10 +77,13 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.include_router(tools_router)
     app.include_router(auth_router)
     app.include_router(games_router)
-    # 紧跟 games_router。注意 `/api/games/search` 与 `/api/games/search/consoles` 之所以不会
-    # 被 games_router 的 `/{game_id}/…` 抢走，是因为那些路由的第二段字面量只有 cover/play/h5/guide，
-    # 且 `/api/games` 下没有单段 `/{game_id}`。以后若给 games_router 加一条单段动态路由，这里就会撞车。
+    # 紧跟 games_router。注意 `/api/games/search`、`/api/games/search/consoles` 与
+    # `/api/games/search/ranking…` 之所以不会被 games_router 的 `/{game_id}/…` 抢走，是因为那些
+    # 路由的第二段字面量只有 cover/play/h5/guide，且 `/api/games` 下没有单段 `/{game_id}`。
+    # 以后若给 games_router 加一条单段动态路由，这里就会撞车。
     app.include_router(game_search_router)
+    # 榜单与检索共用同一个只读库（game.db），只是读另一张表，所以也挂在这条前缀下
+    app.include_router(game_ranking_router)
     app.include_router(game_saves_router)
     app.include_router(game_screenshots_router)
     app.include_router(game_gallery_router)

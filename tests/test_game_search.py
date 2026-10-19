@@ -220,7 +220,8 @@ def _settings(tmp_path, *, testing=False):
 
 
 def test_ensure_game_index_builds_when_missing(csv_dir, tmp_path):
-    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir)
+    # ranking_csv=None：这一组用例只关心检索索引，不读仓库里的真实榜单 CSV
+    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
 
     assert stats is not None
     assert stats.rows == _EXPECTED_ROWS
@@ -229,11 +230,11 @@ def test_ensure_game_index_builds_when_missing(csv_dir, tmp_path):
 
 def test_ensure_game_index_skips_when_present(csv_dir, tmp_path):
     """已有索引就跳过：不重建、不覆盖（内容与 mtime 都不变）。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir)
+    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
     index_path = tmp_path / "storage" / "db" / "game.db"
     before = _digest(index_path)
 
-    assert ensure_game_index(_settings(tmp_path), csv_dir=csv_dir) is None
+    assert ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None) is None
     assert _digest(index_path) == before
 
 
@@ -255,13 +256,15 @@ def test_ensure_game_index_tolerates_broken_csv(tmp_path):
     source.mkdir()
     (source / "坏.csv").write_text("只有两列\n", encoding="utf-8")
 
-    assert ensure_game_index(_settings(tmp_path), csv_dir=source) is None
+    assert ensure_game_index(_settings(tmp_path), csv_dir=source, ranking_csv=None) is None
     assert not (tmp_path / "storage" / "db" / "game.db").exists()
 
 
 def test_app_startup_builds_missing_index(monkeypatch, csv_dir, tmp_path):
     """接线：create_app() 起来时确实会自检并补建。"""
     monkeypatch.setattr(search_index, "SEARCH_CSV_DIR", csv_dir)
+    # 榜单单独测（见 test_game_ranking.py），这里指到一个不存在的文件，避免依赖仓库里的真实榜单
+    monkeypatch.setattr(search_index, "RANKING_CSV_PATH", tmp_path / "ranking.csv")
 
     create_app({"TESTING": False, "STORAGE_ROOT": str(tmp_path / "storage")})
 

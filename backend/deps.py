@@ -7,6 +7,7 @@ from backend.auth.models import User
 from backend.auth.service import AuthService
 from backend.config import Settings
 from backend.games.gallery_service import GalleryService
+from backend.games.ranking_service import GameRankingService
 from backend.games.save_service import CloudSaveService
 from backend.games.screenshot_service import ScreenshotService
 from backend.games.search_service import GameSearchService
@@ -98,6 +99,14 @@ def get_game_search_service(request: Request) -> GameSearchService:
 
 
 GameSearchServiceDep = Annotated[GameSearchService, Depends(get_game_search_service)]
+
+
+def get_game_ranking_service(request: Request) -> GameRankingService:
+    # 榜单与检索共用同一个只读库（`<根路径>/db/game.db`），只是读另一张表
+    return GameRankingService(request.app.state.settings.game_index_path)
+
+
+GameRankingServiceDep = Annotated[GameRankingService, Depends(get_game_ranking_service)]
 
 
 def get_settings_dep(request: Request) -> Settings:

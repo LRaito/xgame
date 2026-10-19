@@ -17,7 +17,7 @@
 import { computed, onBeforeUnmount, onMounted } from "vue";
 
 /**
- * 列表分页条（游戏管理 / 游戏检索共用）。
+ * 列表分页条（游戏管理 / 游戏发现共用）。
  *
  * 只管页码，不管数据：父级把 page / total / pageSize 传进来，翻页时收到
  * `update:page`（先）与 `change`（后），在 `change` 的处理函数里发请求。

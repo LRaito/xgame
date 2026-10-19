@@ -45,7 +45,7 @@ Windows 的 `python.exe`；宿主机不是 WSL 就跳过。
 
 ```
 python/                  python-build-standalone 的可重定位 CPython 3.12（含 MSVC 运行库）
-backend/                 后端源码（含 search/csv 名录）
+backend/                 后端源码（含 search/csv 名录与 search/ranking 榜单）
 web/                     前端构建产物（vite dist）
 launcher.py              启动器：自检 → 起 uvicorn → 开浏览器
 winops.py                桌面快捷方式 / 开机自启 / 解除 MOTW 锁定

@@ -10,7 +10,7 @@
 |--------|------|------|
 | SQLite 单文件 | `<运行时根>/db/app.db`（Docker 里是宿主 `${RUNTIME_HOST_DIR}/db/app.db` → 容器 `/runtime/db/app.db`） | 全部业务元数据 |
 | SQLite 备份 | `<数据根>/db/<YYYY-MM>.db` | 启动时备一次、之后每小时一次，**当月只此一份、每次整份重写**（快照最多落后一小时）；不做还原，回滚就手工换回 `app.db` |
-| SQLite 检索索引 | `<数据根>/db/game.db` | 游戏检索用的**派生只读库**（外部中英文名录的全文索引），服务启动时不存在会自动补建、也可用 `make index` 重建；**不备份**，可从 CSV 重建，见文末「游戏检索索引」 |
+| SQLite 发现索引 | `<数据根>/db/game.db` | 游戏发现的**派生只读库**（外部中英文名录的全文索引 + 按机种的游戏榜单），服务启动时不存在会自动补建、榜单 CSV 变化时会就地补载，也可用 `make index` 重建；**不备份**，可从 CSV 重建，见文末「游戏发现索引」 |
 | 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/H5 资源/攻略/图集、云端存档、游戏截图，以及 `db/` 下的备份与检索索引 |
 | 运行时根目录 | `RUNTIME_ROOT`（不配 = 与数据根相同；容器内固定 `/runtime`，宿主目录由 `RUNTIME_HOST_DIR` 挂进去） | 只有 SQLite 库。单独放是为了让数据根整个可以交给网盘之类的客户端备份——它拷不动一个一直被写着的库文件 |
 | 哨兵文件 | 每个根目录下的 `.mounted` | **人工创建**的空文件；该根的宿主路径在 Windows 盘挂载路径前缀下时启动会检查，缺了服务拒绝启动（见 `backend/mount_guard.py`）。两个根相同时只有一个 |
@@ -23,7 +23,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 库路径在代码里写死为 `<运行时根>/db/app.db`（`backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME`，不可另配；运行时根不配就是数据根），`create_app()` 启动时 `init_db()` 建全部表。**没有迁移框架**：`create_all` 只建缺失的表、不给已存在的表补列，所以后来新增的列靠 `backend/database.py` 的 `_ADDED_COLUMNS` / `_ensure_columns()` 在启动时 `ALTER TABLE … ADD COLUMN` 补上（只加列，不改不删）。
 
-数据根的 `db/` 下还有第二个库 `game.db`（游戏检索索引），它是**派生、只读**的，结构与本节无关，见文末「游戏检索索引」。
+数据根的 `db/` 下还有第二个库 `game.db`（游戏发现的检索索引与游戏榜单），它是**派生、只读**的，结构与本节无关，见文末「游戏发现索引」。
 
 ### 表索引
 
@@ -226,28 +226,30 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 - **游戏图集**：与截图相反，它在**游戏目录内**（`game/{类型}/{卡带ID}/image/{uuid}.{后缀}`），一个游戏一套、按游戏共享、不记上传者（目录名 `image` 与顶层按账号隔离的截图目录同名，但一个挂在游戏目录下、一个挂在用户名下，是两回事）。**目录里的 `game_type` 跟游戏当前类型走**：换本体换了游戏类型时整个 `image/` 目录随游戏目录一起搬到新类型目录，行里的 `file_path` 同步换成新前缀；读取、单张删除、删游戏清理同样按行里的 `file_path`。
 - **云端存档**：目录按 `用户名/游戏类型/卡带ID` 分，一个快照的每个文件各一个 `{uuid}.state`，文件名不体现原文件名（原名只用于下载时的 `Content-Disposition`，见 `game_cloud_snapshot_files.name`）。用户名进路径是安全的——用户名规则本身就限定在数字/字母/中划线/下划线。下载/删除快照按 `file_path` 定位文件；快照删除时逐文件删；上传中途失败回滚已写的文件（避免孤儿文件）。**删除游戏时连同它的全部存档快照与 `save/{用户名}/{类型}/{卡带ID}/` 目录一起清掉**（目录名带的是快照当时的游戏类型，所以按文件路径反推目录，而不是用游戏当前类型拼）。
 
-## 游戏检索索引（`game.db`）
+## 游戏发现索引（`game.db`）
 
-第三个页面的数据源：一份**与平台游戏库无关**的外部中英文名录（`机种 / 中文名 / 英文名`），
-所以它单独一个库，**与 `app.db` 没有任何外键关系**。
+第三个页面（游戏发现）的数据源：**与平台游戏库无关**的外部数据——中英文名录（`机种 / 中文名 / 英文名`）
+与游戏榜单（`序号 / 机种名称 / 游戏名称 / 游戏卡带ID`），所以它们单独一个库，
+**与 `app.db` 没有任何外键关系**。
 
 | 项 | 值 |
 |----|----|
 | 路径 | `<数据根>/db/game.db`（`backend/config.py` 的 `GAME_INDEX_FILENAME`；容器里就是 `/data/db/game.db`） |
-| 写入方 | 只有 `backend/games/search_index.py::build_index()` 一处，两个触发口：**服务启动自动补建**（`create_app()` → `ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning）与 **`make index`**（`Makefile` → `python -m backend.cli index`，手动重建/更新）。容器里也能建（CSV 随 `backend/` 进镜像） |
-| 读取方 | `backend/games/search_service.py::GameSearchService`，一律 `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接——**运行期只读，绝不写它** |
-| 是否备份 | **不进备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）。它可从 `backend/search/csv/` 的 CSV 完整重建 |
-| 源数据 | `backend/search/csv/` 下 37 个 CSV（3 列无表头、UTF-8 带 BOM、CRLF），随 `backend/` 一起进 api 镜像 |
-| 重建方式 | 整库重建 + 原子替换（写同目录 `game.db.tmp` → `chmod 0644` → `os.replace`）。**不开 WAL**，所以不会留 `-wal`/`-shm`；重建后无需重启 api |
+| 写入方 | 只有 `backend/games/search_index.py` 这一个模块，两条写路径：① `build_index()` 整库重建——**服务启动自动补建**（`create_app()` → `ensure_game_index()`，文件不存在才建、`TESTING` 跳过、失败只记 warning）与 **`make index`**（`Makefile` → `python -m backend.cli index`，手动重建/更新；`--skip-ranking` 只重建检索）；② `ensure_ranking_loaded()` 启动时把榜单 CSV 就地补进已存在的库（指纹一致时连读写连接都不打开）。容器里也能建（CSV 随 `backend/` 进镜像） |
+| 读取方 | `backend/games/search_service.py::GameSearchService` 与 `backend/games/ranking_service.py::GameRankingService`，一律 `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接——**运行期只读，绝不写它** |
+| 是否备份 | **不进备份**（`backend/backup.py` 只按固定文件名备份 `app.db`）。它可从 `backend/search/` 下的 CSV 完整重建 |
+| 源数据 | 检索：`backend/search/csv/` 下 37 个 CSV（3 列无表头、UTF-8 带 BOM、CRLF）；榜单：`backend/search/ranking/ranking.csv`（4 列、表头可选）。都随 `backend/` 一起进 api 镜像 |
+| 重建方式 | 整库重建 + 原子替换（写同目录 `game.db.tmp` → `chmod 0644` → `os.replace`）。**不开 WAL**，所以不会留 `-wal`/`-shm`；重建后无需重启 api。榜单的就地补载走短事务（`BEGIN IMMEDIATE` → 重建 `ranking` 表 → upsert meta），失败回滚、旧榜单原封不动 |
 
 ### 表
 
 | 表 | 用途 |
 |----|------|
-| `console` | 机种（`id` / `name` UNIQUE）。单独一张表是为了不给每行重复存机种名 |
+| `console` | 检索的机种（`id` / `name` UNIQUE）。单独一张表是为了不给每行重复存机种名 |
 | `game` | 名录一行（`id` / `console_id` / `zh` / `en` / `src`）。`src` 是来源 CSV 文件名，仅作溯源 |
 | `game_fts` | FTS5 全文索引（`zh_uni` / `en_uni`），**contentless**（`content=''`，不重复存正文），`tokenize='unicode61 remove_diacritics 2'`；`rowid` 与 `game.id` 一一对应 |
-| `meta` | 键值元信息：`schema_version`（与 `search_index.SCHEMA_VERSION` 比对，不符时接口 503）/ `built_at` / `rows` / `consoles` |
+| `ranking` | 榜单一行（`console` / `rank` / `title` / `cartridge_ids`）。`PRIMARY KEY (console, rank) WITHOUT ROWID`；`cartridge_ids` 是 JSON 数组文本（0~2 个卡带 ID，查不到编号时是空数组 `[]`）。机种存名称而不是外键——榜单的机种未必出现在检索名录里 |
+| `meta` | 键值元信息。检索：`schema_version`（与 `search_index.SCHEMA_VERSION` 比对，不符时接口 503）/ `built_at` / `rows` / `consoles`。榜单：`ranking_schema_version`（与 `RANKING_SCHEMA_VERSION` 比对，存在但不符时榜单接口 503）/ `ranking_fingerprint`（源 CSV 原始字节的 SHA-256，只有成功加载后才写）/ `ranking_source` / `ranking_rows` / `ranking_consoles` / `ranking_loaded_at` |
 | `idx_game_console` | `game(console_id, en)` 上的普通索引：无关键词时按机种分页排序走它，搜索不走它 |
 
 ### 约定
@@ -258,3 +260,8 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 - 建库时按 `(机种, 中文, 英文)` **三元组完全一致**去重（52,611 行源数据 → 51,359 行）；
   只中文或只英文相同的**不去重**——那是同款游戏的不同地区版本。
 - 落库行数/机种数变了不用改代码，重跑 `make index` 覆盖即可。
+- 榜单的**检索版本与榜单版本互不牵连**：往老库里加 `ranking` 表是纯新增，不 bump `schema_version`
+  （否则老库在补表前就会被判「版本过旧」，检索一起 503）。榜单没加载（表在但没指纹、或表不存在）
+  是正常状态，接口返回 `has_ranking: false` + 空列表，不是错误。
+- 榜单 CSV 的格式契约（四列、表头可选、序号唯一、卡带 ID 可空、分隔符与数量上限）见
+  `backend/search/ranking/README.md`；解析错误带文件名与行号。

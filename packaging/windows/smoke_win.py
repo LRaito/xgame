@@ -5,7 +5,7 @@
 
 检查的是「缺了会让整条路线悄悄坏掉」的那几件事：
 
-- SQLite 带不带 FTS5（不带 → 「游戏检索」永远显示尚未构建索引，且没人知道为什么）；
+- SQLite 带不带 FTS5（不带 → 「游戏发现」的检索标签永远显示尚未构建索引，且没人知道为什么）；
 - 依赖是否齐全、能不能 import（半边装好时会在启动那一刻炸）；
 - 有没有混进 gunicorn / uvloop（它们根本跑不了 Windows）；
 - MSVC 运行库在不在（不在 → 双击后进程直接没了，连报错都没有）。
@@ -46,7 +46,7 @@ def main() -> int:
     connection = sqlite3.connect(":memory:")
     options = [row[0] for row in connection.execute("pragma compile_options")]
     if "ENABLE_FTS5" not in options:
-        problems.append("这份 SQLite 没有编译 FTS5，游戏检索页会一直显示尚未构建索引。")
+        problems.append("这份 SQLite 没有编译 FTS5，游戏发现页的检索会一直显示尚未构建索引。")
     else:
         try:
             connection.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")

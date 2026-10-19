@@ -37,8 +37,10 @@ backend/
   games/paths.py          # 所有磁盘相对路径规则的唯一出处
   games/importer.py       # 搬运（7k7k / 4399 / flash.homes）
   games/remote.py         # 网络上传（http/https 直链）
-  games/search_*.py       # 游戏检索：text（归一化，索引期与查询期共用）/ index（建库，唯一写入方：启动补建 + make index）/ service（只读查询）/ router
+  games/search_*.py       # 游戏检索：text（归一化，索引期与查询期共用）/ index（建库，唯一写入模块：启动补建 + make index + 榜单就地补载）/ service（只读查询）/ router
+  games/ranking_*.py      # 游戏榜单：service（只读查询，读 game.db 的 ranking 表）/ router
   search/csv/             # 游戏检索的 37 个中英文名录 CSV（纯数据，只被建索引读；随 backend/ 进 api 镜像）
+  search/ranking/         # 游戏榜单的 ranking.csv（四列，格式见目录内 README；纯数据，随 backend/ 进镜像）
 packaging/windows/        # 「解压即用」Windows 包：构建环境镜像 + 组装脚本 + 启动器 + 包内脚本与说明
 scripts/gen-certs.sh      # 重新生成自签名证书
 certs/                    # 证书，随仓库提交（cert.pem / cert.key）
@@ -298,7 +300,7 @@ STORAGE_ROOT=/tmp/x STATIC_DIR=frontend/dist python -m backend.cli serve --port 
 ```
 .mounted                                     哨兵文件（在 /mnt 这类 Windows 盘路径下时人工创建）
 db/2026-10.db                                备份（启动时 + 每小时一次，当月只此一份、整份重写）
-db/game.db                                   游戏检索索引（派生只读库，make index 构建，不备份）
+db/game.db                                   游戏发现索引（派生只读库：检索名录 + 游戏榜单；make index 构建，不备份）
 game/{游戏类型}/{卡带ID}/game.{后缀}          本体
 game/{游戏类型}/{卡带ID}/cover.{后缀}         封面
 game/{游戏类型}/{卡带ID}/h5/{相对路径}        H5 解包资源（清单在 game_h5_files 表）
@@ -333,38 +335,44 @@ cd frontend && npm run lint
 后端测试用临时 SQLite + 临时 `STORAGE_ROOT`（直接打真实文件系统，不 mock 存储层），
 不需要 Docker。开发时按改动范围挑相关用例跑即可。
 
-## 构建游戏检索索引
+## 构建游戏发现索引
 
-「游戏检索」页的数据源是 `backend/search/csv/` 下 37 个中英文名录 CSV。它不是业务数据，
+「游戏发现」页的数据源有两份：`backend/search/csv/` 下 37 个中英文名录 CSV（检索），以及
+`backend/search/ranking/ranking.csv`（榜单，四列，格式见该目录 README）。它们都不是业务数据，
 而是构建成一个**独立的只读索引库** `<数据根>/db/game.db`：
 
 ```bash
 make index        # = STORAGE_ROOT=${STORAGE_HOST_DIR:-./data/storage} python -m backend.cli index
+make index 对应的 CLI 还可加 --skip-ranking（只重建检索）或 --ranking-csv PATH（换一份榜单文件）
 ```
 
-**两个写入口，同一份实现**（`backend/games/search_index.py::build_index()`）：
+**一个写入模块、两条写路径**（`backend/games/search_index.py`）：
 
-1. **服务启动自动补建**：`create_app()` 启动时调 `ensure_game_index()`（紧跟 `backup_database()`）
-   ——文件不存在就整库建一次，已存在就跳过；`TESTING` 下直接跳过；失败只记一条中文 warning、
-   **绝不拦住启动**。所以装好就能用检索，不用先读文档。
-2. **`make index`**：手动重建/更新（换了 CSV、改了分词规则、升级了平台之后用它覆盖）。
+1. **`build_index()` 整库重建**：`make index`，以及 `create_app()` 启动时调 `ensure_game_index()`
+   （紧跟 `backup_database()`）——文件不存在就整库建一次（检索 + 榜单同一次构建），已存在就跳过；
+   `TESTING` 下直接跳过；失败只记一条中文 warning、**绝不拦住启动**。所以装好就能用，不用先读文档。
+2. **`ensure_ranking_loaded()` 启动就地补载**：库已存在时，比对榜单 CSV 原始字节的 SHA-256 与
+   `meta.ranking_fingerprint`——一致就**连读写连接都不打开**（一个字节都不写）；不一致或还没加载过，
+   就在一个短事务里重建 `ranking` 表并 upsert meta，失败回滚、旧榜单原封不动。CSV 缺失时保留旧榜单。
 
-两者都是：**整库重建**（写同目录临时文件再 `os.replace` 原子替换）、直接覆盖旧文件，约 1 秒、
-5 万余行、10MB 左右。
+整库重建是**写同目录临时文件再 `os.replace` 原子替换**、直接覆盖旧文件，约 1 秒、5 万余行、10MB 左右。
 
-- **运行期只读**。所有读都经 `GameSearchService`，用 `mode=ro` + `PRAGMA query_only=1` 打开，
-  每请求一条短连接；没有第三条路径会写它。
+- **运行期只读**。所有读都经 `GameSearchService` 与 `GameRankingService`，用 `mode=ro` +
+  `PRAGMA query_only=1` 打开，每请求一条短连接；运行期没有第三条路径会写它。
 - **不参与备份**（`backend/backup.py` 只备份 `app.db`）——它随时能从 CSV 重建。
 - **重建后不用重启 api**：`os.replace` 之后，已经打开的连接继续读旧 inode，新请求自动拿新库。
-- **宿主机与容器都能跑**：CSV 随 `backend/` 进 api 镜像，容器里的自动补建正常工作（写的是
+- **宿主机与容器都能跑**：CSV 随 `backend/` 进 api 镜像，容器里的自动补建与榜单补载正常工作（写的是
   bind 进去的宿主数据目录）。反过来也一样：宿主机 `make index` 建出来的库，容器立刻能读到
   ——两边用的是同一个文件。
+- **榜单状态独立**：榜单没加载（表在但没指纹）是正常状态，接口返回 `has_ranking:false` + 空列表；
+  只有 `meta.ranking_schema_version` 存在但不匹配才 503。往老库里加榜单表**不 bump**
+  检索的 `SCHEMA_VERSION`。
 
 ### 自动补建没成功（PermissionError / 「数据根不可写」）
 
 数据目录若是 Docker 容器以 root 建的（默认的 `./data/storage` 跑过一次 compose 之后就是这样），
-宿主用户在里面**建不了临时文件**，启动时的自动补建会失败并记一条 warning（服务照常起来，
-检索页提示「尚未构建索引」）。手动 `make index` 会先做一次 `test -w` 预检并打印对策，
+宿主用户在里面**建不了临时文件**，启动时的自动补建与榜单补载会失败并记一条 warning（服务照常起来，
+页面提示「尚未构建索引」/「榜单尚未加载」）。手动 `make index` 会先做一次 `test -w` 预检并打印对策，
 照做即可：
 
 ```bash
@@ -373,12 +381,14 @@ sudo chown -R "$USER" "$STORAGE_HOST_DIR"     # 默认就是 ./data/storage
 
 换一个宿主用户自有的 `STORAGE_HOST_DIR` 也可以（推荐放在仓库外，见「配置」）。
 
-### 改了名录或改了分词规则之后
+### 改了名录、榜单或改了分词规则之后
 
 `backend/games/search_text.py` 里是**索引期与查询期共用的唯一一份归一化实现**（NFKC → 剥结尾的
 地区/语言/版本标签 → 汉字逐字拆 token）。改它之后必须重跑 `make index`，否则老索引与新查询
-对不上，中文会静默搜不到。同理，改了 `search_index.py` 的表结构要把 `SCHEMA_VERSION` 加一——
+对不上，中文会静默搜不到。同理，改了 `search_index.py` 的**检索表结构**要把 `SCHEMA_VERSION` 加一——
 运行期读到不匹配的版本会明确报「索引版本过旧，请重新构建」，而不是给出莫名其妙的结果。
+**榜单表结构变化改 `RANKING_SCHEMA_VERSION`**，不要动 `SCHEMA_VERSION`（加榜单表是纯新增，
+老库要能继续检索）。榜单 CSV 换了内容不用改任何版本号：重跑 `make index`，或重启服务让它按指纹补载。
 
 ## 提交约定
 

@@ -30,10 +30,16 @@ const routes = [
                 meta: { title: "游戏管理" },
             },
             {
+                path: "games/discover",
+                name: "games-discover",
+                component: () => import("@/views/games/discover/index.vue"),
+                meta: { title: "游戏发现" },
+            },
+            {
+                // 旧路径（游戏检索）重定向到游戏发现，保留 ?tab=ranking 之类的查询参数。
+                // 不设 meta.title，否则会被 buildMenuFromRoutes() 收进侧栏。
                 path: "games/search",
-                name: "games-search",
-                component: () => import("@/views/games/search/index.vue"),
-                meta: { title: "游戏检索" },
+                redirect: (to) => ({ path: "/games/discover", query: to.query }),
             },
             {
                 path: "games/flash/:gameId",
