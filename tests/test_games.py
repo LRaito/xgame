@@ -10,10 +10,18 @@ from pathlib import Path
 import pytest
 from sqlmodel import Session, select
 
+from backend.auth.service import AuthService
 from backend.errors import ValidationError
 from backend.config import DB_SUBDIR
 from backend.games import importer, paths
-from backend.games.models import Game, GameCloudSnapshot, GameCloudSnapshotFile, GameH5File
+from backend.games.models import (
+    Game,
+    GameCloudSnapshot,
+    GameCloudSnapshotFile,
+    GameGalleryImage,
+    GameH5File,
+    GameScreenshot,
+)
 from backend.games.service import (
     GAME_TYPES,
     GameItem,
@@ -809,7 +817,7 @@ def test_cartridge_id_must_be_unique(logged_in_games):
 
 
 def test_cartridge_id_cannot_be_changed(logged_in_games):
-    """卡带ID 建后不可改：PUT 带 cartridge_id 也只当普通字段忽略，想换只能删了重建。"""
+    """普通编辑改不动卡带ID：PUT 带 cartridge_id 也只当普通字段忽略（改名是另一个接口）。"""
     created = _create_game(
         logged_in_games, "不可改", "a.nes", b"x", cartridge_id="FIXED1"
     ).json()["data"]
@@ -820,6 +828,427 @@ def test_cartridge_id_cannot_be_changed(logged_in_games):
     assert updated.status_code == 200
     assert updated.json()["data"]["cartridge_id"] == "FIXED1"
     assert updated.json()["data"]["game_path"] == "game/nes/FIXED1/game.nes"
+
+
+# ---------------------------------------------------------------- 改卡带ID
+
+_PNG_HEAD = b"\x89PNG\r\n\x1a\n"
+
+
+def _rename(client, game_id: int, new_id: str):
+    return client.put(
+        f"/api/games/manage/{game_id}/cartridge-id", json={"cartridge_id": new_id}
+    )
+
+
+def _upload_save(client, game_id: int, payload: bytes = b"save") -> None:
+    manifest = json.dumps([{"local_key": "k", "name": "save.state"}])
+    response = client.post(
+        "/api/games/saves",
+        data={"game_id": str(game_id), "remark": "备注", "manifest": manifest},
+        files=[("sols", ("save.state", payload, "application/octet-stream"))],
+    )
+    assert response.status_code == 201, response.text
+
+
+def _upload_image(client, endpoint: str, game_id: int, payload: bytes = b"frame"):
+    return client.post(
+        endpoint,
+        data={"game_id": str(game_id), "description": ""},
+        files={"file": ("pic.png", _PNG_HEAD + payload, "image/png")},
+    )
+
+
+def _dir_files(storage_root, prefix: str) -> list[str]:
+    """某个目录前缀下现有的文件（存档与截图的文件名是 uuid，只能按目录断言）。"""
+    return sorted(path for path in _files(storage_root) if path.startswith(prefix))
+
+
+def _path_rows(app, game_id: int) -> list[str]:
+    """该游戏在库里存了磁盘路径的全部列值（games 的两列 + 四张子表）。"""
+    with Session(app.state.engine) as session:
+        row = session.get(Game, game_id)
+        values = [row.game_path, row.cover_path]
+        for model in (GameH5File, GameGalleryImage, GameScreenshot):
+            values += [
+                item.file_path
+                for item in session.exec(
+                    select(model).where(model.game_id == game_id)
+                ).all()
+            ]
+        values += [
+            item.file_path
+            for item in session.exec(
+                select(GameCloudSnapshotFile)
+                .join(
+                    GameCloudSnapshot,
+                    GameCloudSnapshot.id == GameCloudSnapshotFile.snapshot_id,
+                )
+                .where(GameCloudSnapshot.game_id == game_id)
+            ).all()
+        ]
+    return [value for value in values if value]
+
+
+def test_rename_cartridge_id_moves_dirs_and_rewrites_paths(
+    logged_in_games, app, storage_root
+):
+    """改名 = 搬目录 + 改库里所有引用它的路径列：素材、图集、存档、截图一个都不能落下。"""
+    created = _create_game(
+        logged_in_games,
+        "改名主用例",
+        "a.nes",
+        b"nes-body",
+        cover=("cover.png", _PNG_HEAD + b"c", "image/png"),
+        cartridge_id="OLD-1",
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_image(logged_in_games, "/api/games/gallery", game_id)
+    _upload_image(logged_in_games, "/api/games/screenshots", game_id)
+    _upload_save(logged_in_games, game_id)
+
+    before_files = _files(storage_root)
+    assert any(path.startswith("game/nes/OLD-1/") for path in before_files)
+    assert any(path.startswith("save/alice/nes/OLD-1/") for path in before_files)
+    assert any(path.startswith("image/alice/nes/OLD-1/") for path in before_files)
+
+    response = _rename(logged_in_games, game_id, "new-2")
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    # 提交值自动转大写
+    assert body["cartridge_id"] == "NEW-2"
+    assert body["game_path"] == "game/nes/NEW-2/game.nes"
+    assert body["cover_path"] == "game/nes/NEW-2/cover.png"
+    assert body["updated_at"] != created["updated_at"]
+
+    # 磁盘：新目录在、旧目录一个不剩
+    assert _exists(storage_root, "game/nes/NEW-2/game.nes")
+    assert _exists(storage_root, "game/nes/NEW-2/cover.png")
+    assert not any("OLD-1" in path for path in _files(storage_root))
+    assert not any("OLD-1" in path for path in _path_rows(app, game_id))
+
+    # 库里每一行都指向新路径
+    assert _path_rows(app, game_id) == [
+        "game/nes/NEW-2/game.nes",
+        "game/nes/NEW-2/cover.png",
+        "game/nes/NEW-2/image/" + Path(_path_rows(app, game_id)[2]).name,
+        "image/alice/nes/NEW-2/" + Path(_path_rows(app, game_id)[3]).name,
+        "save/alice/nes/NEW-2/" + Path(_path_rows(app, game_id)[4]).name,
+    ]
+
+    # 功能照旧：本体、封面、图集、截图、存档都还读得到
+    assert logged_in_games.get(f"/api/games/{game_id}/play").status_code == 200
+    assert logged_in_games.get(f"/api/games/{game_id}/cover").status_code == 200
+    gallery = logged_in_games.get(
+        "/api/games/gallery", params={"game_id": game_id}
+    ).json()["data"]
+    assert (
+        logged_in_games.get(f"/api/games/gallery/{gallery[0]['id']}/image").status_code
+        == 200
+    )
+    shots = logged_in_games.get(
+        "/api/games/screenshots", params={"game_id": game_id}
+    ).json()["data"]
+    assert (
+        logged_in_games.get(
+            f"/api/games/screenshots/{shots[0]['id']}/image"
+        ).status_code
+        == 200
+    )
+    saves = logged_in_games.get(
+        "/api/games/saves", params={"game_id": game_id}
+    ).json()["data"]
+    assert (
+        logged_in_games.get(f"/api/games/saves/{saves[0]['id']}").status_code == 200
+    )
+
+
+def test_rename_cartridge_id_moves_historical_type_dirs(
+    logged_in_games, app, storage_root
+):
+    """存档与截图的目录名带的是写入当时的类型，改名要按 file_path 反推、不能按当前类型拼。"""
+    created = _create_game(
+        logged_in_games, "换过类型", "a.nes", b"nes-body", cartridge_id="HIST-1"
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_image(logged_in_games, "/api/games/screenshots", game_id)
+    _upload_save(logged_in_games, game_id)
+    _unlock_body(app, game_id)
+
+    # 换本体换成 gba：游戏目录跟着走，存档与截图目录留在 nes 下
+    switched = logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={"file": ("b.gba", b"gba-body", "application/octet-stream")},
+    )
+    assert switched.status_code == 201, switched.text
+    assert _exists(storage_root, "game/gba/HIST-1/game.gba")
+    assert _dir_files(storage_root, "save/alice/nes/HIST-1/")
+
+    assert _rename(logged_in_games, game_id, "HIST-2").status_code == 200
+
+    assert _exists(storage_root, "game/gba/HIST-2/game.gba")
+    assert _dir_files(storage_root, "save/alice/nes/HIST-2/")
+    assert not any("HIST-1" in path for path in _files(storage_root))
+    paths_now = _path_rows(app, game_id)
+    assert "save/alice/nes/HIST-2/" in " ".join(paths_now)
+    assert "image/alice/nes/HIST-2/" in " ".join(paths_now)
+    # 没有谁被按「当前类型 gba」错误地拼成 save/alice/gba/…
+    assert "alice/gba" not in " ".join(paths_now)
+
+
+def test_rename_cartridge_id_moves_other_users_dirs(
+    logged_in_games, app, storage_root
+):
+    """存档与截图按账号隔离，改名要把每个账号的目录都搬走。"""
+    client = logged_in_games
+    created = _create_game(client, "多人", "a.nes", b"nes-body", cartridge_id="MULTI-1")
+    game_id = created.json()["data"]["id"]
+    _upload_save(client, game_id)
+    _upload_image(client, "/api/games/screenshots", game_id)
+
+    with Session(app.state.engine) as session:
+        AuthService(session).create_user("bobby", "secret123")
+    assert client.post("/api/logout").status_code == 200
+    assert (
+        client.post(
+            "/api/login", json={"username": "bobby", "password": "secret123"}
+        ).status_code
+        == 200
+    )
+    _upload_save(client, game_id, b"bobby-save")
+    _upload_image(client, "/api/games/screenshots", game_id, b"bobby-frame")
+
+    assert _rename(client, game_id, "MULTI-2").status_code == 200
+
+    for user in ("alice", "bobby"):
+        assert _dir_files(storage_root, f"save/{user}/nes/MULTI-2/")
+        assert _dir_files(storage_root, f"image/{user}/nes/MULTI-2/")
+    assert not any("MULTI-1" in path for path in _files(storage_root))
+
+
+def test_rename_cartridge_id_moves_h5_manifest(logged_in_games, app, storage_root):
+    """H5 的清单行 file_path 要跟着改，改完资源与入口都还取得到。"""
+    game_id = _upload_h5(logged_in_games, name="改名 H5")
+    old_id = _cartridge_of(app, game_id)
+    archive = _make_zip({"index.html": b"<html>hi</html>", "assets/app.js": b"js"})
+    assert (
+        logged_in_games.post(
+            f"/api/games/manage/{game_id}/assets",
+            data={"kind": "game"},
+            files={"file": ("game.zip", archive, "application/zip")},
+        ).status_code
+        == 201
+    )
+
+    response = _rename(logged_in_games, game_id, "H5-NEW")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["game_path"] == "game/h5/H5-NEW/game.zip"
+    for row in _h5_rows(app, game_id):
+        assert row.file_path.startswith("game/h5/H5-NEW/h5/")
+    assert not any(old_id in path for path in _files(storage_root))
+    assert (
+        logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
+    )
+    assert (
+        logged_in_games.get(f"/api/games/{game_id}/h5/assets/app.js").status_code == 200
+    )
+
+
+def test_rename_cartridge_id_rejects_duplicate(logged_in_games, app, storage_root):
+    """新 ID 被别的游戏占了：400，且磁盘与库都不留痕。"""
+    first = _create_game(
+        logged_in_games, "甲", "a.nes", b"x", cartridge_id="DUP-A"
+    ).json()["data"]
+    second = _create_game(
+        logged_in_games, "乙", "b.nes", b"y", cartridge_id="DUP-B"
+    ).json()["data"]
+    before_files = _files(storage_root)
+
+    response = _rename(logged_in_games, second["id"], "DUP-A")
+    assert response.status_code == 400
+    assert "DUP-A" in response.json()["message"]
+    assert _files(storage_root) == before_files
+    kept = logged_in_games.get(f"/api/games/manage/{second['id']}").json()["data"]
+    assert kept["cartridge_id"] == "DUP-B"
+    assert kept["game_path"] == "game/nes/DUP-B/game.nes"
+    assert first["cartridge_id"] == "DUP-A"
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "a b", "a/b", "A.B", "中", "A" * 65])
+def test_rename_cartridge_id_rejects_illegal(logged_in_games, storage_root, raw):
+    created = _create_game(
+        logged_in_games, "非法", "a.nes", b"x", cartridge_id="LEGAL-1"
+    ).json()["data"]
+    before_files = _files(storage_root)
+
+    response = _rename(logged_in_games, created["id"], raw)
+    assert response.status_code == 400
+    assert response.json()["message"]
+    assert _files(storage_root) == before_files
+
+
+def test_rename_cartridge_id_unknown_game(logged_in_games):
+    response = _rename(logged_in_games, 999, "WHATEVER")
+    assert response.status_code == 404
+    assert "游戏不存在" in response.json()["message"]
+
+
+def test_rename_cartridge_id_same_value_is_noop(logged_in_games, storage_root):
+    """新旧相同（含只差大小写）：200 空操作，磁盘与 updated_at 都不动。"""
+    created = _create_game(
+        logged_in_games, "没变", "a.nes", b"x", cartridge_id="SAME-1"
+    ).json()["data"]
+    before_files = _files(storage_root)
+
+    response = _rename(logged_in_games, created["id"], "same-1")
+    assert response.status_code == 200
+    assert response.json()["data"]["cartridge_id"] == "SAME-1"
+    assert response.json()["data"]["updated_at"] == created["updated_at"]
+    assert _files(storage_root) == before_files
+
+
+def test_rename_cartridge_id_rejects_existing_target_dir(
+    logged_in_games, app, storage_root
+):
+    """源目录不在、目标目录却在：拦下，免得这盘游戏悄悄指向别人的目录。"""
+    created = _create_game(
+        logged_in_games, "撞目录", "a.nes", b"x", cartridge_id="CLASH-1"
+    ).json()["data"]
+    game_id = created["id"]
+    storage = app.state.storage
+    storage.upload("game/nes/CLASH-2/game.nes", _stream(b"someone-else"), 13, None)
+    storage.remove_tree("game/nes/CLASH-1")
+
+    response = _rename(logged_in_games, game_id, "CLASH-2")
+    assert response.status_code == 400
+    assert "game/nes/CLASH-2" in response.json()["message"]
+    # 那个陌生目录没被 move_tree 顺手删掉，行也原封不动
+    assert _read(storage_root, "game/nes/CLASH-2/game.nes") == b"someone-else"
+    assert (
+        logged_in_games.get(f"/api/games/manage/{game_id}").json()["data"][
+            "cartridge_id"
+        ]
+        == "CLASH-1"
+    )
+
+
+def test_rename_cartridge_id_tolerates_missing_source_dir(
+    logged_in_games, app, storage_root
+):
+    """本体目录不在了（宿主手删 / 换过类型还没补本体）也照常改名，只是不搬文件。"""
+    created = _create_game(
+        logged_in_games, "没目录", "a.nes", b"x", cartridge_id="GONE-1"
+    ).json()["data"]
+    game_id = created["id"]
+    app.state.storage.remove_tree("game/nes/GONE-1")
+
+    response = _rename(logged_in_games, game_id, "GONE-2")
+    assert response.status_code == 200
+    assert response.json()["data"]["game_path"] == "game/nes/GONE-2/game.nes"
+    assert not _exists(storage_root, "game/nes/GONE-2/game.nes")
+
+
+def test_rename_cartridge_id_rolls_back_when_move_fails(
+    logged_in_games, app, storage_root, monkeypatch
+):
+    """搬第二个目录时失败：第一个要搬回去，库里的路径一个字节都不能变。"""
+    from backend.games import service as games_service
+    from backend.storage.local import LocalStorage
+
+    created = _create_game(
+        logged_in_games, "搬不动", "a.nes", b"x", cartridge_id="FAIL-1"
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_save(logged_in_games, game_id)
+    before_files = _files(storage_root)
+
+    original = LocalStorage.move_tree
+    calls = {"n": 0}
+
+    def flaky(self, source_key, target_key):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise games_service.StorageError("磁盘炸了")
+        return original(self, source_key, target_key)
+
+    monkeypatch.setattr(LocalStorage, "move_tree", flaky)
+    with Session(app.state.engine) as session:
+        service = GameService(session, app.state.storage)
+        with pytest.raises(games_service.StorageError):
+            service.rename_cartridge_id(game_id, "FAIL-2")
+
+    # 两次正向搬（游戏目录、存档目录，第二次炸）+ 一次回滚搬回
+    assert calls["n"] == 3
+    assert _files(storage_root) == before_files
+    with Session(app.state.engine) as session:
+        row = session.get(Game, game_id)
+        assert row.cartridge_id == "FAIL-1"
+        assert row.game_path == "game/nes/FAIL-1/game.nes"
+
+
+def test_rename_cartridge_id_rejects_path_too_long_on_windows(
+    logged_in_games, storage_root, monkeypatch
+):
+    """Windows 上改名后总长越界要在动手之前报错，磁盘一个字节都不动。"""
+    from backend.games import service as games_service
+
+    created = _create_game(
+        logged_in_games, "太长", "a.nes", b"x", cartridge_id="LEN-1"
+    ).json()["data"]
+    before_files = _files(storage_root)
+
+    # 卡带 ID 最长 64，光靠它顶不破 240，所以把预算压到「数据根 + 一段新路径」之下
+    monkeypatch.setattr(games_service, "_IS_WINDOWS", True)
+    monkeypatch.setattr(games_service, "_WINDOWS_PATH_BUDGET", 80)
+    response = _rename(logged_in_games, created["id"], "L" * 64)
+    assert response.status_code == 400
+    assert "过长的路径" in response.json()["message"]
+    assert "卡带 ID 改短" in response.json()["message"]
+    assert _files(storage_root) == before_files
+
+
+def test_rename_cartridge_id_keeps_body_lock_and_cover_type(
+    logged_in_games, storage_root
+):
+    """改名不碰本体内容：CRC32 锁与封面类型都原样保留，锁仍然生效。"""
+    created = _create_game(
+        logged_in_games,
+        "锁",
+        "a.nes",
+        b"locked-body",
+        cover=("cover.png", _PNG_HEAD + b"c", "image/png"),
+        cartridge_id="LOCK-1",
+    ).json()["data"]
+    game_id = created["id"]
+    assert (
+        logged_in_games.put(
+            f"/api/games/manage/{game_id}", json={"cover_type": "nes"}
+        ).status_code
+        == 200
+    )
+    locked = logged_in_games.get(f"/api/games/manage/{game_id}").json()["data"]
+    assert locked["crc32"]
+
+    assert _rename(logged_in_games, game_id, "LOCK-2").status_code == 200
+    after = logged_in_games.get(f"/api/games/manage/{game_id}").json()["data"]
+    assert after["crc32"] == locked["crc32"]
+    assert after["cover_type"] == "nes"
+
+    # 换本体仍走 CRC32 锁：同一个文件可以、别的文件不行
+    same = logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={"file": ("again.nes", b"locked-body", "application/octet-stream")},
+    )
+    assert same.status_code == 201
+    assert same.json()["data"]["game_path"] == "game/nes/LOCK-2/game.nes"
+    other = logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={"file": ("other.nes", b"different", "application/octet-stream")},
+    )
+    assert other.status_code == 400
 
 
 def test_sanitize_game_name_for_import():

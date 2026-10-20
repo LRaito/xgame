@@ -87,6 +87,17 @@ export function updateManageGameAPI(id, data) {
     return request({ url: `/api/games/manage/${id}`, method: "put", data });
 }
 
+/** 改卡带 ID：后端会把磁盘目录（含各账号的存档与截图）一起改名并改写库里的路径列。
+
+    独立接口——普通编辑（updateManageGameAPI）不接受这个字段。 */
+export function renameCartridgeIdAPI(id, cartridgeId) {
+    return request({
+        url: `/api/games/manage/${id}/cartridge-id`,
+        method: "put",
+        data: { cartridge_id: cartridgeId },
+    });
+}
+
 /** 从 7k7k / 4399 / flash.homes 游戏页地址搬运游戏（服务端解析、下载并入库，耗时较长）。
 
     卡带ID 由服务端按本体 CRC32 自动生成（F-{CRC32}），不用前端传。 */

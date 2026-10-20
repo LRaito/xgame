@@ -39,6 +39,11 @@ class UpdateGameBody(BaseModel):
     clear_cover: bool = False
 
 
+class RenameCartridgeBody(BaseModel):
+    # 缺字段时给空串、走业务侧的中文 400，不要 FastAPI 那句英文 422（与 ImportGameBody.url 同一套）
+    cartridge_id: str = ""
+
+
 class ImportGameBody(BaseModel):
     url: str = ""
 
@@ -255,6 +260,25 @@ def games_update(
         return json_err(str(exc), 400)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
+    return json_ok(_manage_payload(item))
+
+
+@router.put("/manage/{game_id}/cartridge-id")
+def games_rename_cartridge_id(
+    game_id: int, body: RenameCartridgeBody, _user: CurrentUser, service: GameServiceDep
+):
+    """改卡带ID：磁盘目录与库里所有引用它的路径列一起改。
+
+    **独立接口**：`PUT /manage/{id}` 依旧不接受这个字段——改名是搬目录的显式迁移，
+    不该混在普通编辑里（见 `docs/architecture.md` 决策 10）。
+    """
+    try:
+        item = service.rename_cartridge_id(game_id, body.cartridge_id)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    logger.info("已改卡带ID game_id=%s cartridge_id=%s", game_id, item.cartridge_id)
     return json_ok(_manage_payload(item))
 
 

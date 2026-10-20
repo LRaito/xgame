@@ -114,9 +114,43 @@
             <el-form label-width="88px" class="game-manage__form">
                 <div class="game-manage__form-cols">
                     <div class="game-manage__form-col">
-                        <!-- 编辑时把卡带ID摆到最上面：它建后不可改、又是磁盘目录名，是这盘卡的身份 -->
+                        <!-- 编辑时把卡带ID摆到最上面：它既是磁盘目录名、又是这盘卡的身份。
+                             值旁边给一个「修改 ID」：改它会连磁盘目录与各账号的存档/截图一起搬，
+                             所以单独一次请求、保存即生效，不走下面那个「保存」按钮 -->
                         <el-form-item v-if="formMode === 'edit'" label="卡带 ID">
-                            <span class="game-manage__detail-key">{{ editingItem?.cartridge_id }}</span>
+                            <div class="game-manage__cartridge">
+                                <template v-if="!cartridgeEditing">
+                                    <span class="game-manage__detail-key">
+                                        {{ editingItem?.cartridge_id }}
+                                    </span>
+                                    <app-button @click="startEditCartridgeId">
+                                        修改 ID
+                                    </app-button>
+                                </template>
+                                <template v-else>
+                                    <!-- esc 上的 .stop 不能少：el-dialog 默认按 ESC 关掉整个弹框，
+                                         不拦住的话按一下就把编辑弹框连未保存的改动一起关了 -->
+                                    <el-input
+                                        ref="cartridgeInputRef"
+                                        v-model="cartridgeDraft"
+                                        class="game-manage__cartridge-input"
+                                        maxlength="64"
+                                        placeholder="数字、字母、中划线、下划线，自动转大写"
+                                        @keydown.enter.prevent="onConfirmCartridgeId"
+                                        @keydown.esc.stop="cancelEditCartridgeId"
+                                    />
+                                    <app-button :disabled="cartridgeSaving" @click="cancelEditCartridgeId">
+                                        取消
+                                    </app-button>
+                                    <app-button
+                                        type="primary"
+                                        :loading="cartridgeSaving"
+                                        @click="onConfirmCartridgeId"
+                                    >
+                                        确认
+                                    </app-button>
+                                </template>
+                            </div>
                         </el-form-item>
                         <el-form-item label="游戏名称" required>
                             <el-input v-model="form.name" maxlength="255" placeholder="请输入游戏名称" />
@@ -436,7 +470,7 @@
 </template>
 
 <script setup>
-import { computed, h, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 import AppDialog from "@components/common/AppDialog.vue";
 import CopyButton from "@components/common/CopyButton.vue";
@@ -451,6 +485,7 @@ import {
     getManageGameAPI,
     importGameAPI,
     listManageGamesAPI,
+    renameCartridgeIdAPI,
     updateManageGameAPI,
     uploadGalleryAPI,
     uploadGameAssetAPI,
@@ -503,6 +538,13 @@ const form = reactive({
     bodyGameType: "",
     coverUrl: "",
 });
+
+// 卡带 ID 的就地改名：点「修改 ID」变输入框，回车/「确认」提交、ESC/「取消」放弃。
+// 保存即生效（后端要搬磁盘目录），不等下面那个「保存」按钮
+const cartridgeEditing = ref(false);
+const cartridgeDraft = ref("");
+const cartridgeSaving = ref(false);
+const cartridgeInputRef = ref(null);
 
 // 图集管理弹框（编辑弹框里的「图集 → 管理」打开；按游戏共享，保存即生效）
 const galleryManagerVisible = ref(false);
@@ -768,6 +810,45 @@ function resetForm() {
     releaseCoverPreview();
     editingId.value = null;
     editingItem.value = null;
+    cancelEditCartridgeId();
+}
+
+async function startEditCartridgeId() {
+    cartridgeDraft.value = editingItem.value?.cartridge_id || "";
+    cartridgeEditing.value = true;
+    await nextTick();
+    cartridgeInputRef.value?.focus();
+}
+
+function cancelEditCartridgeId() {
+    cartridgeEditing.value = false;
+    cartridgeDraft.value = "";
+}
+
+/** 确认改卡带 ID：后端会搬磁盘目录，所以这里单独发一次请求、保存即生效。 */
+async function onConfirmCartridgeId() {
+    // 按钮上有 loading/disabled，但回车也能触发，所以在途时直接忽略
+    if (cartridgeSaving.value) {
+        return;
+    }
+    const next = cartridgeDraft.value.trim().toUpperCase();
+    // 空着或没改动都当取消：不发请求，也不报错
+    if (!next || next === editingItem.value?.cartridge_id) {
+        cancelEditCartridgeId();
+        return;
+    }
+    cartridgeSaving.value = true;
+    try {
+        editingItem.value = await renameCartridgeIdAPI(editingId.value, next);
+        cancelEditCartridgeId();
+        ElMessage.success("卡带 ID 已修改");
+        await reload();
+    } catch (err) {
+        // 失败留在编辑态，改完再试；错误提示已由请求层 toast
+        if (!err.reported) ElMessage.error(err.message || "修改失败");
+    } finally {
+        cartridgeSaving.value = false;
+    }
 }
 
 function openCreate() {
@@ -1409,6 +1490,20 @@ onBeforeUnmount(() => {
 /* 原生文件选择器藏起来（样式没法统一），只由「本地上传」按钮代点 */
 .game-manage__file-input {
     display: none;
+}
+
+/* 卡带 ID 那一行：值占满左侧、按钮贴到左栏右边缘（改名时把值换成输入框，排版不跳） */
+.game-manage__cartridge {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+}
+
+.game-manage__cartridge .game-manage__detail-key,
+.game-manage__cartridge-input {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 /* 描述框：高度交给 rows（不拖拽缩放），底部留出字数统计那一行的位置，免得压住最后一行 */

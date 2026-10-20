@@ -68,7 +68,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 |----|------|------|------|
 | id | INTEGER | PK 自增 | 接口路由里的 `{game_id}`，与磁盘目录**无关** |
 | name | VARCHAR(255) | NOT NULL, 索引，联合唯一 `(game_type, name)` | 游戏名。校验为合法的 Windows 与百度网盘文件名（`validate_game_name()`）：不含 `\ / : * ? " < > |` 与控制字符、不以点结尾、非保留设备名、≤255 字符 |
-| cartridge_id | VARCHAR(64) | NOT NULL, 唯一索引 `uq_games_cartridge_id` | 卡带ID：创建时必填、**建后不可改**（只能删掉重建），同时是磁盘上的目录名与「同一盘卡带」的身份标识。规则见 `validate_cartridge_id()`：只允许数字、字母、中划线、下划线，落库前统一转**大写**。游戏榜单页在**请求期**拿它把榜单行关联到库存（`GameService.map_for_cartridge_ids`，比对前经 `normalize_cartridge_id()` 归一；只读、不落库） |
+| cartridge_id | VARCHAR(64) | NOT NULL, 唯一索引 `uq_games_cartridge_id` | 卡带ID：创建时必填，同时是磁盘上的目录名与「同一盘卡带」的身份标识。规则见 `validate_cartridge_id()`：只允许数字、字母、中划线、下划线，落库前统一转**大写**。**普通编辑（`PUT /manage/{id}`）改不动它**，要换走显式改名接口 `PUT /manage/{id}/cartridge-id`（`GameService.rename_cartridge_id()`）——一次迁移会搬三类目录并改写下面五处路径列（见「文件存储结构」）。游戏榜单页在**请求期**拿它把榜单行关联到库存（`GameService.map_for_cartridge_ids`，比对前经 `normalize_cartridge_id()` 归一；只读、不落库），所以改名后关联**立刻**跟着新 ID 走、不需要重建索引 |
 | cover_type | VARCHAR(20) | NULL | 封面类型：这盘封面被「美化」成了哪种外观，值就是封面样式 id（`flash` DISK / `gb` GB / `gbc` GBC / `gba` GBA / `fc` FC / `nes` NES）。**可空**，空 = 没有封面类型：新建（手动上传 / 网络上传 / 搬运）一律留空，只有管理页**编辑弹框手动选**（`PUT /manage/{id}`）与**「美化封面」**（`POST /manage/{id}/assets` 的 `cover_type` 表单字段，与封面文件同一次提交）两条写入路径。可选集合按游戏类型给，见 `backend/games/models.py` 的 `COVER_TYPES_BY_GAME_TYPE` / `cover_types_for()`——不支持美化封面的 `h5`/`snes`/`sega*` 返回空元组、永远为空；校验入口 `service.py::validate_cover_type()`。换本体导致游戏类型变化时，新类型不认的值清空。游戏中心「全部游戏」在游戏类型分组内再按它分行，空的自成一组排在最后。前端展示层镜像是 `frontend/src/constants/coverStyles.js` 的 `STYLE_BY_GAME_TYPE`（两边 id 集合与顺序必须一致） |
 | description | VARCHAR(200) | NOT NULL, 默认 `''` | 描述。上限 200 字（`validate_description()`）：新建/编辑超长直接 400，搬运抓来的站点简介按上限截断入库 |
 | game_type | VARCHAR(50) | NOT NULL, 索引 | 类型值：`flash`（Ruffle 播放 SWF）、`h5`（上传 ZIP，后端解包为多文件，沙箱 iframe 播放）或主机平台 `nes`/`snes`/`gb`/`gba`/`segaMD`/`segaGG`/`segaMS`（EmulatorJS 播放，值与 EJS system key 一致）。**由本体文件扩展名自动判定**（不手动指定），判定入口与白名单在 `backend/games/service.py` 的 `GAME_TYPES`/`_GAME_TYPE_EXTENSIONS`/`detect_game_type()`。中心列表按 `game_path != ''` 过滤 |
@@ -200,7 +200,12 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 **根目录下还可能有一个不在表里的哨兵文件 `.mounted`**：空文件，**人工创建**（不由 `LocalStorage`、也不由任何代码代建）。**只有该根的宿主路径落在 Windows 盘挂载路径前缀下时**（`backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，默认 `/mnt`）服务启动才会检查它，缺了就打日志等 5 秒退出（`backend/mount_guard.py`）；放普通 Linux 目录下的根不做这个检查。**数据根与运行时根各查一份**（两个根相同时就是同一个文件）。它只用来判断「这个目录确实是挂上了的根目录」，不参与任何业务路径。
 
-目录名一律用「游戏类型键 + 卡带ID」，**不随游戏名变化**——卡带ID 建后不可改，所以改游戏名不会挪动任何文件。
+目录名一律用「游戏类型键 + 卡带ID」，**不随游戏名变化**——改游戏名不会挪动任何文件。
+只有**显式改卡带ID**（`PUT /api/games/manage/<id>/cartridge-id`）会动磁盘：它把
+`game/{类型}/{旧ID}` 一棵树、以及各账号的 `save/{用户名}/{类型}/{旧ID}` 与
+`image/{用户名}/{类型}/{旧ID}` 整体改名，并同步改写 `games.game_path` / `games.cover_path` /
+`game_h5_files.file_path` / `game_gallery_images.file_path` / `game_screenshots.file_path` /
+`game_cloud_snapshot_files.file_path` 这六处（详见下文各条）。
 
 ### 路径规则
 
@@ -222,9 +227,9 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 - **游戏本体 / 封面**：路径随 `game_type` 与卡带ID 固定、不随上传文件名变，**同名重复上传会覆盖同一个文件**（先写同目录临时文件再改名）。本体后缀决定 `game_type`（扩展名与类型一一对应）：`.swf`→`flash`；`.zip`→`h5`；`.nes`→`nes`；`.sfc/.smc`→`snes`；`.gb/.gbc`→`gb`；`.gba`→`gba`；`.md/.gen`→`segaMD`；`.gg`→`segaGG`；`.sms`→`segaMS`；封面 `.jpg/.jpeg/.png/.gif/.webp`。换本体导致类型切换时，封面会跟着从旧类型目录挪到新类型目录（`LocalStorage.move`），随后**整个旧类型目录被递归删掉**；换封面后缀（如 `cover.png` → `cover.jpg`）在新文件写成功后删旧文件。
 - **H5 解包资源**：上传的 ZIP 本体存 `game/{类型}/{卡带ID}/game.zip`；解包出的每个文件按包内相对路径落盘到 `h5/` 下，`game_h5_files` 记录「包内路径 → 磁盘相对路径」。入口固定为根目录 `index.html`（大小写不敏感识别、落库统一小写）；整包套在单一顶层目录时会剥掉该前缀。**磁盘上没有代际前缀**：重传是整包替换，靠目录改名完成（旧 `h5/` 改名挪开 → 暂存目录改名就位 → 删掉挪开的旧目录），中途失败旧目录都还在；删除游戏或换本体离开 `h5` 时连同 ZIP 与整个解包目录一起清。
 - **攻略**：一份攻略就是 `guide/` 下的一个静态目录树，**没有清单表、也没有库里的标记**——「这个游戏有没有攻略」由 `guide/index.html` 是否存在（一次 `stat`）现算，所以从宿主目录手动拷走或删掉攻略，界面立刻跟着变。上传是**前端整目录选、后端一次 multipart 全收**：前端用 `webkitdirectory` 选文件夹、剥掉最外层目录名，把「文件夹内相对路径」按顺序放进 `paths`（JSON 数组，与 `files` 按下标一一对位），后端逐个过路径归一化（与 H5 包内路径同一套规则）、大小写不敏感查重、大小写不敏感识别入口并统一落成小写 `index.html`，根目录没有它就 400。落盘同样**没有代际前缀**：先写同层暂存目录 `.guide-{随机}`，全部就位后一次目录改名整体替换 `guide/`，失败清掉暂存目录、旧攻略还在；单次文件数上限 1000（Starlette 表单解析的硬上限）。读取走 `GET|HEAD /api/games/<id>/guide/<资源路径>`（**需登录**，与 H5 解包资源的免登录不同），路径归一化后直接拼磁盘路径，文件不存在即 404。删除游戏、或换本体把类型改走时，攻略随整个旧游戏目录一起清掉（不参与跨类型迁移）。
-- **游戏截图**：与云端存档同构——目录按 `用户名/游戏类型/卡带ID` 分，一个截图一个 `{uuid}.{后缀}`（uuid 不可猜、不重名），原始文件名与游戏名都不进路径。后缀由**内容的 magic** 定（播放页截的是 `.png`，图库里手动上传的还可能是 `.jpg`/`.webp`/`.gif`），单张上限 16MB。**目录里的 `game_type` 是上传当时的类型**：截图不参与「换游戏类型」的迁移，所以读取、单张删除、删游戏清理一律用行里的 `file_path`，绝不用游戏当前类型拼目录（换过类型时，同一游戏的截图可能分散在两个类型目录里，功能不受影响）。
+- **游戏截图**：与云端存档同构——目录按 `用户名/游戏类型/卡带ID` 分，一个截图一个 `{uuid}.{后缀}`（uuid 不可猜、不重名），原始文件名与游戏名都不进路径。后缀由**内容的 magic** 定（播放页截的是 `.png`，图库里手动上传的还可能是 `.jpg`/`.webp`/`.gif`），单张上限 16MB。**目录里的 `game_type` 是上传当时的类型**：截图不参与「换游戏类型」的迁移，所以读取、单张删除、删游戏清理一律用行里的 `file_path`，绝不用游戏当前类型拼目录（换过类型时，同一游戏的截图可能分散在两个类型目录里，功能不受影响）。**改卡带ID 同理**：只把 `file_path` 父目录的最后一段换成新 ID，那一层类型保持原样。
 - **游戏图集**：与截图相反，它在**游戏目录内**（`game/{类型}/{卡带ID}/image/{uuid}.{后缀}`），一个游戏一套、按游戏共享、不记上传者（目录名 `image` 与顶层按账号隔离的截图目录同名，但一个挂在游戏目录下、一个挂在用户名下，是两回事）。**目录里的 `game_type` 跟游戏当前类型走**：换本体换了游戏类型时整个 `image/` 目录随游戏目录一起搬到新类型目录，行里的 `file_path` 同步换成新前缀；读取、单张删除、删游戏清理同样按行里的 `file_path`。
-- **云端存档**：目录按 `用户名/游戏类型/卡带ID` 分，一个快照的每个文件各一个 `{uuid}.state`，文件名不体现原文件名（原名只用于下载时的 `Content-Disposition`，见 `game_cloud_snapshot_files.name`）。用户名进路径是安全的——用户名规则本身就限定在数字/字母/中划线/下划线。下载/删除快照按 `file_path` 定位文件；快照删除时逐文件删；上传中途失败回滚已写的文件（避免孤儿文件）。**删除游戏时连同它的全部存档快照与 `save/{用户名}/{类型}/{卡带ID}/` 目录一起清掉**（目录名带的是快照当时的游戏类型，所以按文件路径反推目录，而不是用游戏当前类型拼）。
+- **云端存档**：目录按 `用户名/游戏类型/卡带ID` 分，一个快照的每个文件各一个 `{uuid}.state`，文件名不体现原文件名（原名只用于下载时的 `Content-Disposition`，见 `game_cloud_snapshot_files.name`）。用户名进路径是安全的——用户名规则本身就限定在数字/字母/中划线/下划线。下载/删除快照按 `file_path` 定位文件；快照删除时逐文件删；上传中途失败回滚已写的文件（避免孤儿文件）。**删除游戏时连同它的全部存档快照与 `save/{用户名}/{类型}/{卡带ID}/` 目录一起清掉**（目录名带的是快照当时的游戏类型，所以按文件路径反推目录，而不是用游戏当前类型拼）。**改卡带ID 时同样按文件路径反推父目录**：把最后一段换成新 ID 并整目录改名，那一层类型保持原样。
 
 ## 游戏发现索引（`game.db`）
 

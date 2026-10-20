@@ -387,7 +387,9 @@ def _normalize_asset_path(raw: str, *, where: str) -> str:
     return normalized
 
 
-def _ensure_path_fits(root: str | None, relative: str, *, where: str) -> None:
+def _ensure_path_fits(
+    root: str | None, relative: str, *, where: str, hint: str = "或减少包内的目录层级"
+) -> None:
     """在 Windows 上卡一下「数据根 + 相对路径」的总长度。
 
     `_ASSET_MAX_PATH_LENGTH`（512）是**相对**上限，保证不了叠加数据根前缀之后仍在 260 以内。
@@ -399,7 +401,7 @@ def _ensure_path_fits(root: str | None, relative: str, *, where: str) -> None:
     if len(os.path.join(root, relative)) > _WINDOWS_PATH_BUDGET:
         raise ValidationError(
             f"{where}存在过长的路径：Windows 下完整路径不能超过 {_WINDOWS_PATH_BUDGET} 个字符，"
-            "请把数据目录放到更浅的位置（如 D:\\xgame），或减少包内的目录层级。"
+            f"请把数据目录放到更浅的位置（如 D:\\xgame），{hint}。"
         )
 
 
@@ -526,6 +528,14 @@ class _TypeSwitch:
     cover_to: str
     gallery_from: str
     gallery_to: str
+
+
+@dataclass(frozen=True)
+class _CartridgeMove:
+    """改卡带ID 时要整棵搬走的一对目录（源目录不在就当没有）。"""
+
+    source: str
+    target: str
 
 
 def play_path(game_type: str, game_id: int) -> str:
@@ -870,6 +880,138 @@ class GameService:
         self._session.commit()
         self._session.refresh(row)
         return self._to_item(row)
+
+    def rename_cartridge_id(self, game_id: int, cartridge_id: str) -> GameItem:
+        """改卡带ID：磁盘目录与库里所有引用它的路径列一起改，一次做完。
+
+        卡带ID 同时是磁盘目录名，所以这是一次**显式迁移**，而不是 `update()` 顺手改个字段：
+        先校验、查重、算清要搬哪些目录并把行里的路径改成新值，再把目录整棵搬过去
+        （中途失败按相反顺序搬回来），最后才提交。顺序是「先危险后安全」——反过来一旦目录
+        搬不动，库里所有路径就都指向不存在的位置，这盘游戏彻底打不开。
+        """
+        row = self._session.get(Game, game_id)
+        if row is None:
+            raise NotFoundError("游戏不存在。")
+        new_id = validate_cartridge_id(cartridge_id)
+        if new_id == row.cartridge_id:
+            # 没变就是空操作：不碰磁盘，也不刷 updated_at
+            return self._to_item(row)
+        self._ensure_cartridge_free(new_id, exclude_id=row.id)
+
+        moves = self._plan_cartridge_rename(row, new_id)
+        done = self._move_dirs_for_rename(moves)
+        row.cartridge_id = new_id
+        row.updated_at = datetime.now(timezone.utc)
+        self._session.add(row)
+        try:
+            self._session.commit()
+        except IntegrityError:
+            # 并发下别人刚占了这个 ID：唯一索引兜底，磁盘搬回去、行不留痕
+            self._session.rollback()
+            self._rollback_dirs_for_rename(done)
+            raise ValidationError(f"卡带 ID「{new_id}」已经被占用，换一个吧。") from None
+        self._session.refresh(row)
+        return self._to_item(row)
+
+    def _plan_cartridge_rename(self, row: Game, new_id: str) -> list[_CartridgeMove]:
+        """算清这次改名要搬哪些目录，并把行里所有引用旧卡带ID 的路径改成新值。
+
+        两件事放一起做，是为了让路径长度守卫照着**真正的目标路径**算，而不是另写一份镜像逻辑。
+
+        要搬的目录一共三类：游戏目录一棵树（本体、封面、h5、攻略、图集都在里面）、
+        以及按存档与截图的 `file_path` 反推出来的 `save/{用户名}/{类型}/{卡带ID}` 与
+        `image/{用户名}/{类型}/{卡带ID}`。后两类的目录名带的是**写入当时的游戏类型**
+        （截图与存档不参与换类型的迁移），所以只能从 file_path 反推、绝不用游戏当前类型拼
+        ——与 `delete()` 同一条规矩。
+        """
+        old_id = row.cartridge_id
+        old_dir = paths.game_dir(row.game_type, old_id)
+        new_dir = paths.game_dir(row.game_type, new_id)
+
+        moves = [_CartridgeMove(source=old_dir, target=new_dir)]
+        seen = {old_dir}
+        for asset in (*self._snapshot_file_rows(row.id), *self._screenshot_rows(row.id)):
+            if not asset.file_path:
+                continue
+            parent = PurePosixPath(asset.file_path).parent
+            # 目录名的最后一段就是写入当时的卡带ID；对不上说明这条路径不是我们写的，不碰
+            if parent.name != old_id:
+                continue
+            source = parent.as_posix()
+            if source in seen:
+                continue
+            seen.add(source)
+            moves.append(
+                _CartridgeMove(source=source, target=(parent.parent / new_id).as_posix())
+            )
+
+        # 本体、封面、H5 清单、图集：路径都在游戏目录里，只换掉那一层前缀
+        for holder, attr in ((row, "game_path"), (row, "cover_path")):
+            value = getattr(holder, attr)
+            if value and value.startswith(f"{old_dir}/"):
+                setattr(holder, attr, self._fit_renamed_path(f"{new_dir}/{value[len(old_dir) + 1:]}"))
+        for asset in (*self._h5_rows(row.id), *self._gallery_rows(row.id)):
+            if asset.file_path.startswith(f"{old_dir}/"):
+                asset.file_path = self._fit_renamed_path(
+                    f"{new_dir}/{asset.file_path[len(old_dir) + 1:]}"
+                )
+                self._session.add(asset)
+        # 存档与截图：只换各自父目录的最后一段（那一层类型是写入当时的，不能按当前类型拼）
+        for asset in (*self._snapshot_file_rows(row.id), *self._screenshot_rows(row.id)):
+            path = PurePosixPath(asset.file_path)
+            if not asset.file_path or path.parent.name != old_id:
+                continue
+            asset.file_path = self._fit_renamed_path(
+                (path.parent.parent / new_id / path.name).as_posix()
+            )
+            self._session.add(asset)
+        # 攻略目录里的深层文件没有任何表记录，长度只能保证到 guide/ 这一层
+        self._fit_renamed_path(paths.guide_dir(row.game_type, new_id))
+        return moves
+
+    def _fit_renamed_path(self, value: str) -> str:
+        """改名后的路径过一遍 Windows 总长守卫，原样返回（写起来能直接赋值）。"""
+        _ensure_path_fits(
+            self._storage_root(), value, where="改名后", hint="或把卡带 ID 改短一点"
+        )
+        return value
+
+    def _move_dirs_for_rename(self, moves: list[_CartridgeMove]) -> list[_CartridgeMove]:
+        """逐个搬目录；中途失败就把已搬的按相反顺序搬回去，再把异常抛出去。
+
+        搬之前先拦一种形态：**源目录不在、目标目录却在**。这时 `move_tree` 什么都不做，
+        可行里的路径照样被改成指向目标目录——这盘游戏会悄悄读上别人（或已删游戏的残留）的文件。
+        源在、目标也在是允许的：目标里只可能有孤儿文件，`move_tree` 会把它挪开再删掉。
+        """
+        for move in moves:
+            if not self._storage.dir_exists(move.source) and self._storage.dir_exists(
+                move.target
+            ):
+                raise ValidationError(
+                    f"改名被拦下：目录「{move.target}」已经存在，而「{move.source}」不在。"
+                    "改名后这盘游戏会指向那个目录，先把它清理掉再试。"
+                )
+        done: list[_CartridgeMove] = []
+        try:
+            for move in moves:
+                # 源目录不在（本体还没上传过，或宿主手动删过）就当没有，照常往下走：
+                # 改名本身是元数据操作，拒绝并不能让文件回来
+                self._storage.move_tree(move.source, move.target)
+                done.append(move)
+        except StorageError:
+            self._rollback_dirs_for_rename(done)
+            raise
+        return done
+
+    def _rollback_dirs_for_rename(self, done: list[_CartridgeMove]) -> None:
+        """把已经搬过去的目录按相反顺序搬回来；单个搬不动只记日志，不掩盖原始异常。"""
+        for move in reversed(done):
+            try:
+                self._storage.move_tree(move.target, move.source)
+            except StorageError:
+                logger.error(
+                    "改卡带ID 回滚失败：%s 没能搬回 %s，请手工处理。", move.target, move.source
+                )
 
     def delete(self, game_id: int) -> None:
         """删游戏：素材目录、云端存档、以及所有账号在它上面的记录一并清掉。

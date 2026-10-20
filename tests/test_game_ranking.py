@@ -17,6 +17,7 @@ from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, Settings
 from backend.games import search_index
 from backend.games.models import Game
 from backend.games.ranking_service import GameRankingService, _pick_default
+from backend.games.service import GameService
 from backend.games.search_index import (
     RANKING_SCHEMA_VERSION,
     SCHEMA_VERSION,
@@ -628,6 +629,22 @@ def test_ranking_unlinks_after_game_deleted(ranked, logged_in, app):
     _delete_game(app, game_id)
 
     assert _get(logged_in, RANKING_URL)["items"][0]["path"] is None
+
+
+def test_ranking_link_follows_cartridge_id_rename(ranked, logged_in, app):
+    """改卡带ID 后关联立刻跟着新 ID 走：旧 ID 脱钩、新 ID 命中（同样是每请求现算）。"""
+    game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
+    assert _get(logged_in, RANKING_URL)["items"][0]["path"] is not None
+
+    renamed = logged_in.put(
+        f"/api/games/manage/{game_id}/cartridge-id", json={"cartridge_id": "NES-SM2"}
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    assert _get(logged_in, RANKING_URL)["items"][0]["path"] is None
+    with Session(app.state.engine) as session:
+        links = GameService(session, app.state.storage).map_for_cartridge_ids(["NES-SM2"])
+    assert links["NES-SM2"].game_id == game_id
 
 
 def test_ranking_link_counts_for_stock_ratio(ranked, logged_in, app):

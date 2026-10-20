@@ -30,6 +30,16 @@ def test_upload_creates_parent_dirs_and_reads_back(storage):
     assert storage.stat("game/nes/AB-12/game.nes").size == 3
 
 
+def test_dir_exists_only_true_for_directories(storage):
+    """改卡带ID 前要判断目录形态：同名的是个文件也算不在。"""
+    storage.upload("game/nes/AB-12/game.nes", _stream(b"rom"), 3, None)
+    assert storage.dir_exists("game/nes/AB-12") is True
+    assert storage.dir_exists("game/nes/AB-12/game.nes") is False
+    assert storage.dir_exists("game/nes/nope") is False
+    with pytest.raises(ValidationError):
+        storage.dir_exists("../escape")
+
+
 def test_upload_overwrites_and_leaves_no_temp_file(storage, tmp_path):
     storage.upload("a/b.bin", _stream(b"old"), 3, None)
     storage.upload("a/b.bin", _stream(b"new-data"), 8, None)

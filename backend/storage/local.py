@@ -117,6 +117,10 @@ class LocalStorage:
             reader=handle,
         )
 
+    def dir_exists(self, key: str) -> bool:
+        """目录在不在（改卡带ID 前判新旧目录的形态时用）；同名的是个文件也算不在。"""
+        return self._resolve(key).is_dir()
+
     def move(self, source_key: str, target_key: str) -> bool:
         """把单个文件挪到新路径（封面随游戏类型换目录时用）；源文件不在就返回 False。"""
         source = self._resolve(source_key)
