@@ -10,11 +10,13 @@ import os
 import sqlite3
 
 import pytest
+from sqlmodel import Session
 
 from backend import create_app
 from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, Settings
 from backend.games import search_index
-from backend.games.ranking_service import _pick_default
+from backend.games.models import Game
+from backend.games.ranking_service import GameRankingService, _pick_default
 from backend.games.search_index import (
     RANKING_SCHEMA_VERSION,
     SCHEMA_VERSION,
@@ -499,6 +501,152 @@ def test_ranking_routes_are_not_shadowed(ranked, logged_in):
     """这两条路径不能被 games_router 的 /{game_id}/… 抢走（抢走会是 422 而不是 404）。"""
     assert "items" in _get(logged_in, RANKING_URL)
     assert "consoles" in _get(logged_in, RANKING_CONSOLES_URL)
+
+
+# --------------------------------------------------------------------------
+# 与平台库存的关联（请求期按卡带ID 匹配）
+# --------------------------------------------------------------------------
+
+
+def _make_game(app, name, cartridge_id, *, game_type="nes", game_path=None):
+    """往平台库存里插一行游戏（本组用例不碰真实文件，直接插行最省事）。
+
+    默认给一个非空的本体路径：关联只认「有本体」的游戏（与游戏中心列表同口径），
+    要测「没本体就不链」时显式传 `game_path=""`。
+    """
+    with Session(app.state.engine) as session:
+        row = Game(
+            name=name,
+            cartridge_id=cartridge_id,
+            game_type=game_type,
+            game_path=(
+                f"game/{game_type}/{cartridge_id}/game.bin"
+                if game_path is None
+                else game_path
+            ),
+        )
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+        return row.id
+
+
+def _delete_game(app, game_id):
+    with Session(app.state.engine) as session:
+        row = session.get(Game, game_id)
+        session.delete(row)
+        session.commit()
+
+
+@pytest.fixture
+def ranked_with(app, csv_dir, index_path, tmp_path):
+    """按用例自己写的榜单行建索引（默认固件覆盖不到的写法用）。"""
+
+    def _build(rows):
+        path = tmp_path / "custom-ranking" / "ranking.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _write_csv(path, [_RANKING_HEADER, *rows])
+        build_index(csv_dir, index_path, ranking_csv=path)
+        return index_path
+
+    return _build
+
+
+def test_ranking_links_game_in_library(ranked, logged_in, app):
+    """卡带ID 对上的行带上 game_id 与播放路径，没对上的行两个字段都是 null。"""
+    game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
+
+    page = _get(logged_in, RANKING_URL)
+
+    assert page["items"][0]["game_id"] == game_id
+    assert page["items"][0]["path"] == f"/games/play/{game_id}"
+    # 银河战士（NES-MT）库存里没有
+    assert page["items"][1]["game_id"] is None
+    assert page["items"][1]["path"] is None
+
+
+def test_ranking_link_uses_play_path_by_game_type(ranked, logged_in, app):
+    """播放路径按游戏类型给：flash / h5 各有自己的播放页。"""
+    flash_id = _make_game(app, "Flash 游戏", "NES-SM", game_type="flash")
+
+    page = _get(logged_in, RANKING_URL)
+
+    assert page["items"][0]["path"] == f"/games/flash/{flash_id}"
+
+
+def test_ranking_links_when_second_cartridge_id_matches(ranked, logged_in, app):
+    """一行两个卡带ID：任意一个命中就算关联（这里是第二个命中）。"""
+    game_id = _make_game(app, "双版本示例", "ID2")
+
+    page = _get(logged_in, RANKING_URL, console="gba")
+
+    assert page["items"][2]["title"] == "双版本示例"
+    assert page["items"][2]["cartridge_ids"] == ["ID1", "ID2"]
+    assert page["items"][2]["path"] == f"/games/play/{game_id}"
+
+
+def test_ranking_link_is_case_insensitive(ranked_with, logged_in, app):
+    """比对前两边都归一（去首尾空白 + 转大写）：榜单写小写也能对上库存的大写。"""
+    ranked_with([["1", "FC", "小写编号", "nes-sm"]])
+    game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
+
+    page = _get(logged_in, RANKING_URL)
+
+    assert page["items"][0]["path"] == f"/games/play/{game_id}"
+
+
+def test_ranking_link_ignores_ids_that_are_not_valid_cartridge_ids(
+    ranked_with, logged_in, app
+):
+    """榜单里带空格/点的原文（真实 CSV 里就有）不该报错，只是永远匹配不上。
+
+    关联绝不能复用 `validate_cartridge_id()`——它会抛校验错，把只读的榜单接口打挂。
+    """
+    ranked_with([["1", "FC", "编号带空格的游戏", "Part No. 7004 0894"]])
+    _make_game(app, "同名字游戏", "PARTNO70040894")
+
+    page = _get(logged_in, RANKING_URL)
+
+    assert page["items"][0]["cartridge_ids"] == ["Part No. 7004 0894"]
+    assert page["items"][0]["path"] is None
+
+
+def test_ranking_skips_games_without_body(ranked, logged_in, app):
+    """没有本体的条目不给链接（点进去只会 404，与游戏中心列表同口径）。"""
+    _make_game(app, "本体丢了的游戏", "NES-SM", game_path="")
+
+    page = _get(logged_in, RANKING_URL)
+
+    assert page["items"][0]["path"] is None
+
+
+def test_ranking_unlinks_after_game_deleted(ranked, logged_in, app):
+    """关联是每请求现算的：删掉游戏后下一次请求就没有链接了（不用重建索引）。"""
+    game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
+    assert _get(logged_in, RANKING_URL)["items"][0]["path"] is not None
+
+    _delete_game(app, game_id)
+
+    assert _get(logged_in, RANKING_URL)["items"][0]["path"] is None
+
+
+def test_ranking_link_counts_for_stock_ratio(ranked, logged_in, app):
+    """「已入库比例」的数据契约：前端拿 path 非空的行数当分子、总行数当分母。"""
+    _make_game(app, "精灵宝可梦 火红", "GSAE")
+    _make_game(app, "黄金太阳", "ID1")
+
+    items = _get(logged_in, RANKING_URL, console="gba")["items"]
+
+    assert len(items) == 4
+    assert sum(1 for item in items if item["path"]) == 2
+
+
+def test_ranking_service_without_lookup_does_not_link(ranked, csv_dir, ranking_csv):
+    """不注入查库存的回调 = 不关联（默认值，老的构造方式行为不变）。"""
+    page = GameRankingService(ranked).get("nes")
+
+    assert [item.cartridge_ids for item in page.items] == [("NES-SM",), ("NES-MT",)]
+    assert all(item.game_id is None and item.path is None for item in page.items)
 
 
 def test_pick_default_console_prefers_fc_then_registry_order():

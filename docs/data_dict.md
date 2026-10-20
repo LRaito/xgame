@@ -68,7 +68,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 |----|------|------|------|
 | id | INTEGER | PK 自增 | 接口路由里的 `{game_id}`，与磁盘目录**无关** |
 | name | VARCHAR(255) | NOT NULL, 索引，联合唯一 `(game_type, name)` | 游戏名。校验为合法的 Windows 与百度网盘文件名（`validate_game_name()`）：不含 `\ / : * ? " < > |` 与控制字符、不以点结尾、非保留设备名、≤255 字符 |
-| cartridge_id | VARCHAR(64) | NOT NULL, 唯一索引 `uq_games_cartridge_id` | 卡带ID：创建时必填、**建后不可改**（只能删掉重建），同时是磁盘上的目录名与「同一盘卡带」的身份标识。规则见 `validate_cartridge_id()`：只允许数字、字母、中划线、下划线，落库前统一转**大写** |
+| cartridge_id | VARCHAR(64) | NOT NULL, 唯一索引 `uq_games_cartridge_id` | 卡带ID：创建时必填、**建后不可改**（只能删掉重建），同时是磁盘上的目录名与「同一盘卡带」的身份标识。规则见 `validate_cartridge_id()`：只允许数字、字母、中划线、下划线，落库前统一转**大写**。游戏榜单页在**请求期**拿它把榜单行关联到库存（`GameService.map_for_cartridge_ids`，比对前经 `normalize_cartridge_id()` 归一；只读、不落库） |
 | cover_type | VARCHAR(20) | NULL | 封面类型：这盘封面被「美化」成了哪种外观，值就是封面样式 id（`flash` DISK / `gb` GB / `gbc` GBC / `gba` GBA / `fc` FC / `nes` NES）。**可空**，空 = 没有封面类型：新建（手动上传 / 网络上传 / 搬运）一律留空，只有管理页**编辑弹框手动选**（`PUT /manage/{id}`）与**「美化封面」**（`POST /manage/{id}/assets` 的 `cover_type` 表单字段，与封面文件同一次提交）两条写入路径。可选集合按游戏类型给，见 `backend/games/models.py` 的 `COVER_TYPES_BY_GAME_TYPE` / `cover_types_for()`——不支持美化封面的 `h5`/`snes`/`sega*` 返回空元组、永远为空；校验入口 `service.py::validate_cover_type()`。换本体导致游戏类型变化时，新类型不认的值清空。游戏中心「全部游戏」在游戏类型分组内再按它分行，空的自成一组排在最后。前端展示层镜像是 `frontend/src/constants/coverStyles.js` 的 `STYLE_BY_GAME_TYPE`（两边 id 集合与顺序必须一致） |
 | description | VARCHAR(200) | NOT NULL, 默认 `''` | 描述。上限 200 字（`validate_description()`）：新建/编辑超长直接 400，搬运抓来的站点简介按上限截断入库 |
 | game_type | VARCHAR(50) | NOT NULL, 索引 | 类型值：`flash`（Ruffle 播放 SWF）、`h5`（上传 ZIP，后端解包为多文件，沙箱 iframe 播放）或主机平台 `nes`/`snes`/`gb`/`gba`/`segaMD`/`segaGG`/`segaMS`（EmulatorJS 播放，值与 EJS system key 一致）。**由本体文件扩展名自动判定**（不手动指定），判定入口与白名单在 `backend/games/service.py` 的 `GAME_TYPES`/`_GAME_TYPE_EXTENSIONS`/`detect_game_type()`。中心列表按 `game_path != ''` 过滤 |
@@ -248,7 +248,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | `console` | 检索的**统一机种**（`id` / `name` UNIQUE / `platform_id` / `raw_names`）。一行 = 一个机种（不是 CSV 里的一个原始机种名）：`name` 是词表里的统一显示名（如「任天堂 GB/GBC」）、`platform_id` 是 EmulatorJS 的 system key（如 `gb`，未收录机种为 NULL）、`raw_names` 是 JSON 数组文本、记下被合并进来的原始写法（如 `["任天堂GB", "任天堂GBC"]`，溯源用）。单独一张表是为了不给每行重复存机种名 |
 | `game` | 名录一行（`id` / `console_id` / `zh` / `en` / `src`）。`src` 是来源 CSV 文件名，仅作溯源 |
 | `game_fts` | FTS5 全文索引（`zh_uni` / `en_uni`），**contentless**（`content=''`，不重复存正文），`tokenize='unicode61 remove_diacritics 2'`；`rowid` 与 `game.id` 一一对应 |
-| `ranking` | 榜单一行（`platform` / `console` / `rank` / `title` / `cartridge_ids`）。`PRIMARY KEY (platform, rank) WITHOUT ROWID`；`platform` 是归一后的机种键（认不出机种时是 `raw:{归一后的原文}`），`console` 是 CSV 原文（溯源与展示兜底）；`cartridge_ids` 是 JSON 数组文本（0~2 个卡带 ID，查不到编号时是空数组 `[]`）。机种存文本而不是外键——榜单的机种未必出现在检索名录里 |
+| `ranking` | 榜单一行（`platform` / `console` / `rank` / `title` / `cartridge_ids`）。`PRIMARY KEY (platform, rank) WITHOUT ROWID`；`platform` 是归一后的机种键（认不出机种时是 `raw:{归一后的原文}`），`console` 是 CSV 原文（溯源与展示兜底）；`cartridge_ids` 是 JSON 数组文本（0~2 个卡带 ID，查不到编号时是空数组 `[]`）。机种存文本而不是外键——榜单的机种未必出现在检索名录里。**表结构不变**：与平台库存的关联（榜单行 → `games.cartridge_id`）是接口**运行期**的一次只读查询，结果**不落库、不进索引**（见下面「约定」） |
 | `meta` | 键值元信息。检索：`schema_version`（与 `search_index.SCHEMA_VERSION` 比对，不符时接口 503）/ `built_at` / `rows` / `consoles`。榜单：`ranking_schema_version`（与 `RANKING_SCHEMA_VERSION` 比对，存在但不符时榜单接口 503）/ `ranking_fingerprint`（源 CSV 原始字节的 SHA-256，只有成功加载后才写）/ `ranking_source` / `ranking_rows` / `ranking_consoles` / `ranking_loaded_at` |
 | `idx_game_console` | `game(console_id, en)` 上的普通索引：无关键词时按机种分页排序走它，搜索不走它 |
 | `idx_console_platform` | `console(platform_id)` 上的普通索引 |
@@ -271,3 +271,8 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
   是正常状态，接口返回 `has_ranking: false` + 空列表，不是错误。
 - 榜单 CSV 的格式契约（四列、表头可选、序号唯一、卡带 ID 可空、分隔符与数量上限）见
   `backend/search/ranking/README.md`；解析错误带文件名与行号。
+- **榜单行与平台库存的关联是运行期的只读查询，不进这个库**：榜单接口每次请求把该机种整份榜单的
+  卡带 ID 一次性交给 `GameService.map_for_cartridge_ids`（比对前经 `normalize_cartridge_id()`
+  去首尾空白 + 转大写，只认 `games.game_path != ''` 的条目；一个机种最多 100 行 × 2 个 ID，
+  所以不分块），命中的行在载荷里多出 `game_id` / `path`。**关联结果不落库、不进索引、不缓存**，
+  所以增删游戏立刻生效，不需要 `make index`；索引库这边**一个字节都不写**。

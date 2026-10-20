@@ -420,7 +420,7 @@ frontend views / api/*
 
 所有 SQLModel 表与文件路径规则见 **[`data_dict.md`](data_dict.md)**（auth 2 表、games 9 表，共 11 张 + 7 类文件路径规则）。模型定义在 `backend/games/models.py` / `backend/auth/models.py`，路径规则定义在 `backend/games/paths.py`；改结构时同步更新 data_dict.md。
 
-另有一个**独立的只读库** `<数据根>/db/game.db`（游戏发现的检索索引 + 游戏榜单），它不属于这些 SQLModel 表、与 `app.db` 无外键关系，由服务启动时的自动补建或 `make index` 从 `backend/search/csv/` 的名录与 `backend/search/ranking/ranking.csv` 重建；结构与约定见 data_dict.md 的「游戏发现索引」。
+另有一个**独立的只读库** `<数据根>/db/game.db`（游戏发现的检索索引 + 游戏榜单），它不属于这些 SQLModel 表、与 `app.db` 无外键关系，由服务启动时的自动补建或 `make index` 从 `backend/search/csv/` 的名录与 `backend/search/ranking/ranking.csv` 重建；结构与约定见 data_dict.md 的「游戏发现索引」。两库之间**唯一**的往来是榜单接口在**请求期**按卡带 ID 去 `app.db` 查一次库存（只读、不写任何一边）。
 
 ## HTTP 表面
 
@@ -439,7 +439,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 | `/api/games/gallery` | 游戏图集：同一套接口，但**按游戏共享**（不记上传者，任何登录用户都能改） |
 | `/api/games/emulator-settings` | 登录用户的模拟器设置（键位等）按平台读写，存 SQLite |
 | `/api/games/search` | 游戏发现（检索）：外部中英文名录的只读全文检索（服务端分页 + 机种过滤）；`/consoles` 给机种下拉。索引是独立只读库，启动时不存在会自动补建，也可用 `make index` 重建 |
-| `/api/games/search/ranking` | 游戏发现（榜单）：按机种的整份榜单（不分页），`/ranking/consoles` 给机种下拉与默认机种。榜单 CSV 由 `make index` 或启动时就地补进同一个 `game.db` |
+| `/api/games/search/ranking` | 游戏发现（榜单）：按机种的整份榜单（不分页），`/ranking/consoles` 给机种下拉与默认机种。榜单 CSV 由 `make index` 或启动时就地补进同一个 `game.db`；与库存关联上的行多 `game_id` / `path`（请求期按卡带 ID 现查一次，只读、不落库） |
 
 **免登录：** 只有 `/health`、`/api/csrf`、`/api/register`、`/api/login`，以及 H5 解包资源 `GET|HEAD /api/games/{id}/h5/{资源路径}`（沙箱不透明源带不上 cookie，见决策 8）。`/play` 的 content-type 按本体扩展名：`.swf` 保持 Flash 专用值，主机 ROM 与 h5 ZIP 统一 `octet-stream`。其余端点均需登录，写操作另带 `X-CSRFToken`。
 

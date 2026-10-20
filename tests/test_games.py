@@ -4,6 +4,7 @@ import io
 import itertools
 import json
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -15,11 +16,14 @@ from backend.games import importer, paths
 from backend.games.models import Game, GameCloudSnapshot, GameCloudSnapshotFile, GameH5File
 from backend.games.service import (
     GAME_TYPES,
+    GameItem,
     GameService,
     GameUpload,
     detect_game_type,
+    normalize_cartridge_id,
     normalize_guide_path,
     normalize_h5_path,
+    play_path,
     sanitize_game_name,
     validate_cartridge_id,
     validate_game_name,
@@ -695,6 +699,73 @@ def test_validate_cartridge_id_normalizes(raw, expected):
 def test_validate_cartridge_id_rejects(raw):
     with pytest.raises(ValidationError):
         validate_cartridge_id(raw)
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("abc", "ABC"), ("  ab-1  ", "AB-1"), ("", ""), (None, "")],
+)
+def test_normalize_cartridge_id_only_normalizes(raw, expected):
+    """归一只做「去首尾空白 + 转大写」，**不校验**——榜单 CSV 里带空格/点的原文也要能过。"""
+    assert normalize_cartridge_id(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "game_type,expected",
+    [
+        ("flash", "/games/flash/7"),
+        ("h5", "/games/h5/7"),
+        ("nes", "/games/play/7"),
+        ("gba", "/games/play/7"),
+    ],
+)
+def test_play_path_matches_game_item_path(game_type, expected):
+    """播放路径只有一份实现：模块级 play_path() 与 GameItem.path 必须一致。"""
+    assert play_path(game_type, 7) == expected
+    item = GameItem(
+        id=7,
+        name="游戏",
+        cartridge_id="A1",
+        cover_type=None,
+        description="",
+        game_type=game_type,
+        size=0,
+        crc32="",
+        game_path="game/x/A1/game.bin",
+        cover_path=None,
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    assert item.path == expected
+
+
+def test_map_for_cartridge_ids_normalizes_and_keeps_raw_keys(game_service):
+    """键是**原样回传的入参**（调用方不必知道归一规则），未命中的入参不出现。"""
+    game_service.create(
+        "超级马里奥兄弟", "", _upload("a.nes", b"nes-body"), cartridge_id="NES-SM"
+    )
+
+    links = game_service.map_for_cartridge_ids([" nes-sm ", "nes-sm", "NOPE", ""])
+
+    assert set(links) == {" nes-sm ", "nes-sm"}
+    assert links[" nes-sm "].game_id == links["nes-sm"].game_id
+    assert links["nes-sm"].path == f"/games/play/{links['nes-sm'].game_id}"
+
+
+def test_map_for_cartridge_ids_skips_games_without_body(game_service, app):
+    """没有本体的条目不给链接（与游戏中心列表同口径）。"""
+    with Session(app.state.engine) as session:
+        session.add(
+            Game(name="本体丢了", cartridge_id="NES-SM", game_type="nes", game_path="")
+        )
+        session.commit()
+
+    assert game_service.map_for_cartridge_ids(["NES-SM"]) == {}
+
+
+def test_map_for_cartridge_ids_without_ids_does_not_query(game_service):
+    assert game_service.map_for_cartridge_ids([]) == {}
+    assert game_service.map_for_cartridge_ids(["", "   "]) == {}
 
 
 def test_create_requires_cartridge_id(logged_in_games):

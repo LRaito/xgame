@@ -7,6 +7,7 @@ import tempfile
 import unicodedata
 import zipfile
 import zlib
+from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -243,13 +244,24 @@ _ASSET_ILLEGAL_CHARS = _NAME_ILLEGAL_CHARS - {"/", "\\"}
 _CARTRIDGE_ID_RE = re.compile(CARTRIDGE_ID_PATTERN)
 
 
+def normalize_cartridge_id(raw: str) -> str:
+    """卡带ID 的**比对归一**：去首尾空白 + 转大写。只归一，不校验、不抛异常。
+
+    落库（`validate_cartridge_id`）与榜单关联（`map_for_cartridge_ids`）共用它，
+    保证「库里存的大写」与「拿来比对的大写」永远是同一行代码。
+    外面来的文本（榜单 CSV 的卡带 ID 列）可能有空格、小写、甚至根本不是合法卡带ID，
+    所以这里**绝不能**换成 `validate_cartridge_id()`——它会 raise，把只读的榜单接口打挂。
+    """
+    return (raw or "").strip().upper()
+
+
 def validate_cartridge_id(raw: str) -> str:
     """校验并返回卡带ID（去首尾空白、转大写）。
 
     卡带ID 唯一且创建后不可改，同时是磁盘上的目录名，所以字符集收得很紧：
     只允许数字、字母、中划线、下划线；小写会自动转成大写。
     """
-    value = (raw or "").strip().upper()
+    value = normalize_cartridge_id(raw)
     if not value:
         raise ValidationError("请填写卡带 ID。")
     if len(value) > CARTRIDGE_ID_MAX_LENGTH:
@@ -516,6 +528,26 @@ class _TypeSwitch:
     gallery_to: str
 
 
+def play_path(game_type: str, game_id: int) -> str:
+    """游戏的播放页路径。**这是播放路由的唯一一份实现**（`GameItem.path` 与榜单关联都走它）。
+
+    flash 走 Ruffle 播放页、h5 走沙箱 iframe 播放页，其余平台进 EmulatorJS 通用播放页。
+    """
+    if game_type == GAME_TYPE_FLASH:
+        return f"/games/flash/{game_id}"
+    if game_type == GAME_TYPE_H5:
+        return f"/games/h5/{game_id}"
+    return f"/games/play/{game_id}"
+
+
+@dataclass(frozen=True)
+class GameLink:
+    """一条「榜单行 → 平台库存游戏」的关联结果：游戏 id 与它的播放页路径。"""
+
+    game_id: int
+    path: str
+
+
 @dataclass(frozen=True)
 class GameItem:
     id: int
@@ -534,12 +566,7 @@ class GameItem:
 
     @property
     def path(self) -> str:
-        # flash 走 Ruffle 播放页、h5 走沙箱 iframe 播放页，其余平台进 EmulatorJS 通用播放页
-        if self.game_type == GAME_TYPE_FLASH:
-            return f"/games/flash/{self.id}"
-        if self.game_type == GAME_TYPE_H5:
-            return f"/games/h5/{self.id}"
-        return f"/games/play/{self.id}"
+        return play_path(self.game_type, self.id)
 
 
 @dataclass(frozen=True)
@@ -616,6 +643,41 @@ class GameService:
             .limit(limit)
         ).all()
         return [self._to_item(row) for row in rows]
+
+    def map_for_cartridge_ids(self, raw_ids: Sequence[str]) -> dict[str, GameLink]:
+        """一次查询拿一批卡带ID 对应的库存游戏（榜单行关联用），避免逐行查。
+
+        **入参是外面来的原始文本**（榜单 CSV 的卡带 ID 列：可能有空格、小写，也可能是根本
+        不存在的编号），比对前统一走 `normalize_cartridge_id()`（去首尾空白 + 转大写），
+        与落库时的大写形式对齐。**键是原样回传的入参字符串**——调用方 `links.get(原始ID)`
+        就完事，不必知道这条归一规则；没命中的入参不出现在结果里。
+
+        只认**有本体**的游戏（`game_path != ''`），与 `list_center` / `list_recent` 同口径：
+        没有本体的条目点进去只会 404，不该给链接。
+
+        不分块：榜单一个机种最多 100 行、每行最多 2 个卡带ID（见 `search_index._RANKING_ID_SPLIT`），
+        也就是最多 200 个宿主参数，离 SQLite 的 999 还差一个数量级。
+        """
+        # 归一后的 ID -> 原样入参（可能多个入参归一到同一个 ID，都要能查到）
+        wanted: dict[str, list[str]] = {}
+        for raw in raw_ids:
+            key = normalize_cartridge_id(raw)
+            if key:
+                wanted.setdefault(key, []).append(raw)
+        if not wanted:
+            return {}
+        rows = self._session.exec(
+            select(Game)
+            .where(col(Game.cartridge_id).in_(list(wanted)), Game.game_path != "")
+            # 卡带ID 有唯一索引，正常只会有一行；老库若缺索引（create_all 不补索引）就按 id 取第一条
+            .order_by(col(Game.id))
+        ).all()
+        links: dict[str, GameLink] = {}
+        for row in rows:
+            link = GameLink(game_id=row.id, path=play_path(row.game_type, row.id))
+            for raw in wanted.get(row.cartridge_id, ()):
+                links[raw] = link
+        return links
 
     def mark_played(self, user_id: int, game_id: int) -> None:
         """记录一次开玩：没有则插入，已有则刷新 played_at（一个游戏只留一行）。"""

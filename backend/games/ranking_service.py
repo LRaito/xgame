@@ -9,19 +9,25 @@
 import json
 import logging
 import sqlite3
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from backend.errors import IndexUnavailableError
 from backend.games.platforms import PLATFORM_BY_ID, platform_label, platform_order
 from backend.games.search_index import RANKING_SCHEMA_VERSION
+from backend.games.service import GameLink
 
 logger = logging.getLogger(__name__)
 
 # 榜单页默认选中的机种（统一机种键，也就是 EmulatorJS 的 system key）：FC。
 _DEFAULT_PLATFORM = "nes"
+
+# 「按卡带ID 找库存游戏」的能力，由构造函数注入（实现见 `GameService.map_for_cartridge_ids`）：
+# 传一批**原始**卡带ID 文本，回一批命中的 `{原始ID: GameLink}`。榜单服务自己不碰 `games` 表，
+# 也不 import 平台库存那边的 service，只认这个窄接口。
+CartridgeLookup = Callable[[Sequence[str]], Mapping[str, GameLink]]
 
 
 @dataclass(frozen=True)
@@ -29,6 +35,10 @@ class RankingItem:
     rank: int
     title: str
     cartridge_ids: tuple[str, ...]
+    # 该行是否关联到平台库存里的游戏（关联在**请求期**做，见 GameRankingService._attach_links）。
+    # 命中的是哪一个卡带ID 由关联规则决定，这里只留结果：游戏 id 与它的播放页路径。
+    game_id: int | None = None
+    path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -57,8 +67,12 @@ class RankingConsoles:
 
 
 class GameRankingService:
-    def __init__(self, db_path: Path) -> None:
+    def __init__(
+        self, db_path: Path, cartridge_lookup: CartridgeLookup | None = None
+    ) -> None:
         self._db_path = Path(db_path)
+        # None = 不关联平台库存（榜单照样返回，只是没有 game_id / path）
+        self._cartridge_lookup = cartridge_lookup
 
     def is_indexed(self) -> bool:
         """索引是否已构建。只 stat，不建目录、不建文件。"""
@@ -117,7 +131,37 @@ class GameRankingService:
                 ).fetchall()
             except sqlite3.Error as exc:
                 raise _broken(exc) from exc
-        return RankingPage(True, True, chosen, [_to_item(row) for row in items])
+        # 关联放在 with 之外：先关掉只读库的连接，再去查平台库存的 app.db
+        page_items = self._attach_links([_to_item(row) for row in items])
+        return RankingPage(True, True, chosen, page_items)
+
+    def _attach_links(self, items: list[RankingItem]) -> list[RankingItem]:
+        """把榜单行关联到平台库存的游戏（命中才有 `game_id` / `path`）。
+
+        **关联只能在请求期做**：榜单所在的 `game.db` 是外部名录的派生只读库，刻意不与 `games` 表
+        联动（构建索引时也不能把库存信息写进 `ranking` 表），所以每次请求现查一次，增删游戏立刻生效。
+
+        规则：一行最多两个卡带ID，**任意一个**命中就算关联，命中多个时取**该行第一个命中的那个**
+        （按 CSV 里的先后，结果确定）；比对是「去首尾空白 + 转大写」（`normalize_cartridge_id`），
+        只认有本体的游戏。整份榜单只查一次库存，不是逐行查。
+        """
+        if self._cartridge_lookup is None or not items:
+            return items
+        links = self._cartridge_lookup(
+            [cartridge_id for item in items for cartridge_id in item.cartridge_ids]
+        )
+        if not links:
+            return items
+        linked: list[RankingItem] = []
+        for item in items:
+            link = next(
+                (links[cid] for cid in item.cartridge_ids if cid in links), None
+            )
+            if link is None:
+                linked.append(item)
+            else:
+                linked.append(replace(item, game_id=link.game_id, path=link.path))
+        return linked
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:

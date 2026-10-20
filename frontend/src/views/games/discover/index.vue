@@ -113,10 +113,37 @@
                         :value="item.platform"
                     />
                 </el-select>
+
+                <!-- 榜单搜索：与检索区那个同一个 class（样式、位置、清空按钮都一样），但**纯前端**过滤
+                     ——榜单是一个机种整份取回来的，逐字即时筛，不需要防抖、也不需要回车或清空的处理
+                     （裸 v-model + clearable，computed 自己会跟着变） -->
+                <el-input
+                    v-model="rankingKeyword"
+                    class="game-discover__keyword"
+                    placeholder="搜索游戏名称"
+                    clearable
+                />
+
+                <!-- 已入库比例，同时是「只看已入库」的开关：单击按下，榜单就只留命中库存的行，再点一下恢复。
+                     数字由前端按已整份取回的 rankingItems 现算（榜单不分页），不再多打一次接口。
+                     加载中先藏起来：rankingItems 在请求成功前不会清空，否则切机种会闪一下上一个机种的数字 -->
+                <button
+                    v-if="rankingTotal && !rankingLoading"
+                    type="button"
+                    class="game-discover__stock"
+                    :class="{ 'is-active': rankingInLibraryOnly }"
+                    :aria-pressed="rankingInLibraryOnly"
+                    @click="toggleInLibraryOnly"
+                >
+                    <span class="game-discover__stock-label">已入库</span>
+                    <span class="game-discover__stock-value">
+                        {{ rankingLinkedCount }} / {{ rankingTotal }}
+                    </span>
+                </button>
             </div>
 
             <div v-loading="rankingLoading" class="game-discover__body">
-                <table v-if="rankingItems.length" class="game-discover__table">
+                <table v-if="rankingVisibleItems.length" class="game-discover__table">
                     <thead>
                         <tr>
                             <th class="game-discover__col-rank">排名</th>
@@ -127,7 +154,19 @@
                     <tbody>
                         <tr v-for="item in rankingPagedItems" :key="item.rank">
                             <td class="game-discover__rank">{{ item.rank }}</td>
-                            <td>{{ item.title }}</td>
+                            <td>
+                                <!-- 卡带 ID 与平台库存对上的行：游戏名是**真链接**（router-link 渲染成
+                                     原生 <a href>），单击进播放页，Ctrl+点击 / 中键由浏览器自己开新标签页。
+                                     没对上的行就是纯文本 -->
+                                <router-link
+                                    v-if="item.path"
+                                    class="game-discover__link"
+                                    :to="item.path"
+                                >
+                                    {{ item.title }}
+                                </router-link>
+                                <template v-else>{{ item.title }}</template>
+                            </td>
                             <td>
                                 <span v-if="!item.cartridge_ids.length" class="game-discover__none">
                                     —
@@ -154,7 +193,7 @@
                      键盘翻页同样只在榜单标签亮着时开着（同页两个分页条，监听都挂在 window 上） -->
                 <app-pagination
                     v-model:page="rankingPage"
-                    :total="rankingTotal"
+                    :total="rankingVisibleTotal"
                     :page-size="RANKING_PAGE_SIZE"
                     :keyboard="activeTab === 'ranking'"
                 />
@@ -328,14 +367,43 @@ const rankingConsole = ref("");
 // 当前机种的**整份**榜单（一个机种一次全取回来，前端分页的数据源）
 const rankingItems = ref([]);
 const rankingPage = ref(1);
+// 「已入库」按钮按下时只展示命中库存的行（纯前端过滤，不再打接口）
+const rankingInLibraryOnly = ref(false);
+// 榜单搜索词。与检索区的 keyword **故意分成两个**：那边是服务端 FTS（搜中英文两列、分词、剥尾部
+// 标签、支持 `mario*` 前缀），这边只是对游戏名称做不区分大小写的裸子串匹配，语义不同、别合并
+const rankingKeyword = ref("");
+const rankingNeedle = computed(() => rankingKeyword.value.trim().toLowerCase());
+// 这份榜单里卡带 ID 命中平台库存的行数（后端下发的 path 非空即命中）。
+// **按整份 rankingItems 算、不是当前页**——比例的口径是「这个机种的全部榜单行」；
+// 榜单现在是整份取回、前端分页，以后若改成服务端分页，这个数要挪到后端算。
+const rankingLinkedCount = computed(
+    () => rankingItems.value.filter((item) => item.path).length
+);
+// 只按搜索词过一遍（名称的裸子串、不区分大小写）。单独拆出来是为了空态能分清
+// 「是搜索没搜到」还是「搜到了但都没入库」——见 rankingEmptyDescription
+const rankingKeywordMatches = computed(() => {
+    const needle = rankingNeedle.value;
+    if (!needle) {
+        return rankingItems.value;
+    }
+    return rankingItems.value.filter((item) => item.title.toLowerCase().includes(needle));
+});
+// 搜索与「只看已入库」是 **AND**（先按词筛、再按库存筛），真正参与分页的就是它；
+// 而按钮上的比例仍按整份 rankingItems 算（分母是这份榜单的总行数，不随过滤变）
+const rankingVisibleItems = computed(() =>
+    rankingInLibraryOnly.value
+        ? rankingKeywordMatches.value.filter((item) => item.path)
+        : rankingKeywordMatches.value
+);
+const rankingVisibleTotal = computed(() => rankingVisibleItems.value.length);
+const rankingTotal = computed(() => rankingItems.value.length);
 // 当前这一页真正渲染的行
 const rankingPagedItems = computed(() =>
-    rankingItems.value.slice(
+    rankingVisibleItems.value.slice(
         (rankingPage.value - 1) * RANKING_PAGE_SIZE,
         rankingPage.value * RANKING_PAGE_SIZE
     )
 );
-const rankingTotal = computed(() => rankingItems.value.length);
 const rankingLoading = ref(false);
 const rankingIndexed = ref(true);
 const rankingAvailable = ref(true);
@@ -358,7 +426,30 @@ const rankingEmptyDescription = computed(() => {
     if (!rankingConsoles.value.length) {
         return "榜单暂无数据。";
     }
+    // 搜索与「已入库」是 AND：搜到了、但都被「只看已入库」挡掉时要明说，
+    // 否则用户看着按钮上的「已入库 25 / 100」会以为是搜索词的问题
+    const rawKeyword = rankingKeyword.value.trim();
+    if (rawKeyword) {
+        if (rankingInLibraryOnly.value && rankingKeywordMatches.value.length) {
+            return `匹配「${rawKeyword}」的游戏都还没入库。`;
+        }
+        return `没有匹配到名称含「${rawKeyword}」的游戏。`;
+    }
+    if (rankingInLibraryOnly.value && rankingItems.value.length) {
+        return "这个类型下还没有已入库的游戏。";
+    }
     return "该游戏类型暂无榜单数据。";
+});
+
+function toggleInLibraryOnly() {
+    rankingInLibraryOnly.value = !rankingInLibraryOnly.value;
+    // 行数变了，页码回到第一页（否则可能停在一个已经不存在的页上）
+    rankingPage.value = 1;
+}
+
+// 搜索词一变也回第一页（同上；打字/点 X 清空都走这里，不用再挂 @input / @clear）
+watch(rankingKeyword, () => {
+    rankingPage.value = 1;
 });
 
 async function loadRankingConsoles() {
@@ -506,9 +597,71 @@ onMounted(async () => {
     align-items: center;
 }
 
+/* 两个标签各有一个搜索框，共用这套宽度（机种下拉也一样宽） */
 .game-discover__keyword,
 .game-discover__console {
     width: 240px;
+}
+
+/* 「已入库比例」按钮：跟左边下拉框等高的一条描边小牌，走官方统计的观感——灰标签 + 深色等宽数字、
+   细边框、不加底色与阴影，不跟下拉抢视线。数字用 tabular-nums：换机种时 25 / 100 → 3 / 100
+   不会左右抖。按下（只看已入库）时点亮成实心主色，与页头那对标签的选中态同一套写法 */
+.game-discover__stock {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 5px 12px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 18px;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: none;
+}
+
+.game-discover__stock:hover {
+    border-color: var(--brand-accent);
+}
+
+.game-discover__stock.is-active {
+    border-color: var(--brand-accent);
+    background: var(--brand-accent);
+    color: #fff;
+}
+
+.game-discover__stock-label {
+    letter-spacing: 0.02em;
+}
+
+.game-discover__stock-value {
+    color: var(--brand-dark);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+}
+
+.game-discover__stock.is-active .game-discover__stock-value {
+    color: #fff;
+}
+
+/* 命中平台库存的榜单行：游戏名是真 <a>（router-link 渲染），走全局的主色；
+   下划线做成 1px 细线并抬高 2px，比浏览器默认那条粗线克制，指上去才转成实色。
+   链接是 inline 元素，不影响格子里写死的 20px 行盒 */
+.game-discover__link {
+    color: var(--brand-accent);
+    text-decoration: underline;
+    text-decoration-thickness: 1px;
+    text-decoration-color: #bfdbfe;
+    text-underline-offset: 2px;
+}
+
+.game-discover__link:hover {
+    text-decoration-color: currentColor;
 }
 
 .game-discover__body {

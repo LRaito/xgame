@@ -101,9 +101,14 @@ def get_game_search_service(request: Request) -> GameSearchService:
 GameSearchServiceDep = Annotated[GameSearchService, Depends(get_game_search_service)]
 
 
-def get_game_ranking_service(request: Request) -> GameRankingService:
-    # 榜单与检索共用同一个只读库（`<根路径>/db/game.db`），只是读另一张表
-    return GameRankingService(request.app.state.settings.game_index_path)
+def get_game_ranking_service(request: Request, games: GameServiceDep) -> GameRankingService:
+    # 榜单与检索共用同一个只读库（`<根路径>/db/game.db`），只是读另一张表。
+    # 额外把「按卡带ID 找库存游戏」注进去：榜单行要在**请求期**与 `games` 表关联一次
+    # （索引库本身刻意不与平台库存联动，见 ranking_service._attach_links）。
+    return GameRankingService(
+        request.app.state.settings.game_index_path,
+        cartridge_lookup=games.map_for_cartridge_ids,
+    )
 
 
 GameRankingServiceDep = Annotated[GameRankingService, Depends(get_game_ranking_service)]
