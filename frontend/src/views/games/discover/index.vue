@@ -1,13 +1,23 @@
 <template>
     <div class="game-discover">
         <!-- 单选栏：页面上不再有「游戏检索」标题，这两个按钮本身就是页头。
-             刻意不用 el-segmented —— 它那块跟着选项滑动的底片就是一种「切换效果」，
-             这里要的是一对更正式、更沉稳的大按钮。 -->
-        <el-radio-group v-model="activeTab" class="game-discover__tabs" size="large">
-            <el-radio-button v-for="tab in TABS" :key="tab.value" :value="tab.value">
+             **刻意不用 el-radio-group / el-segmented**：它们是原生单选控件，焦点落在里面时
+             按左右键浏览器会直接换选中项（同名 radio 的默认行为），而这页的左右键必须留给
+             当前标签里的分页条——**标签只能点**，所以这里就是一对普通按钮。
+             也不用任何「切换效果」，要的是一对更正式、更沉稳的大按钮。 -->
+        <div class="game-discover__tabs">
+            <button
+                v-for="tab in TABS"
+                :key="tab.value"
+                type="button"
+                class="game-discover__tab"
+                :class="{ 'is-active': activeTab === tab.value }"
+                :aria-pressed="activeTab === tab.value"
+                @click="activeTab = tab.value"
+            >
                 {{ tab.label }}
-            </el-radio-button>
-        </el-radio-group>
+            </button>
+        </div>
 
         <!-- 游戏检索 -->
         <section v-show="activeTab === 'search'" class="game-discover__panel">
@@ -440,33 +450,52 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* 页头的两个大单选（游戏检索 / 游戏榜单）。比 Element Plus 的默认尺寸再放大一档：
-   高 46px、字 15px、左右各 48px 内边距，选中态用实心主色，未选中是白底描边——一眼看清
-   现在在哪一块，也没有任何滑动动画。 */
+/* 页头的两个大单选（游戏检索 / 游戏榜单）。高 43px（行盒 15px + 上下各 13px 内边距 +
+   上下各 1px 边框，与原来那对 el-radio-button 逐像素一致）、字 15px、左右各 48px 内边距，
+   选中态用实心主色，未选中是白底描边——一眼看清现在在哪一块，也没有任何滑动动画。 */
 .game-discover__tabs {
+    display: flex;
     margin-bottom: 20px;
 }
 
-.game-discover__tabs :deep(.el-radio-button__inner) {
+.game-discover__tab {
+    /* 相邻两个按钮共用中间那条边线：后一个的左边界压在前一个的右边界上，
+       看着仍是一整条分段控件 */
+    margin-left: -1px;
     padding: 13px 48px;
-    border-color: var(--border);
+    border: 1px solid var(--border);
+    background: var(--surface);
     color: var(--text-muted);
+    font-family: inherit;
     font-size: 15px;
     font-weight: 500;
+    line-height: 1;
     letter-spacing: 1px;
-    box-shadow: none;
+    cursor: pointer;
+    user-select: none;
     transition: none;
 }
 
-.game-discover__tabs :deep(.el-radio-button__inner:hover) {
+.game-discover__tab:first-child {
+    margin-left: 0;
+    border-radius: 4px 0 0 4px;
+}
+
+.game-discover__tab:last-child {
+    border-radius: 0 4px 4px 0;
+}
+
+.game-discover__tab:hover {
     color: var(--brand-accent);
 }
 
-.game-discover__tabs :deep(.el-radio-button__original-radio:checked + .el-radio-button__inner) {
-    background: var(--brand-accent);
+/* 选中的那个要压在相邻按钮之上，否则它那条主色边线会被后一个按钮的灰边盖掉 */
+.game-discover__tab.is-active {
+    position: relative;
+    z-index: 1;
     border-color: var(--brand-accent);
+    background: var(--brand-accent);
     color: #fff;
-    box-shadow: none;
 }
 
 .game-discover__toolbar {
