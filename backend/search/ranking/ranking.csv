@@ -10,7 +10,7 @@
 9,FC,Mike Tyson's Punch-Out!!,NES-PT-USA;HVC-PT
 10,FC,Castlevania,NES-CV-USA;KDS-AKM
 11,FC,Contra,NES-CT-USA;KON-RC826
-12,FC,Zelda II: The Adventure of Link,NES-AL-USA
+12,FC,Zelda II: The Adventure of Link,NES-AL-USA;FMC-LNK
 13,FC,Ninja Gaiden,NES-NG-USA;TCF-NY
 14,FC,Kirby's Adventure,NES-KR-USA;HVC-KI
 15,FC,Dr. Mario,NES-VU-USA;HVC-VU
@@ -22,7 +22,7 @@
 21,FC,DuckTales,NES-UK-USA
 22,FC,River City Ransom,NES-DN-USA;TJC-DN
 23,FC,Battletoads,NES-8T-USA;NCS-8T
-24,FC,Double Dragon II: The Revenge,NES-W2-USA
+24,FC,Double Dragon II: The Revenge,NES-W2-USA;TJC-W2
 25,FC,Teenage Mutant Ninja Turtles II: The Arcade Game,NES-2N-USA;KON-RC853
 26,FC,Tecmo Super Bowl,NES-4U-USA;TCF-4U
 27,FC,Dragon Warrior IV,NES-D4-USA;EFC-D4
@@ -44,7 +44,7 @@
 43,FC,Metal Gear,NES-ME-USA;KDS-ME
 44,FC,Paperboy,NES-PY-USA;ALT-7B
 45,FC,Marble Madness,NES-MV-USA
-46,FC,Kung Fu,NES-SX-USA
+46,FC,Kung Fu,NES-SX-USA;HVC-KF
 47,FC,Ghosts 'n Goblins,NES-GG-USA;CAP-MK
 48,FC,Dragon Warrior,NES-DQ-USA;EFC-DQ
 49,FC,Chip 'n Dale Rescue Rangers,NES-RU-USA;CAP-JD
@@ -300,33 +300,33 @@
 99,N64,Re-Volt,NUS-NRVE-USA
 100,N64,Lego Racers,NUS-NLGE-USA
 1,GB/GBC,Pokémon Red / Blue / Green,DMG-APAE-USA;DMG-APAJ-JPN
-2,GB/GBC,Tetris,DMG-TR-USA
+2,GB/GBC,Tetris,DMG-TR-USA;DMG-TRA
 3,GB/GBC,Pokémon Gold / Silver,DMG-AAUE-USA;DMG-AAUJ-JPN
-4,GB/GBC,Super Mario Land,DMG-ML-USA
+4,GB/GBC,Super Mario Land,DMG-ML-USA;DMG-MLA
 5,GB/GBC,Pokémon Yellow,DMG-APSE-USA;DMG-APSJ-JPN
-6,GB/GBC,Super Mario Land 2: 6 Golden Coins,
-7,GB/GBC,The Legend of Zelda: Link's Awakening DX,DMG-AZLP-EUR
+6,GB/GBC,Super Mario Land 2: 6 Golden Coins,DMG-MQ-USA;DMG-L6J
+7,GB/GBC,The Legend of Zelda: Link's Awakening DX,DMG-AZLE-USA;DMG-AZLJ-JPN
 8,GB/GBC,Pokémon Crystal,CGB-BYTE-USA;CGB-BXTJ-JPN
-9,GB/GBC,Dr. Mario,DMG-VU-USA-1
+9,GB/GBC,Dr. Mario,DMG-VU-USA-1;DMG-VUA
 10,GB/GBC,Pokémon Pinball,DMG-VPHE-USA;DMG-VPHJ-JPN
-11,GB/GBC,Wario Land: Super Mario Land 3,
-12,GB/GBC,Kirby's Dream Land,
-13,GB/GBC,Super Mario Bros. Deluxe,CGB-AHYJ-JPN
-14,GB/GBC,The Legend of Zelda: Oracle of Seasons / Oracle of Ages,CGB-AZ7J-JPN
-15,GB/GBC,Donkey Kong,DMG-QD-USA;CGB-AD3J-JPN
-16,GB/GBC,Donkey Kong Land,DMG-YT-JPN
+11,GB/GBC,Wario Land: Super Mario Land 3,DMG-WJ-USA;DMG-WJA
+12,GB/GBC,Kirby's Dream Land,DMG-KY-USA;DMG-KYJ
+13,GB/GBC,Super Mario Bros. Deluxe,CGB-AHYE-USA;CGB-AHYJ-JPN
+14,GB/GBC,The Legend of Zelda: Oracle of Seasons / Oracle of Ages,CGB-AZ7E-USA;CGB-AZ7J-JPN
+15,GB/GBC,Donkey Kong,DMG-QD-USA;DMG-QDA
+16,GB/GBC,Donkey Kong Land,DMG-YT-USA;DMG-YT-JPN
 17,GB/GBC,Pokémon Trading Card Game,DMG-AXQE-USA;DMG-ACXJ-JPN
-18,GB/GBC,Metroid II: Return of Samus,DMG-ME-USA-2
+18,GB/GBC,Metroid II: Return of Samus,DMG-ME-USA-2;DMG-MEA
 19,GB/GBC,Wario Land 3,CGB-AW8A-USA
-20,GB/GBC,Wario Land II,DMG-AW2J-JPN
-21,GB/GBC,Kirby's Dream Land 2,
+20,GB/GBC,Wario Land II,DMG-AW2E-USA;DMG-AW2J-JPN
+21,GB/GBC,Kirby's Dream Land 2,DMG-AKBE-USA;DMG-AKBJ-JPN
 22,GB/GBC,Kirby Tilt 'n' Tumble,CGB-KTNE-USA
-23,GB/GBC,Dragon Warrior Monsters,DMG-ADQJ-JPN
+23,GB/GBC,Dragon Warrior Monsters,DMG-AWQE-USA;DMG-ADQJ-JPN
 24,GB/GBC,Dragon Warrior III,CGB-BD3E-USA;CGB-BD3J-JPN
 25,GB/GBC,Mario Tennis,CGB-BM8E-USA;CGB-BM8J-JPN
-26,GB/GBC,Metal Gear Solid,CGB-BMGE-USA
+26,GB/GBC,Metal Gear Solid,CGB-BMGE-USA;CGB-BMGJ-JPN
 27,GB/GBC,Shantae,CGB-B3AE-USA
-28,GB/GBC,Donkey Kong Country,
+28,GB/GBC,Donkey Kong Country,CGB-BDDE-USA;CGB-BDDJ-JPN
 29,GB/GBC,Tetris DX,DMG-ATEA-USA
 30,GB/GBC,Final Fantasy Adventure,DMG-FF-USA-1;DMG-FFJ
 31,GB/GBC,The Final Fantasy Legend,DMG-SA-USA-1;DMG-SAJ-JPN
@@ -335,41 +335,41 @@
 34,GB/GBC,Harvest Moon 3 GBC,CGB-BWAE-USA;CGB-BWAJ-JPN
 35,GB/GBC,Survival Kids,DMG-AVKE-USA;DMG-AVKJ-JPN
 36,GB/GBC,Yu-Gi-Oh! Dark Duel Stories,CGB-BY3E-USA;CGB-BY3J-JPN
-37,GB/GBC,Game & Watch Gallery 2,
-38,GB/GBC,Mole Mania,DMG-AMOJ-JPN
-39,GB/GBC,Alleyway,DMG-AW-USA-1
-40,GB/GBC,Tennis,DMG-TN-USA
-41,GB/GBC,Golf,DMG-GO-USA-3
+37,GB/GBC,Game & Watch Gallery 2,DMG-AGLE-USA
+38,GB/GBC,Mole Mania,DMG-AMOE-USA;DMG-AMOJ-JPN
+39,GB/GBC,Alleyway,DMG-AW-USA-1;DMG-AWA
+40,GB/GBC,Tennis,DMG-TN-USA;DMG-TNA
+41,GB/GBC,Golf,DMG-GO-USA-3;DMG-GOA
 42,GB/GBC,Yoshi,DMG-YO-USA-2;DMG-YOJ
-43,GB/GBC,Yoshi's Cookie,DMG-CI-JPN
-44,GB/GBC,Kirby's Pinball Land,
-45,GB/GBC,Mega Man: Dr. Wily's Revenge,DMG-RW-USA-1
-46,GB/GBC,Mega Man Xtreme,DMG-BRXJ-JPN
-47,GB/GBC,Castlevania II: Belmont's Revenge,DMG-CWJ
-48,GB/GBC,Bionic Commando: Elite Forces,
+43,GB/GBC,Yoshi's Cookie,DMG-CI-USA;DMG-CI-JPN
+44,GB/GBC,Kirby's Pinball Land,DMG-K9-USA;DMG-K9J
+45,GB/GBC,Mega Man: Dr. Wily's Revenge,DMG-RW-USA-1;DMG-RWA
+46,GB/GBC,Mega Man Xtreme,DMG-BM6E-USA;DMG-BRXJ-JPN
+47,GB/GBC,Castlevania II: Belmont's Revenge,DMG-CW-USA;DMG-CWJ
+48,GB/GBC,Bionic Commando: Elite Forces,CGB-AV4E-USA
 49,GB/GBC,Lufia: The Legend Returns,CGB-BLCE-USA;CGB-BCLJ-JPN
 50,GB/GBC,Pac-Man,DMG-PC-USA;DMG-PCJ
-51,GB/GBC,F-1 Race,DMG-F1-CAN
-52,GB/GBC,Tamagotchi,DMG-ATAJ-JPN
-53,GB/GBC,Donkey Kong Land 2,
+51,GB/GBC,F-1 Race,DMG-F1-USA;DMG-F1A
+52,GB/GBC,Tamagotchi,DMG-ATAE-USA;DMG-ATAJ-JPN
+53,GB/GBC,Donkey Kong Land 2,DMG-ADDE-USA
 54,GB/GBC,Baseball,DMG-BS-USA;DMG-BKJ
-55,GB/GBC,DuckTales,DMG-DTJ
-56,GB/GBC,Tetris 2,DMG-EH;DMG-EHJ
-57,GB/GBC,Solar Striker,
-58,GB/GBC,Qix,DMG-QX
-59,GB/GBC,Super R.C. Pro-Am,
-60,GB/GBC,Donkey Kong Land III,CGB-AD3J-JPN
-61,GB/GBC,Gargoyle's Quest,
+55,GB/GBC,DuckTales,DMG-DT-USA;DMG-DTJ
+56,GB/GBC,Tetris 2,DMG-EH-USA;DMG-EHJ
+57,GB/GBC,Solar Striker,DMG-SS-USA;DMG-SSA
+58,GB/GBC,Qix,DMG-QX-USA;DMG-QXA
+59,GB/GBC,Super R.C. Pro-Am,DMG-RC-USA
+60,GB/GBC,Donkey Kong Land III,DMG-AD3E-USA;CGB-AD3J-JPN
+61,GB/GBC,Gargoyle's Quest,DMG-RA-USA;DMG-RAJ
 62,GB/GBC,Final Fantasy Legend III,DMG-OS-USA-1;DMG-OSJ-JPN
-63,GB/GBC,Kirby's Block Ball,DMG-AKXJ
-64,GB/GBC,Mario's Picross,DMG-APCJ-JPN
+63,GB/GBC,Kirby's Block Ball,DMG-AKXE-USA;DMG-AKXJ
+64,GB/GBC,Mario's Picross,DMG-APCE-USA;DMG-APCJ-JPN
 65,GB/GBC,Game & Watch Gallery,DMG-AGAE-USA;DMG-AGAJ
 66,GB/GBC,Operation C,DMG-CN-USA;DMG-CNJ
-67,GB/GBC,Castlevania: The Adventure,DMG-CV;DMG-CVJ
-68,GB/GBC,Mega Man V,DMG-WM;DMG-WMJ-JPN
-69,GB/GBC,Kid Icarus: Of Myths and Monsters,
-70,GB/GBC,Balloon Kid,DMG-BSJ-JPN
-71,GB/GBC,Pokémon Puzzle Challenge,CGB-BPNE-USA
+67,GB/GBC,Castlevania: The Adventure,DMG-CV-USA;DMG-CVJ
+68,GB/GBC,Mega Man V,DMG-WM-USA;DMG-WMJ-JPN
+69,GB/GBC,Kid Icarus: Of Myths and Monsters,DMG-KA-USA
+70,GB/GBC,Balloon Kid,DMG-BT-USA;DMG-BSJ-JPN
+71,GB/GBC,Pokémon Puzzle Challenge,CGB-BPNE-USA;CGB-BPNJ-JPN
 72,GB/GBC,Pokémon Card GB2: Here Comes Team GR!,CGB-BP7J-JPN
 73,GB/GBC,Dragon Warrior I & II,DMG-AEDE-USA;DMG-AEDJ-JPN
 74,GB/GBC,Dragon Warrior Monsters 2,DMG-BQIE-USA;DMG-BQIJ-JPN
@@ -378,51 +378,51 @@
 77,GB/GBC,Crystalis,CGB-AYJE-USA
 78,GB/GBC,Revelations: The Demon Slayer,DMG-ALBE-USA;DMG-M7J
 79,GB/GBC,Warlocked,CGB-BWLE-USA
-80,GB/GBC,Toki Tori,
+80,GB/GBC,Toki Tori,CGB-B2TE-USA
 81,GB/GBC,Mr. Driller,CGB-BMDE-USA;CGB-BMDJ-JPN
-82,GB/GBC,Bomberman Quest,DMG-AVQE-USA
-83,GB/GBC,Bomberman Max: Blue Champion / Red Challenger,CGB-A8BE-USA
-84,GB/GBC,Conker's Pocket Tales,
+82,GB/GBC,Bomberman Quest,DMG-AVQE-USA;DMG-AB5J-JPN
+83,GB/GBC,Bomberman Max: Blue Champion / Red Challenger,CGB-A8BE-USA;CGB-A8BJ-JPN
+84,GB/GBC,Conker's Pocket Tales,DMG-ACRE-USA
 85,GB/GBC,Rayman,CGB-AYQE-USA;CGB-BURJ-JPN
 86,GB/GBC,Street Fighter Alpha: Warriors' Dreams,CGB-AFZE-USA;CGB-BFZJ-JPN
 87,GB/GBC,Alone in the Dark: The New Nightmare,CGB-BIDE-USA
 88,GB/GBC,Cannon Fodder,CGB-BCFE-USA
-89,GB/GBC,Wendy: Every Witch Way,
-90,GB/GBC,R-Type DX,DMG-ARUJ-JPN
+89,GB/GBC,Wendy: Every Witch Way,CGB-BWGE-USA
+90,GB/GBC,R-Type DX,DMG-AWHE-USA;DMG-ARUJ-JPN
 91,GB/GBC,Hamtaro: Ham-Hams Unite!,CGB-B86E-USA
-92,GB/GBC,Tomb Raider,
+92,GB/GBC,Tomb Raider,CGB-AT9E-USA
 93,GB/GBC,Resident Evil Gaiden,CGB-ARHE-USA
 94,GB/GBC,Deja Vu I & II,CGB-ADTE-USA;CGB-ADTJ-JPN
-95,GB/GBC,Shadowgate Classic,
+95,GB/GBC,Shadowgate Classic,DMG-ASWE-USA;DMG-ASWJ-JPN
 96,GB/GBC,Heroes of Might and Magic,CGB-AUHE-USA
-97,GB/GBC,Game & Watch Gallery 3,DMG-AGQJ-JPN
+97,GB/GBC,Game & Watch Gallery 3,DMG-AGQE-USA;DMG-AGQJ-JPN
 98,GB/GBC,Harvest Moon 2 GBC,DMG-BM2E-USA;DMG-A37J-JPN
 99,GB/GBC,Legend of the River King 2,DMG-BRKE-USA
-100,GB/GBC,Mega Man Xtreme 2,CGB-BXRJ-JPN
+100,GB/GBC,Mega Man Xtreme 2,CGB-B2XE-USA;CGB-BXRJ-JPN
 1,GBA,Pokémon Ruby / Sapphire,AGB-AXVE-USA;AGB-AXVJ-JPN
 2,GBA,Pokémon FireRed / LeafGreen,AGB-BPRE-USA;AGB-BPRJ-JPN
 3,GBA,Pokémon Emerald,AGB-BPEE-USA;AGB-BPEJ-JPN
 4,GBA,Mario Kart: Super Circuit,AGB-AMKE-USA;AGB-AMKJ-JPN
-5,GBA,Super Mario World: Super Mario Advance 2,AGB-AA2J-JPN
+5,GBA,Super Mario World: Super Mario Advance 2,AGB-AA2E-USA;AGB-AA2J-JPN
 6,GBA,Super Mario Advance,AGB-AMAE-USA;AGB-AMAJ-JPN
 7,GBA,Super Mario Advance 4: Super Mario Bros. 3,AGB-AX4E-USA;AGB-AX4J-JPN
 8,GBA,The Legend of Zelda: The Minish Cap,AGB-BZME-USA;AGB-BZMJ-JPN
-9,GBA,Metroid Fusion,AGB-AMTJ-JPN
-10,GBA,The Legend of Zelda: A Link to the Past,AGB-AZLJ-JPN
-11,GBA,Golden Sun,AGB-AGSJ-JPN
-12,GBA,Golden Sun: The Lost Age,AGB-AGFJ-JPN
-13,GBA,Mario & Luigi: Superstar Saga,AGB-A88J-JPN
+9,GBA,Metroid Fusion,AGB-AMTE-USA;AGB-AMTJ-JPN
+10,GBA,The Legend of Zelda: A Link to the Past,AGB-AZLE-USA;AGB-AZLJ-JPN
+11,GBA,Golden Sun,AGB-AGSE-USA;AGB-AGSJ-JPN
+12,GBA,Golden Sun: The Lost Age,AGB-AGFE-USA;AGB-AGFJ-JPN
+13,GBA,Mario & Luigi: Superstar Saga,AGB-A88E-USA;AGB-A88J-JPN
 14,GBA,Mother 3,AGB-A3UJ-JPN
 15,GBA,Metroid: Zero Mission,AGB-BMXE-USA;AGB-BMXJ-JPN
-16,GBA,Fire Emblem,AGB-AE7J-JPN
+16,GBA,Fire Emblem,AGB-AE7E-USA;AGB-AE7J-JPN
 17,GBA,Advance Wars,AGB-AWRE-USA
-18,GBA,Advance Wars 2: Black Hole Rising,AGB-AW2P-EUR
-19,GBA,Fire Emblem: The Sacred Stones,AGB-BE8J-JPN
+18,GBA,Advance Wars 2: Black Hole Rising,AGB-AW2E-USA
+19,GBA,Fire Emblem: The Sacred Stones,AGB-BE8E-USA;AGB-BE8J-JPN
 20,GBA,Castlevania: Aria of Sorrow,AGB-A2CE-USA;AGB-A2CJ-JPN
-21,GBA,Final Fantasy Tactics Advance,AGB-AFXJ-JPN
-22,GBA,Wario Land 4,AGB-P-AWAJ
+21,GBA,Final Fantasy Tactics Advance,AGB-AFXE-USA;AGB-AFXJ-JPN
+22,GBA,Wario Land 4,AGB-AWAE-USA;AGB-P-AWAJ
 23,GBA,"WarioWare, Inc.: Mega Microgames!",AGB-AZWE-USA;AGB-AZWJ-JPN
-24,GBA,Yoshi's Island: Super Mario Advance 3,AGB-AMAJ-JPN
+24,GBA,Yoshi's Island: Super Mario Advance 3,AGB-A3AE-USA;AGB-A3AJ-JPN
 25,GBA,Kirby: Nightmare in Dream Land,AGB-A7KE-USA;AGB-A7KJ-JPN
 26,GBA,Kirby & the Amazing Mirror,AGB-B8KE-USA;AGB-P-B8KJ
 27,GBA,Pokémon Mystery Dungeon: Red Rescue Team,AGB-B24E-USA;AGB-B24J-JPN
@@ -430,11 +430,11 @@
 29,GBA,Sonic Advance 2,AGB-A2NE-USA;AGB-A2NJ-JPN
 30,GBA,Mega Man Battle Network 3,AGB-A3XE-USA;AGB-A6BJ-JPN
 31,GBA,Mega Man Battle Network 4,AGB-B4BE-USA;AGB-B4BJ-JPN
-32,GBA,Mega Man Zero,AGB-ARZJ-JPN
+32,GBA,Mega Man Zero,AGB-AZCE-USA;AGB-ARZJ-JPN
 33,GBA,Kingdom Hearts: Chain of Memories,AGB-B8CE-USA;AGB-B8CJ-JPN
-34,GBA,Donkey Kong Country,AGB-A5NE-USA
-35,GBA,Mario vs. Donkey Kong,AGB-BM5J-JPN
-36,GBA,F-Zero: Maximum Velocity,AGB-AFZJ-JPN
+34,GBA,Donkey Kong Country,AGB-A5NE-USA;AGB-A5NJ-JPN
+35,GBA,Mario vs. Donkey Kong,AGB-BM5E-USA;AGB-BM5J-JPN
+36,GBA,F-Zero: Maximum Velocity,AGB-AFZE-USA;AGB-AFZJ-JPN
 37,GBA,Pokémon Pinball: Ruby & Sapphire,AGB-BPPE-USA;AGB-BPPJ-JPN
 38,GBA,Namco Museum,AGB-ANME-USA;AGB-ANMJ-JPN
 39,GBA,Pac-Man Collection,AGB-APCE-USA;AGB-APCJ-JPN
@@ -446,7 +446,7 @@
 45,GBA,WarioWare: Twisted!,AGB-RZWE-USA;AGB-RZWJ-JPN
 46,GBA,Rhythm Tengoku,AGB-BRIJ-JPN
 47,GBA,Final Fantasy VI Advance,AGB-BZ6E-USA;AGB-BZ6J-JPN
-48,GBA,Boktai: The Sun Is in Your Hand,AGB-U3IE-USA
+48,GBA,Boktai: The Sun Is in Your Hand,AGB-U3IE-USA;AGB-U3IJ-JPN
 49,GBA,Summon Night: Swordcraft Story,AGB-AB4E-USA;AGB-AB4J-JPN
 50,GBA,Drill Dozer,AGB-V49E-USA;AGB-V49J-JPN
 51,GBA,Castlevania: Circle of the Moon,AGB-AAME-USA;AGB-AAMJ-JPN
@@ -455,21 +455,21 @@
 54,GBA,Mega Man Zero 3,AGB-BZ3E-USA;AGB-BZ3J-JPN
 55,GBA,Mega Man Zero 4,AGB-B4ZE-USA;AGB-B4ZJ-JPN
 56,GBA,Mega Man Battle Network 2,AGB-AE2E-USA;AGB-AE2J-JPN
-57,GBA,Mega Man Battle Network 5: Team Protoman / Team Colonel,AGB-BRBJ-JPN
-58,GBA,Mega Man Battle Network 6: Cybeast Gregar / Cybeast Falzar,AGB-BR5J-JPN
+57,GBA,Mega Man Battle Network 5: Team Protoman / Team Colonel,AGB-BRBE-USA;AGB-BRBJ-JPN
+58,GBA,Mega Man Battle Network 6: Cybeast Gregar / Cybeast Falzar,AGB-BR5E-USA;AGB-BR5J-JPN
 59,GBA,Mega Man & Bass,AGB-A6ME-USA;AGB-P-AFCJ
 60,GBA,Mega Man Battle Chip Challenge,AGB-A89E-USA;AGB-P-A89J
-61,GBA,Final Fantasy I & II: Dawn of Souls,AGB-BFFJ-JPN
-62,GBA,Final Fantasy IV Advance,AGB-BZ4J-JPN
+61,GBA,Final Fantasy I & II: Dawn of Souls,AGB-BFFE-USA;AGB-BFFJ-JPN
+62,GBA,Final Fantasy IV Advance,AGB-BZ4E-USA;AGB-BZ4J-JPN
 63,GBA,Final Fantasy V Advance,AGB-BZ5E-USA;AGB-BZ5J-JPN
 64,GBA,Fire Emblem: The Binding Blade,AGB-AFEJ-JPN
 65,GBA,Mario Golf: Advance Tour,AGB-BMGE-USA;AGB-BMGJ-JPN
-66,GBA,Mario Tennis: Power Tour,AGB-BTMJ-JPN
+66,GBA,Mario Tennis: Power Tour,AGB-BTME-USA;AGB-BTMJ-JPN
 67,GBA,Mario Party Advance,AGB-B8ME-USA;AGB-B8MJ-JPN
-68,GBA,Mario Pinball Land,AGB-BMVJ-JPN
-69,GBA,Donkey Kong Country 2,AGB-B2DP-EUR
-70,GBA,Donkey Kong Country 3,AGB-BDQP-EUR
-71,GBA,Donkey Kong: King of Swing,AGB-BBKJ-JPN
+68,GBA,Mario Pinball Land,AGB-BMVE-USA;AGB-BMVJ-JPN
+69,GBA,Donkey Kong Country 2,AGB-B2DE-USA;AGB-B2DJ-JPN
+70,GBA,Donkey Kong Country 3,AGB-BDQE-USA;AGB-BDQJ-JPN
+71,GBA,Donkey Kong: King of Swing,AGB-BBKE-USA;AGB-BBKJ-JPN
 72,GBA,Yoshi Topsy-Turvy,AGB-KYGE-USA;AGB-KYGJ-JPN
 73,GBA,Sonic Advance 3,AGB-B3SE-USA;AGB-B3SJ-JPN
 74,GBA,Sonic Battle,AGB-BSBE-USA;AGB-BSBJ-JPN
@@ -479,7 +479,7 @@
 78,GBA,Breath of Fire II,AGB-AB2E-USA;AGB-AB2J-JPN
 79,GBA,Lunar Legend,AGB-ALNE-USA;AGB-ALNJ-JPN
 80,GBA,Shining Force: Resurrection of the Dark Dragon,AGB-AF5E-USA;AGB-AF5J-JPN
-81,GBA,Sword of Mana,AGB-AVSJ-JPN
+81,GBA,Sword of Mana,AGB-AVSE-USA;AGB-AVSJ-JPN
 82,GBA,Yggdra Union,AGB-BYUE-USA;AGB-BYUJ-JPN
 83,GBA,Riviera: The Promised Land,AGB-BREE-USA;AGB-BREJ-JPN
 84,GBA,Lufia: The Ruins of Lore,AGB-AGDE-USA;AGB-AGDJ-JPN
@@ -496,7 +496,7 @@
 95,GBA,ChuChu Rocket!,AGB-ACRE-USA;AGB-ACRJ-JPN
 96,GBA,Super Monkey Ball Jr.,AGB-ALUE-USA
 97,GBA,Pinball of the Dead,AGB-APDE-USA;AGB-AZOJ-JPN
-98,GBA,Zone of the Enders: The Fist of Mars,AGB-AZEE-USA
+98,GBA,Zone of the Enders: The Fist of Mars,AGB-AZEE-USA;AGB-AZEJ-JPN
 99,GBA,Racing Gears Advance,AGB-BRAE-USA
 100,GBA,Kuru Kuru Kururin,AGB-AKRJ
 1,NDS,New Super Mario Bros.,NTR-A2DE-USA;NTR-A2DJ-JPN
