@@ -22,7 +22,7 @@ postMessage 回退。
 5. 其余未命中回落 index.html（SPA history 模式，手机深链 `/games/123` 靠它）。
 6. MIME 用**显式表**，不用 `mimetypes`：Windows 上 `mimetypes` 会读注册表
    `HKEY_CLASSES_ROOT`，`.js` 被注册成 `text/plain` 的机器是真实存在的，表现是整站白屏 +
-   控制台 MIME 报错。仓库里 `games/service.py` 的 `_ASSET_MIME_TYPES` 出于同样的理由
+   控制台 MIME 报错。仓库里 `games/archive.py` 的 `ASSET_MIME_TYPES` 出于同样的理由
    也不依赖系统 MIME 表。
 7. 路径安全自己兜：拒绝 `..`、反斜杠、NUL、含 `:` 的段（Windows 盘符 / ADS），
    解析后确认仍在 dist 根之内。

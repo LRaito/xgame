@@ -52,12 +52,17 @@ _DEFAULTS = {
 
 _INI_TEMPLATE = """\
 [xgame]
-# 数据目录：账号、存档、截图、游戏本体和数据库全在这里。
+# 数据目录：账号、存档、截图、游戏本体与攻略包全在这里。
 # 相对路径按本文件所在目录算；想让数据待在包外面（换新版本时更省事），
 # 填绝对路径，例如：data_dir = D:\\xgame-data
 # 也可以直接指向以前 WSL 那份数据（如 X:\\xgame），存档与截图会原样续用——
 # 但**别和 Docker 路线同时开着**，两边一起写会把库写坏。
 data_dir = data
+
+# 运行时目录：数据库（db/app.db）与 H5/攻略的解包缓存都在这里。
+# 不填就是 <data_dir>/runtime（跟着 data_dir 走），一般不用改。
+# 解包缓存是派生物，删掉只会让下次播放/查看时重新解压一遍。
+# runtime_dir = data\\runtime
 
 # 监听地址：0.0.0.0 = 局域网里的手机、平板也能连；127.0.0.1 = 只有本机能连。
 host = 0.0.0.0
@@ -75,6 +80,11 @@ class Config:
     def __init__(self, parser: configparser.ConfigParser) -> None:
         section = parser["xgame"] if parser.has_section("xgame") else {}
         self.data_dir = self._path(section.get("data_dir", _DEFAULTS["data_dir"]))
+        # 运行时目录没配时跟着数据目录走（与 Docker 的 STORAGE_ROOT / RUNTIME_ROOT 两个根同一个模型）
+        raw_runtime = (section.get("runtime_dir") or "").strip()
+        self.runtime_dir = (
+            self._path(raw_runtime) if raw_runtime else self.data_dir / "runtime"
+        )
         self.host = (section.get("host") or _DEFAULTS["host"]).strip()
         self.port = self._port(section.get("port", _DEFAULTS["port"]))
         self.open_browser = self._flag(section.get("open_browser", _DEFAULTS["open_browser"]))
@@ -156,7 +166,7 @@ def check_runtime() -> None:
         say("提示：本机 Python 的 SQLite 没有 FTS5，「游戏发现」的检索会一直显示尚未构建索引。")
 
 
-def check_data_dir(data_dir: Path) -> None:
+def check_data_dir(data_dir: Path, *, label: str = "数据目录") -> None:
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
         probe = data_dir / ".write-probe"
@@ -164,13 +174,13 @@ def check_data_dir(data_dir: Path) -> None:
         probe.unlink()
     except OSError as exc:
         fatal(
-            f"数据目录用不了：{data_dir}\n"
+            f"{label}用不了：{data_dir}\n"
             f"（{exc}）\n"
             "常见原因是路径指向了需要管理员权限的位置（如 C:\\Program Files 下）"
-            "或盘符不存在。请改 xgame.ini 里的 data_dir。"
+            "或盘符不存在。请改 xgame.ini 里的 data_dir / runtime_dir。"
         )
     marker = data_dir / ".mounted"
-    if marker.exists():
+    if marker.exists() and label == "数据目录":
         say()
         say("!" * 62)
         say("注意：这个数据目录里有 .mounted 哨兵，说明它是 Docker/WSL 那条路线在用的。")
@@ -352,6 +362,9 @@ def serve(config: Config) -> int:
     import uvicorn
 
     os.environ["STORAGE_ROOT"] = str(config.data_dir)
+    # 运行时根：SQLite 库（db/app.db）与 H5/攻略的解包缓存。不设时后端会退回数据根，
+    # 那样解包缓存会落进 data\game\... 里；显式设成 data\runtime 与 Docker 那条路线一致。
+    os.environ["RUNTIME_ROOT"] = str(config.runtime_dir)
     os.environ["STATIC_DIR"] = str(ROOT / WEB_DIR_NAME)
     # 局域网走 http（自签证书对手机/平板等于没有），cookie 不能带 Secure，
     # 否则浏览器不保存它，表现是「登录看着成功、下一个请求就 401」。
@@ -488,7 +501,9 @@ def main(argv: list[str] | None = None) -> int:
     # 自检放在配日志之前：数据目录用不了时（路径太深、没权限、盘符不对）要给的是一条能看懂
     # 的中文错误，而不是「建 logs 目录失败」的堆栈。
     check_runtime()
-    check_data_dir(config.data_dir)
+    check_data_dir(config.data_dir, label="数据目录")
+    # 运行时目录放库与解包缓存，同样要先确认可写（库建不出来等于账号全没）
+    check_data_dir(config.runtime_dir, label="运行时目录")
     setup_logging(config.data_dir)
 
     if still_locked():

@@ -15,6 +15,11 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "games": {"cover_type": "VARCHAR(20)"},
 }
 
+# 已删除的表：create_all 只建不删，老库里可能还留着，启动时顺手清掉。没有迁移框架，
+# 破坏性动作只允许「删掉整张已经没有任何代码读写的表」这一种；表名是代码里的常量，
+# 不拼接任何外部输入。
+_DROPPED_TABLES: tuple[str, ...] = ("game_h5_files",)
+
 
 def make_engine(settings: Settings) -> Engine:
     url = settings.database_url
@@ -40,6 +45,7 @@ def init_db(engine: Engine) -> None:
 
     SQLModel.metadata.create_all(engine)
     _ensure_columns(engine)
+    _drop_tables(engine)
 
 
 def _ensure_columns(engine: Engine) -> None:
@@ -53,6 +59,15 @@ def _ensure_columns(engine: Engine) -> None:
             for name, ddl in columns.items():
                 if name not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+
+def _drop_tables(engine: Engine) -> None:
+    """删掉已经没有任何代码读写的表（见 `_DROPPED_TABLES`）。"""
+    inspector = inspect(engine)
+    with engine.begin() as conn:
+        for table in _DROPPED_TABLES:
+            if inspector.has_table(table):
+                conn.exec_driver_sql(f"DROP TABLE {table}")
 
 
 def get_session(engine: Engine):

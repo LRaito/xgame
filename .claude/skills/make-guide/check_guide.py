@@ -24,7 +24,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 # ---- 平台侧上限（与 backend/games/service.py 的常量保持一致，改那边要同步改这里）----
-MAX_FILES = 1000
+MAX_FILES = 2000
 MAX_FILE_SIZE = 64 * 1024 * 1024
 MAX_TOTAL_SIZE = 256 * 1024 * 1024
 NGINX_BODY_LIMIT = 128 * 1024 * 1024  # Docker 路线 nginx 的 client_max_body_size，先于后端拦住
@@ -272,7 +272,7 @@ def check_sizes(root: Path, files: list[Path], report: Report) -> tuple[int, int
                 f"{path.relative_to(root)}（{_fmt_size(size)}）"
             )
     if len(files) > MAX_FILES:
-        report.error(f"文件数 {len(files)} 超过上限 {MAX_FILES}（后端与前端都会拒）")
+        report.error(f"文件数 {len(files)} 超过上限 {MAX_FILES}（后端会拒）")
     if total > MAX_TOTAL_SIZE:
         report.error(f"总体积 {_fmt_size(total)} 超过上限 {MAX_TOTAL_SIZE // 1024 // 1024}MB")
     elif total > NGINX_BODY_LIMIT:

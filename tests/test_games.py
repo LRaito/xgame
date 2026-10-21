@@ -14,12 +14,12 @@ from backend.auth.service import AuthService
 from backend.errors import ValidationError
 from backend.config import DB_SUBDIR
 from backend.games import importer, paths
+from backend.games import archive as games_archive
 from backend.games.models import (
     Game,
     GameCloudSnapshot,
     GameCloudSnapshotFile,
     GameGalleryImage,
-    GameH5File,
     GameScreenshot,
 )
 from backend.games.service import (
@@ -29,8 +29,6 @@ from backend.games.service import (
     GameUpload,
     detect_game_type,
     normalize_cartridge_id,
-    normalize_guide_path,
-    normalize_h5_path,
     play_path,
     sanitize_game_name,
     validate_cartridge_id,
@@ -48,7 +46,7 @@ def _next_cartridge_id() -> str:
 @pytest.fixture
 def game_service(app):
     with Session(app.state.engine) as session:
-        yield GameService(session, app.state.storage)
+        yield GameService(session, app.state.storage, app.state.runtime_storage)
 
 
 @pytest.fixture
@@ -865,11 +863,11 @@ def _dir_files(storage_root, prefix: str) -> list[str]:
 
 
 def _path_rows(app, game_id: int) -> list[str]:
-    """该游戏在库里存了磁盘路径的全部列值（games 的两列 + 四张子表）。"""
+    """该游戏在库里存了磁盘路径的全部列值（games 的两列 + 三张子表）。"""
     with Session(app.state.engine) as session:
         row = session.get(Game, game_id)
         values = [row.game_path, row.cover_path]
-        for model in (GameH5File, GameGalleryImage, GameScreenshot):
+        for model in (GameGalleryImage, GameScreenshot):
             values += [
                 item.file_path
                 for item in session.exec(
@@ -1027,32 +1025,38 @@ def test_rename_cartridge_id_moves_other_users_dirs(
     assert not any("MULTI-1" in path for path in _files(storage_root))
 
 
-def test_rename_cartridge_id_moves_h5_manifest(logged_in_games, app, storage_root):
-    """H5 的清单行 file_path 要跟着改，改完资源与入口都还取得到。"""
+def test_rename_cartridge_id_invalidates_runtime_extraction(
+    logged_in_games, app, storage_root, runtime_root
+):
+    """H5 的 zip 跟着目录搬家，运行时根那份解包产物作废（下次访问自动重解）。"""
     game_id = _upload_h5(logged_in_games, name="改名 H5")
     old_id = _cartridge_of(app, game_id)
-    archive = _make_zip({"index.html": b"<html>hi</html>", "assets/app.js": b"js"})
+    package = _make_zip({"index.html": b"<html>hi</html>", "assets/app.js": b"js"})
     assert (
         logged_in_games.post(
             f"/api/games/manage/{game_id}/assets",
             data={"kind": "game"},
-            files={"file": ("game.zip", archive, "application/zip")},
+            files={"file": ("game.zip", package, "application/zip")},
         ).status_code
         == 201
     )
+    # 先访问一次，让运行时根产生解包产物
+    assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
+    assert _exists(runtime_root, f"game/h5/{old_id}/h5/index.html")
 
     response = _rename(logged_in_games, game_id, "H5-NEW")
     assert response.status_code == 200, response.text
     assert response.json()["data"]["game_path"] == "game/h5/H5-NEW/game.zip"
-    for row in _h5_rows(app, game_id):
-        assert row.file_path.startswith("game/h5/H5-NEW/h5/")
     assert not any(old_id in path for path in _files(storage_root))
+    assert not any(old_id in path for path in _files(runtime_root))
+    # 新目录下重新解包，入口与子资源照常取得到
     assert (
         logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
     )
     assert (
         logged_in_games.get(f"/api/games/{game_id}/h5/assets/app.js").status_code == 200
     )
+    assert _exists(runtime_root, "game/h5/H5-NEW/h5/index.html")
 
 
 def test_rename_cartridge_id_rejects_duplicate(logged_in_games, app, storage_root):
@@ -1174,7 +1178,7 @@ def test_rename_cartridge_id_rolls_back_when_move_fails(
 
     monkeypatch.setattr(LocalStorage, "move_tree", flaky)
     with Session(app.state.engine) as session:
-        service = GameService(session, app.state.storage)
+        service = GameService(session, app.state.storage, app.state.runtime_storage)
         with pytest.raises(games_service.StorageError):
             service.rename_cartridge_id(game_id, "FAIL-2")
 
@@ -1191,16 +1195,14 @@ def test_rename_cartridge_id_rejects_path_too_long_on_windows(
     logged_in_games, storage_root, monkeypatch
 ):
     """Windows 上改名后总长越界要在动手之前报错，磁盘一个字节都不动。"""
-    from backend.games import service as games_service
-
     created = _create_game(
         logged_in_games, "太长", "a.nes", b"x", cartridge_id="LEN-1"
     ).json()["data"]
     before_files = _files(storage_root)
 
     # 卡带 ID 最长 64，光靠它顶不破 240，所以把预算压到「数据根 + 一段新路径」之下
-    monkeypatch.setattr(games_service, "_IS_WINDOWS", True)
-    monkeypatch.setattr(games_service, "_WINDOWS_PATH_BUDGET", 80)
+    monkeypatch.setattr(games_archive, "IS_WINDOWS", True)
+    monkeypatch.setattr(games_archive, "WINDOWS_PATH_BUDGET", 80)
     response = _rename(logged_in_games, created["id"], "L" * 64)
     assert response.status_code == 400
     assert "过长的路径" in response.json()["message"]
@@ -1562,20 +1564,11 @@ def _upload_h5(logged_in_games, name="H5 demo"):
     return game_id
 
 
-def _h5_rows(app, game_id):
-    with Session(app.state.engine) as session:
-        return list(
-            session.exec(
-                select(GameH5File).where(GameH5File.game_id == game_id)
-            ).all()
-        )
-
-
-def test_h5_upload_and_serve(logged_in_games, storage_root):
-    """建 H5→传含 index.html 与资源的 zip→解包入库；入口与资源均可取且带沙箱安全头。"""
+def test_h5_upload_and_serve(logged_in_games, storage_root, runtime_root):
+    """建 H5→传含 index.html 与资源的 zip→只存 zip；首次访问才解包，入口与资源均可取。"""
     game_id = _upload_h5(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
-    archive = _make_zip(
+    package = _make_zip(
         {
             "index.html": b"<html>hi</html>",
             "assets/app.js": b"console.log(1)",
@@ -1586,19 +1579,17 @@ def test_h5_upload_and_serve(logged_in_games, storage_root):
     upload = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
-        files={"file": ("game.zip", archive, "application/zip")},
+        files={"file": ("game.zip", package, "application/zip")},
     )
     assert upload.status_code == 201
     body = upload.json()["data"]
     assert body["game_path"] == f"game/h5/{cid}/game.zip"
-    assert body["size"] == len(archive)
+    assert body["size"] == len(package)
 
-    rows = _h5_rows(logged_in_games.app, game_id)
-    assert sorted(row.path for row in rows) == ["assets/app.js", "index.html"]
-    assert all(
-        row.file_path == f"game/h5/{cid}/h5/{row.path}" for row in rows
-    )
+    # 上传只落 zip：数据根里没有解包产物，运行时根也还是空的
     assert _exists(storage_root, f"game/h5/{cid}/game.zip")
+    assert not _exists(storage_root, f"game/h5/{cid}/h5/index.html")
+    assert not _exists(runtime_root, f"game/h5/{cid}/h5/index.html")
 
     entry = logged_in_games.get(f"/api/games/{game_id}/h5/index.html")
     assert entry.status_code == 200
@@ -1608,6 +1599,12 @@ def test_h5_upload_and_serve(logged_in_games, storage_root):
     assert "allow-same-origin" not in entry.headers["content-security-policy"]
     assert entry.headers["x-content-type-options"] == "nosniff"
     assert entry.headers["access-control-allow-origin"] == "*"
+
+    # 首次访问之后才有解包产物，垃圾条目被跳过
+    assert _exists(runtime_root, f"game/h5/{cid}/h5/index.html")
+    assert _exists(runtime_root, f"game/h5/{cid}/h5/assets/app.js")
+    assert not _exists(runtime_root, f"game/h5/{cid}/h5/.DS_Store")
+    assert not any("__MACOSX" in path for path in _files(runtime_root))
 
     asset = logged_in_games.get(f"/api/games/{game_id}/h5/assets/app.js")
     assert asset.status_code == 200
@@ -1621,6 +1618,78 @@ def test_h5_upload_and_serve(logged_in_games, storage_root):
     head = logged_in_games.head(f"/api/games/{game_id}/h5/index.html")
     assert head.status_code == 200
     assert head.headers["content-length"] == str(len(b"<html>hi</html>"))
+
+
+def test_h5_second_request_does_not_reextract(logged_in_games, runtime_root):
+    """已经解包过就只读：再访问两次，解包产物的 mtime 一个纳秒都不动。"""
+    game_id = _upload_h5(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={"file": ("g.zip", _make_zip({"index.html": b"v1"}), "application/zip")},
+    )
+    assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
+    entry = Path(runtime_root) / f"game/h5/{cid}/h5/index.html"
+    stamp = entry.stat().st_mtime_ns
+
+    for _ in range(2):
+        assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
+    assert entry.stat().st_mtime_ns == stamp
+
+
+def test_h5_concurrent_requests_extract_once(logged_in_games, app, runtime_root):
+    """并发打同一盘 H5：进程内的锁让解包只发生一次，暂存目录不留残留。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    game_id = _upload_h5(logged_in_games, name="并发 H5")
+    cid = _cartridge_of(app, game_id)
+    logged_in_games.post(
+        f"/api/games/manage/{game_id}/assets",
+        data={"kind": "game"},
+        files={
+            "file": (
+                "g.zip",
+                _make_zip({"index.html": b"hi", "a/b.js": b"js"}),
+                "application/zip",
+            )
+        },
+    )
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(
+            pool.map(
+                lambda _: logged_in_games.get(f"/api/games/{game_id}/h5/index.html"),
+                range(8),
+            )
+        )
+    assert [response.status_code for response in results] == [200] * 8
+    assert not any(".h5-" in path for path in _files(runtime_root))
+    assert _exists(runtime_root, f"game/h5/{cid}/h5/index.html")
+
+
+def test_h5_corrupt_zip_in_data_root_fails_at_extract(logged_in_games, storage_root, runtime_root):
+    """宿主手改坏了数据根里的 zip：解包那一刻报 400，运行时根不留残留。"""
+    game_id = _upload_h5(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    (Path(storage_root) / f"game/h5/{cid}/game.zip").write_bytes(b"not a zip")
+
+    response = logged_in_games.get(f"/api/games/{game_id}/h5/index.html")
+    assert response.status_code == 400
+    assert response.json()["message"]
+    assert not any(".h5-" in path for path in _files(runtime_root))
+    assert not _exists(runtime_root, f"game/h5/{cid}/h5/index.html")
+
+
+def test_h5_zip_missing_in_data_root_returns_404(logged_in_games, storage_root):
+    """宿主手删了数据根里的 zip：404（解包产物也没有来源）。"""
+    game_id = _upload_h5(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    (Path(storage_root) / f"game/h5/{cid}/game.zip").unlink()
+
+    response = logged_in_games.get(f"/api/games/{game_id}/h5/index.html")
+    assert response.status_code == 404
+    assert "不存在" in response.json()["message"]
 
 
 def test_h5_assets_stay_open_while_rest_requires_login(client, user, do_login):
@@ -1739,30 +1808,32 @@ def _make_legacy_gbk_zip(files: dict[str, bytes]) -> bytes:
     return buffer.getvalue()
 
 
-def test_h5_decodes_gbk_entry_names(logged_in_games, storage_root):
-    """不带 UTF-8 标志位的中文条目名按 GBK 还原，而不是留一串 cp437 乱码。"""
+def test_h5_decodes_gbk_entry_names(logged_in_games, storage_root, runtime_root):
+    """不带 UTF-8 标志位的中文条目名按 GBK 还原，而不是解出一串 cp437 乱码。"""
     payload = _make_legacy_gbk_zip({"index.html": b"ok", "素材/图.png": b"png"})
     game_id = _upload_h5(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
     response = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
         files={"file": ("g.zip", payload, "application/zip")},
     )
     assert response.status_code == 201, response.text
-    assert [row.path for row in _h5_rows(logged_in_games.app, game_id)] == [
-        "index.html",
-        "素材/图.png",
-    ]
+    assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
+    assert _exists(runtime_root, f"game/h5/{cid}/h5/index.html")
+    assert _exists(runtime_root, f"game/h5/{cid}/h5/素材/图.png")
 
 
-def test_h5_rejects_paths_too_long_for_windows(logged_in_games, storage_root, monkeypatch):
-    """Windows 上「数据根 + 相对路径」越界要在收下之前报错（其它平台不受影响）。"""
-    from backend.games import service as games_service
+def test_h5_rejects_paths_too_long_for_windows(
+    logged_in_games, storage_root, monkeypatch
+):
+    """Windows 上「运行时根 + 相对路径」越界要在收下之前报错（其它平台不受影响）。
 
+    深度只出现在运行时根（解包产物都在那里），所以长度是按运行时根算的。
+    """
     game_id = _upload_h5(logged_in_games)
-    before = _files(storage_root)
     # 相对路径本身合法（约 380 字符、19 段，都没到 512 / 32 的上限），
-    # 但叠加数据根前缀后在 Windows 上必然超过 240
+    # 但叠加运行时根前缀后在 Windows 上必然超过 240
     deep = "/".join(["d" * 20] * 18 + ["a.js"])
     payload = _make_zip({"index.html": b"ok", deep: b"x"})
 
@@ -1773,9 +1844,9 @@ def test_h5_rejects_paths_too_long_for_windows(logged_in_games, storage_root, mo
         files={"file": ("g.zip", payload, "application/zip")},
     )
     assert ok.status_code == 201, ok.text
-    assert _files(storage_root) != before
+    assert _exists(storage_root, f"game/h5/{_cartridge_of(logged_in_games.app, game_id)}/game.zip")
 
-    monkeypatch.setattr(games_service, "_IS_WINDOWS", True)
+    monkeypatch.setattr(games_archive, "IS_WINDOWS", True)
     rejected = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
@@ -1839,8 +1910,8 @@ def test_h5_strips_single_wrapper_dir(logged_in_games):
     assert logged_in_games.get(f"/api/games/{game_id}/h5/assets/a.js").content == b"nested"
 
 
-def test_h5_reupload_replaces_whole_package(logged_in_games, storage_root):
-    """重传整包替换：新内容生效，旧资源文件不残留，清单只保留新包。"""
+def test_h5_reupload_replaces_whole_package(logged_in_games, storage_root, runtime_root):
+    """重传整包替换：新内容生效，旧解包产物作废，数据根里只留最新的 zip。"""
     game_id = _upload_h5(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
     logged_in_games.post(
@@ -1854,7 +1925,8 @@ def test_h5_reupload_replaces_whole_package(logged_in_games, storage_root):
             )
         },
     )
-    assert _exists(storage_root, f"game/h5/{cid}/h5/old.js")
+    assert logged_in_games.get(f"/api/games/{game_id}/h5/old.js").content == b"old"
+    assert _exists(runtime_root, f"game/h5/{cid}/h5/old.js")
 
     _unlock_body(logged_in_games.app, game_id)
     logged_in_games.post(
@@ -1862,17 +1934,23 @@ def test_h5_reupload_replaces_whole_package(logged_in_games, storage_root):
         data={"kind": "game"},
         files={"file": ("g.zip", _make_zip({"index.html": b"v2"}), "application/zip")},
     )
+    # 重传那一刻旧解包产物就被作废了（不必等到下次访问）
+    assert not _exists(runtime_root, f"game/h5/{cid}/h5/old.js")
     assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").content == b"v2"
-    assert not _exists(storage_root, f"game/h5/{cid}/h5/old.js")
-    assert sorted(row.path for row in _h5_rows(logged_in_games.app, game_id)) == [
-        "index.html"
-    ]
+    assert logged_in_games.get(f"/api/games/{game_id}/h5/old.js").status_code == 404
+    assert _exists(storage_root, f"game/h5/{cid}/game.zip")
 
 
-def test_h5_delete_and_type_change_cleanup(logged_in_games, storage_root):
+def test_h5_delete_and_type_change_cleanup(
+    logged_in_games, storage_root, runtime_root
+):
     game_id = _upload_h5(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
-    # 换成主机 ROM 本体：类型离开 h5，解包清单与资源、旧本体一并清理
+    # 先访问一次，让运行时根产生解包产物
+    assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
+    assert _exists(runtime_root, f"game/h5/{cid}/h5/index.html")
+
+    # 换成主机 ROM 本体：类型离开 h5，旧本体与解包产物一并清理
     switched = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
@@ -1881,19 +1959,21 @@ def test_h5_delete_and_type_change_cleanup(logged_in_games, storage_root):
     assert switched.status_code == 201
     assert switched.json()["data"]["game_type"] == "nes"
     assert switched.json()["data"]["game_path"] == f"game/nes/{cid}/game.nes"
-    assert _h5_rows(logged_in_games.app, game_id) == []
     assert not (storage_root / "game" / "h5" / cid).exists()
+    assert not (Path(runtime_root) / "game" / "h5" / cid).exists()
     assert not _exists(storage_root, f"game/nes/{cid}/game.zip")
 
-    # 再换回 H5 并删除游戏：目录与清单全清
+    # 再换回 H5、访问一次、然后删除游戏：两个根都全清
+    _unlock_body(logged_in_games.app, game_id)
     logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
         files={"file": ("g.zip", _make_zip({"index.html": b"x"}), "application/zip")},
     )
+    assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
     assert logged_in_games.delete(f"/api/games/manage/{game_id}").status_code == 200
     assert _files(storage_root) == set()
-    assert _h5_rows(logged_in_games.app, game_id) == []
+    assert _files(runtime_root) == set()
 
 
 def test_replacing_swf_with_zip_switches_to_h5(logged_in_games, storage_root):
@@ -1915,13 +1995,11 @@ def test_replacing_swf_with_zip_switches_to_h5(logged_in_games, storage_root):
 
 
 def test_h5_enforces_limits(logged_in_games, storage_root, monkeypatch):
-    from backend.games import service as games_service
-
     game_id = _upload_h5(logged_in_games)
     before = _files(storage_root)
     payload = _make_zip({"index.html": b"a", "b.js": b"b"})
 
-    monkeypatch.setattr(games_service, "_H5_MAX_ENTRIES", 1)
+    monkeypatch.setattr(games_archive, "MAX_ENTRIES", 1)
     too_many = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
@@ -1931,7 +2009,7 @@ def test_h5_enforces_limits(logged_in_games, storage_root, monkeypatch):
     assert "数量" in too_many.json()["message"]
     monkeypatch.undo()
 
-    monkeypatch.setattr(games_service, "_H5_MAX_TOTAL_SIZE", 1)
+    monkeypatch.setattr(games_archive, "MAX_TOTAL_SIZE", 1)
     too_big = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
@@ -1942,11 +2020,11 @@ def test_h5_enforces_limits(logged_in_games, storage_root, monkeypatch):
 
 
 def test_h5_path_helpers():
-    assert normalize_h5_path("assets/app.js") == "assets/app.js"
+    assert games_archive.normalize_h5_path("assets/app.js") == "assets/app.js"
     with pytest.raises(Exception):
-        normalize_h5_path("../evil.js")
+        games_archive.normalize_h5_path("../evil.js")
     with pytest.raises(Exception):
-        normalize_h5_path("/abs.js")
+        games_archive.normalize_h5_path("/abs.js")
 
 
 def test_h5_missing_asset_returns_404(logged_in_games):
@@ -1962,20 +2040,20 @@ def test_h5_missing_asset_returns_404(logged_in_games):
     assert logged_in_games.get(f"/api/games/{flash['id']}/h5/index.html").status_code == 404
 
 
-# ---------- 攻略（整目录静态资源） ----------
+# ---------- 攻略（zip 包） ----------
 
 
-def _upload_guide(client, game_id: int, files: dict[str, bytes], paths=None):
-    """multipart 整目录上传：files 多个 part + 按下标对位的 paths JSON 数组。"""
-    parts = [
-        ("files", (name.rsplit("/", 1)[-1], data, "application/octet-stream"))
-        for name, data in files.items()
-    ]
+def _upload_guide_zip(client, game_id: int, payload: bytes, filename="guide.zip"):
+    """上传攻略 zip（multipart 里只有一个 file 字段）。"""
     return client.post(
         f"/api/games/manage/{game_id}/guide",
-        data={"paths": json.dumps(list(files) if paths is None else paths)},
-        files=parts,
+        files={"file": (filename, payload, "application/zip")},
     )
+
+
+def _upload_guide(client, game_id: int, files: dict[str, bytes]):
+    """把 {包内路径: 内容} 打成一个 zip 上传（最常用的写法）。"""
+    return _upload_guide_zip(client, game_id, _make_zip(files))
 
 
 def _guide_game(logged_in_games, name="攻略 demo"):
@@ -1985,8 +2063,8 @@ def _guide_game(logged_in_games, name="攻略 demo"):
     return create.json()["data"]["id"]
 
 
-def test_guide_upload_and_serve(logged_in_games, storage_root):
-    """整目录上传→按目录落盘→入口与子资源都能取到，且不带 H5 那套沙箱头。"""
+def test_guide_upload_and_serve(logged_in_games, storage_root, runtime_root):
+    """上传 zip→数据根只落 guide.zip；查看时才解包，入口与子资源都能取到。"""
     game_id = _guide_game(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
     upload = _upload_guide(
@@ -1996,8 +2074,10 @@ def test_guide_upload_and_serve(logged_in_games, storage_root):
     )
     assert upload.status_code == 201
     assert upload.json()["data"]["has_guide"] is True
-    assert _read(storage_root, f"game/flash/{cid}/guide/index.html") == b"<html>guide</html>"
-    assert _read(storage_root, f"game/flash/{cid}/guide/assets/css/site.css") == b"body{}"
+    # 上传只落 zip：两个根里都还没有解包产物
+    assert _exists(storage_root, f"game/flash/{cid}/guide.zip")
+    assert not _exists(storage_root, f"game/flash/{cid}/guide/index.html")
+    assert not _exists(runtime_root, f"game/flash/{cid}/guide/index.html")
 
     entry = logged_in_games.get(f"/api/games/{game_id}/guide/index.html")
     assert entry.status_code == 200
@@ -2006,6 +2086,9 @@ def test_guide_upload_and_serve(logged_in_games, storage_root):
     assert entry.headers["cache-control"] == "no-cache, must-revalidate"
     # 攻略与 H5 不同：不隔离、不放行匿名
     assert "content-security-policy" not in entry.headers
+    # 查看之后运行时根才有解包产物
+    assert _exists(runtime_root, f"game/flash/{cid}/guide/index.html")
+    assert _exists(runtime_root, f"game/flash/{cid}/guide/assets/css/site.css")
 
     css = logged_in_games.get(f"/api/games/{game_id}/guide/assets/css/site.css")
     assert css.status_code == 200
@@ -2019,28 +2102,92 @@ def test_guide_upload_and_serve(logged_in_games, storage_root):
     assert [item["has_guide"] for item in listed if item["id"] == game_id] == [True]
 
 
-def test_guide_requires_index(logged_in_games, storage_root):
-    """没有 index.html 直接拒，且磁盘上什么都不留（连暂存目录都没有）。"""
+def test_guide_second_view_does_not_reextract(logged_in_games, runtime_root):
+    """已经解包过就只读：再看两次，解包产物的 mtime 一个纳秒都不动。"""
+    game_id = _guide_game(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    _upload_guide(logged_in_games, game_id, {"index.html": b"v1"})
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
+    entry = Path(runtime_root) / f"game/flash/{cid}/guide/index.html"
+    stamp = entry.stat().st_mtime_ns
+
+    for _ in range(2):
+        assert (
+            logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
+        )
+    assert entry.stat().st_mtime_ns == stamp
+
+
+def test_guide_wrapper_dir_stripped(logged_in_games, runtime_root):
+    """整包套一层目录（右键压缩的常态）自动剥掉，解包后入口仍在根目录。"""
+    game_id = _guide_game(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    upload = _upload_guide(
+        logged_in_games,
+        game_id,
+        {"myguide/index.html": b"wrapped", "myguide/pages/1.html": b"p1"},
+    )
+    assert upload.status_code == 201, upload.text
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").content == b"wrapped"
+    assert _exists(runtime_root, f"game/flash/{cid}/guide/pages/1.html")
+
+
+def test_guide_requires_zip_file(logged_in_games, storage_root):
+    """不带 file 字段直接 400，磁盘什么都不留。"""
     game_id = _guide_game(logged_in_games)
     before = _files(storage_root)
+    response = logged_in_games.post(f"/api/games/manage/{game_id}/guide")
+    assert response.status_code == 400
+    assert "ZIP" in response.json()["message"]
+    assert _files(storage_root) == before
+
+
+def test_guide_rejects_non_zip(logged_in_games, storage_root):
+    """攻略只收 zip：扩展名不对就 400，连内容都不看。"""
+    game_id = _guide_game(logged_in_games)
+    before = _files(storage_root)
+    response = _upload_guide_zip(
+        logged_in_games, game_id, _make_zip({"index.html": b"x"}), filename="guide.rar"
+    )
+    assert response.status_code == 400
+    assert "ZIP" in response.json()["message"]
+    assert _files(storage_root) == before
+
+
+def test_guide_requires_index(logged_in_games, storage_root, runtime_root):
+    """包里没有 index.html 直接拒，且两个根都零残留。"""
+    game_id = _guide_game(logged_in_games)
+    before = _files(storage_root)
+    before_runtime = _files(runtime_root)
     response = _upload_guide(logged_in_games, game_id, {"pages/1.html": b"x"})
     assert response.status_code == 400
     assert "index.html" in response.json()["message"]
     assert _files(storage_root) == before
+    assert _files(runtime_root) == before_runtime
 
 
-def test_guide_entry_name_is_case_insensitive(logged_in_games, storage_root):
-    """入口大小写不敏感，落盘统一成小写 index.html，入口地址才固定。"""
+def test_guide_entry_name_is_case_insensitive(logged_in_games, runtime_root):
+    """入口大小写不敏感，解包后统一落成小写 index.html，入口地址才固定。"""
     game_id = _guide_game(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
     assert _upload_guide(logged_in_games, game_id, {"INDEX.HTML": b"hi"}).status_code == 201
-    assert _exists(storage_root, f"game/flash/{cid}/guide/index.html")
     assert (
         logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
     )
+    assert _exists(runtime_root, f"game/flash/{cid}/guide/index.html")
 
 
-@pytest.mark.parametrize("bad_name", ["../evil.js", "/abs.js", "a/../../b.js", "a\\b.js", "a?b.js"])
+def test_guide_rejects_index_htm(logged_in_games):
+    """攻略只认 index.html（H5 那个 index.htm 的例外不跟着来）。"""
+    game_id = _guide_game(logged_in_games)
+    response = _upload_guide(logged_in_games, game_id, {"index.htm": b"hi"})
+    assert response.status_code == 400
+    assert "index.html" in response.json()["message"]
+
+
+@pytest.mark.parametrize(
+    "bad_name", ["../evil.js", "/abs.js", "a/../../b.js", "a\\b.js", "a?b.js"]
+)
 def test_guide_rejects_bad_paths(logged_in_games, storage_root, bad_name):
     game_id = _guide_game(logged_in_games)
     before = _files(storage_root)
@@ -2060,44 +2207,29 @@ def test_guide_rejects_duplicate_paths_case_insensitive(logged_in_games):
     assert "重名" in response.json()["message"]
 
 
-def test_guide_rejects_mismatched_paths(logged_in_games):
-    """paths 与 files 数量对不上、或 paths 不是字符串数组，都是 400。"""
-    game_id = _guide_game(logged_in_games)
-    short = _upload_guide(
-        logged_in_games, game_id, {"index.html": b"a", "b.css": b"b"}, paths=["index.html"]
-    )
-    assert short.status_code == 400
-
-    bad_json = logged_in_games.post(
-        f"/api/games/manage/{game_id}/guide",
-        data={"paths": "not-json"},
-        files=[("files", ("index.html", b"a", "application/octet-stream"))],
-    )
-    assert bad_json.status_code == 400
-
-    not_strings = logged_in_games.post(
-        f"/api/games/manage/{game_id}/guide",
-        data={"paths": json.dumps([1])},
-        files=[("files", ("index.html", b"a", "application/octet-stream"))],
-    )
-    assert not_strings.status_code == 400
-
-
-def test_guide_reupload_replaces_whole_tree(logged_in_games, storage_root):
-    """重传就是整目录替换：这一版没有的文件在磁盘上要消失，也不留暂存目录。"""
+def test_guide_reupload_replaces_whole_package(
+    logged_in_games, storage_root, runtime_root
+):
+    """重传就是整包替换：旧解包产物作废、这一版没有的文件消失、不留暂存目录。"""
     game_id = _guide_game(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
-    _upload_guide(
-        logged_in_games, game_id, {"index.html": b"v1", "old.css": b"old"}
+    _upload_guide(logged_in_games, game_id, {"index.html": b"v1", "old.css": b"old"})
+    assert (
+        logged_in_games.get(f"/api/games/{game_id}/guide/old.css").status_code == 200
     )
+    assert _exists(runtime_root, f"game/flash/{cid}/guide/old.css")
+
     again = _upload_guide(
         logged_in_games, game_id, {"index.html": b"v2", "new.css": b"new"}
     )
     assert again.status_code == 201
-    assert _read(storage_root, f"game/flash/{cid}/guide/index.html") == b"v2"
-    assert _exists(storage_root, f"game/flash/{cid}/guide/new.css")
-    assert not _exists(storage_root, f"game/flash/{cid}/guide/old.css")
-    assert not [p for p in _files(storage_root) if "/.guide-" in p]
+    # 重传那一刻旧解包产物就作废了（不必等到下次查看）
+    assert not _exists(runtime_root, f"game/flash/{cid}/guide/old.css")
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").content == b"v2"
+    assert _exists(runtime_root, f"game/flash/{cid}/guide/new.css")
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/old.css").status_code == 404
+    assert not [p for p in _files(runtime_root) if "/.guide-" in p]
+    assert _exists(storage_root, f"game/flash/{cid}/guide.zip")
 
 
 def test_guide_requires_login(client, user, do_login):
@@ -2109,11 +2241,7 @@ def test_guide_requires_login(client, user, do_login):
     assert client.get(f"/api/games/{game_id}/guide/index.html").status_code == 401
     assert client.head(f"/api/games/{game_id}/guide/index.html").status_code == 401
     assert (
-        client.post(
-            f"/api/games/manage/{game_id}/guide",
-            data={"paths": json.dumps(["index.html"])},
-            files=[("files", ("index.html", b"x", "application/octet-stream"))],
-        ).status_code
+        _upload_guide_zip(client, game_id, _make_zip({"index.html": b"x"})).status_code
         == 401
     )
 
@@ -2127,19 +2255,22 @@ def test_guide_missing_returns_404(logged_in_games):
     assert logged_in_games.get(f"/api/games/{game_id}/guide/nope.css").status_code == 404
 
 
-def test_guide_removed_with_game_delete(logged_in_games, storage_root):
+def test_guide_removed_with_game_delete(logged_in_games, storage_root, runtime_root):
     game_id = _guide_game(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
     _upload_guide(logged_in_games, game_id, {"index.html": b"x"})
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
     assert logged_in_games.delete(f"/api/games/manage/{game_id}").status_code == 200
     assert not (Path(storage_root) / "game" / "flash" / cid).exists()
+    assert not (Path(runtime_root) / "game" / "flash" / cid).exists()
 
 
-def test_guide_removed_on_game_type_switch(logged_in_games, storage_root):
-    """换本体换了类型：攻略随旧类型目录一起消失（与 H5 资源同样的口径）。"""
+def test_guide_removed_on_game_type_switch(logged_in_games, storage_root, runtime_root):
+    """换本体换了类型：攻略包与它的解包产物随旧类型目录一起消失。"""
     game_id = _guide_game(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
     _upload_guide(logged_in_games, game_id, {"index.html": b"x"})
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
     _unlock_body(logged_in_games.app, game_id)
     switch = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
@@ -2150,33 +2281,32 @@ def test_guide_removed_on_game_type_switch(logged_in_games, storage_root):
     assert switch.json()["data"]["game_type"] == "nes"
     assert switch.json()["data"]["has_guide"] is False
     assert not (Path(storage_root) / "game" / "flash" / cid).exists()
+    assert not (Path(runtime_root) / "game" / "flash" / cid).exists()
 
 
 def test_guide_has_flag_follows_disk(logged_in_games, storage_root):
-    """没有清单表也没有库标记：标记完全跟磁盘走，手动删掉攻略界面立刻变。"""
+    """没有库标记：标记完全跟磁盘走，手动增删数据根里的 guide.zip 界面立刻变。"""
     game_id = _guide_game(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
-    guide_entry = Path(storage_root) / "game" / "flash" / cid / "guide" / "index.html"
+    guide_zip = Path(storage_root) / "game" / "flash" / cid / "guide.zip"
 
     def flag():
         listed = logged_in_games.get("/api/games").json()["data"]
         return next(item["has_guide"] for item in listed if item["id"] == game_id)
 
     assert flag() is False
-    guide_entry.parent.mkdir(parents=True, exist_ok=True)
-    guide_entry.write_bytes(b"manual")
+    guide_zip.parent.mkdir(parents=True, exist_ok=True)
+    guide_zip.write_bytes(_make_zip({"index.html": b"manual"}))
     assert flag() is True
-    guide_entry.unlink()
+    guide_zip.unlink()
     assert flag() is False
 
 
 def test_guide_enforces_limits(logged_in_games, storage_root, monkeypatch):
-    from backend.games import service as games_service
-
     game_id = _guide_game(logged_in_games)
     before = _files(storage_root)
 
-    monkeypatch.setattr(games_service, "_GUIDE_MAX_FILES", 1)
+    monkeypatch.setattr(games_archive, "MAX_ENTRIES", 1)
     too_many = _upload_guide(
         logged_in_games, game_id, {"index.html": b"a", "b.css": b"b"}
     )
@@ -2184,7 +2314,7 @@ def test_guide_enforces_limits(logged_in_games, storage_root, monkeypatch):
     assert "数量" in too_many.json()["message"]
     monkeypatch.undo()
 
-    monkeypatch.setattr(games_service, "_GUIDE_MAX_TOTAL_SIZE", 1)
+    monkeypatch.setattr(games_archive, "MAX_TOTAL_SIZE", 1)
     too_big = _upload_guide(logged_in_games, game_id, {"index.html": b"a" * 64})
     assert too_big.status_code == 400
     assert _files(storage_root) == before
@@ -2192,17 +2322,77 @@ def test_guide_enforces_limits(logged_in_games, storage_root, monkeypatch):
 
 def test_guide_path_helpers():
     assert paths.guide_dir("flash", "AB-1") == "game/flash/AB-1/guide"
+    assert paths.guide_zip_path("flash", "AB-1") == "game/flash/AB-1/guide.zip"
     assert paths.guide_entry_path("flash", "AB-1") == "game/flash/AB-1/guide/index.html"
     assert (
         paths.guide_asset_path("flash", "AB-1", "pages/1.html")
         == "game/flash/AB-1/guide/pages/1.html"
     )
     assert paths.guide_temp_dir("flash", "AB-1", "tok") == "game/flash/AB-1/.guide-tok"
-    assert normalize_guide_path("pages/mc/1.html") == "pages/mc/1.html"
+    assert paths.h5_zip_path("h5", "AB-1") == "game/h5/AB-1/game.zip"
+    assert paths.h5_entry_path("h5", "AB-1") == "game/h5/AB-1/h5/index.html"
+    assert games_archive.normalize_guide_path("pages/mc/1.html") == "pages/mc/1.html"
     with pytest.raises(ValidationError):
-        normalize_guide_path("../evil.js")
+        games_archive.normalize_guide_path("../evil.js")
     with pytest.raises(ValidationError):
-        normalize_guide_path("/abs.js")
+        games_archive.normalize_guide_path("/abs.js")
+
+
+# ---------- 两个根分开（RUNTIME_ROOT 与 STORAGE_ROOT 不同） ----------
+
+
+def test_h5_extraction_goes_to_runtime_root_only(split_logged_in, split_app):
+    """两个根分开时：数据根只放 zip，解包产物只出现在运行时根。"""
+    storage = Path(split_app.state.settings.STORAGE_ROOT)
+    runtime = Path(split_app.state.settings.runtime_root)
+    assert storage != runtime
+
+    game_id = _upload_h5(split_logged_in)
+    cid = _cartridge_of(split_app, game_id)
+    assert _exists(storage, f"game/h5/{cid}/game.zip")
+    assert not (runtime / "game" / "h5" / cid).exists()
+
+    assert split_logged_in.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
+    assert _exists(runtime, f"game/h5/{cid}/h5/index.html")
+    assert not _exists(storage, f"game/h5/{cid}/h5/index.html")
+
+
+@pytest.mark.parametrize("kind", ["h5", "guide"])
+@pytest.mark.parametrize("action", ["delete", "type-switch", "rename"])
+def test_runtime_cleanup_with_split_roots(split_logged_in, split_app, kind, action):
+    """两个根分开时，删游戏 / 换类型 / 改卡带ID 都要把运行时根的产物一起收拾干净。"""
+    runtime = Path(split_app.state.settings.runtime_root)
+    storage = Path(split_app.state.settings.STORAGE_ROOT)
+
+    game_id = _upload_h5(split_logged_in, name=f"清理 {kind} {action}")
+    cid = _cartridge_of(split_app, game_id)
+    if kind == "guide":
+        assert (
+            _upload_guide(split_logged_in, game_id, {"index.html": b"x"}).status_code == 201
+        )
+        url = f"/api/games/{game_id}/guide/index.html"
+        sub = "guide/index.html"
+    else:
+        url = f"/api/games/{game_id}/h5/index.html"
+        sub = "h5/index.html"
+    assert split_logged_in.get(url).status_code == 200
+    assert _exists(runtime, f"game/h5/{cid}/{sub}")
+
+    if action == "delete":
+        assert split_logged_in.delete(f"/api/games/manage/{game_id}").status_code == 200
+    elif action == "type-switch":
+        _unlock_body(split_app, game_id)
+        switched = split_logged_in.post(
+            f"/api/games/manage/{game_id}/assets",
+            data={"kind": "game"},
+            files={"file": ("new.nes", b"NES\x1a", "application/octet-stream")},
+        )
+        assert switched.status_code == 201
+    else:
+        assert _rename(split_logged_in, game_id, "RENAMED-1").status_code == 200
+
+    assert not (runtime / "game" / "h5" / cid).exists()
+    assert not (storage / "game" / "h5" / cid).exists()
 
 
 # ---------- 搬运（7k7k / 4399） ----------
@@ -2802,3 +2992,24 @@ def test_download_file_without_limit_is_unchanged(tmp_path):
     assert Path(path).read_bytes() == b"payload"
     assert size == 7
     assert [p.name for p in tmp_path.iterdir()] == ["a.nes"]
+
+
+def test_init_db_drops_removed_tables(tmp_path):
+    """老库里遗留的 game_h5_files 表：启动时清掉（清单表已经没有任何代码读写）。"""
+    from sqlalchemy import inspect as sa_inspect
+    from sqlmodel import create_engine
+
+    from backend.database import init_db
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE game_h5_files ("
+            "id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, path VARCHAR(512) NOT NULL, "
+            "file_path VARCHAR(700) NOT NULL, size INTEGER NOT NULL, "
+            "mime VARCHAR(200), created_at DATETIME NOT NULL)"
+        )
+
+    init_db(engine)
+
+    assert not sa_inspect(engine).has_table("game_h5_files")

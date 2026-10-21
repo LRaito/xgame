@@ -86,21 +86,6 @@ class Game(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=_utcnow)
 
 
-class GameH5File(SQLModel, table=True):
-    """H5 游戏解包后的单文件清单：path 为归一化后的包内相对路径。"""
-
-    __tablename__ = "game_h5_files"
-    __table_args__ = (UniqueConstraint("game_id", "path"),)
-
-    id: int | None = Field(default=None, primary_key=True)
-    game_id: int = Field(index=True)
-    path: str = Field(max_length=512)
-    file_path: str = Field(max_length=700)
-    size: int = Field(default=0)
-    mime: str | None = Field(default=None, max_length=200)
-    created_at: datetime = Field(default_factory=_utcnow)
-
-
 class GameCloudSnapshot(SQLModel, table=True):
     """一个云端存档 = 某(用户,游戏)此刻全部本地 .sol 的整体快照。"""
 

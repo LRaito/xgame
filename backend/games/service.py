@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 import logging
-import os
 import re
 import tempfile
-import unicodedata
-import zipfile
 import zlib
 from collections.abc import Sequence
 from contextlib import ExitStack
@@ -13,14 +10,18 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
-from uuid import uuid4
 
 from sqlalchemy import case, func
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from backend.errors import NotFoundError, StorageError, ValidationError
-from backend.games import importer, paths, remote
+from backend.games import archive, importer, paths, remote
+from backend.games.archive import (
+    guess_asset_mime,
+    normalize_guide_path,
+    normalize_h5_path,
+)
 from backend.games.models import (
     CARTRIDGE_ID_MAX_LENGTH,
     CARTRIDGE_ID_PATTERN,
@@ -31,13 +32,13 @@ from backend.games.models import (
     GameCloudSnapshot,
     GameCloudSnapshotFile,
     GameGalleryImage,
-    GameH5File,
     GameRecentPlay,
     GameScreenshot,
     GameUserStat,
     cover_types_for,
 )
 from backend.games.platforms import playable_platforms
+from backend.games.runtime_assets import RuntimeAssets
 from backend.storage.types import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -99,71 +100,8 @@ MANAGE_PAGE_SIZE_MAX = 100
 # 搬运的卡带ID 不用手填，由本体（Flash 的 .swf / H5 的 .zip）CRC32 自动生成
 _IMPORT_CARTRIDGE_PREFIX = "F-"
 
-# H5 入口固定为根目录 index.html（大小写不敏感识别，落库统一小写）。
-H5_ENTRY_PATH = "index.html"
-_H5_ENTRY_NAMES = frozenset({"index.html", "index.htm"})
-
-# 攻略入口固定为根目录 index.html（大小写不敏感识别，落盘统一小写）。
-# 只认 index.html、不收 index.htm：攻略没有清单表做路径重写，收下它就得改名，不值得。
-GUIDE_ENTRY_PATH = paths.GUIDE_ENTRY_NAME
-_GUIDE_ENTRY_NAMES = frozenset({GUIDE_ENTRY_PATH})
-
-# 攻略解包/上传上限。文件数取 1000 与 Starlette MultiPartParser.max_files 的硬上限对齐
-# （超了在解析阶段就被拒，路由层拿不到），整体请求大小另由 nginx client_max_body_size 兜底。
-_GUIDE_MAX_FILES = 1000
-_GUIDE_MAX_FILE_SIZE = 64 * 1024 * 1024
-_GUIDE_MAX_TOTAL_SIZE = 256 * 1024 * 1024
-
-# H5 解包上限（压缩包本体上限与 nginx client_max_body_size 对齐）。
-_H5_MAX_ZIP_SIZE = 128 * 1024 * 1024
-_H5_MAX_ENTRIES = 2000
-_H5_MAX_ENTRY_SIZE = 64 * 1024 * 1024
-_H5_MAX_TOTAL_SIZE = 256 * 1024 * 1024
-_H5_MAX_RATIO = 200
-_H5_RATIO_MIN_SIZE = 1024 * 1024
-_ASSET_MAX_PATH_LENGTH = 512
-_ASSET_MAX_PATH_SEGMENTS = 32
-
-# 当前平台是不是 Windows。写成模块级变量而不是到处 os.name，是为了让测试能翻它——
-# 「解压即用」的 Windows 包跑在 Windows 上，而测试跑在 Linux 上，不翻就永远测不到那条分支。
-_IS_WINDOWS = os.name == "nt"
-
-# Windows 的完整路径上限是 260（MAX_PATH）。这里留出余量：写盘时同目录会先落一个
-# `.{文件名}.tmp-{8位随机}` 的临时文件（比最终名字长），H5 解包还有 `.h5-{12位}` 暂存目录。
-_WINDOWS_PATH_BUDGET = 240
-_H5_SKIP_NAMES = frozenset({"__MACOSX", ".DS_Store"})
-_ASSET_DEFAULT_MIME = "application/octet-stream"
-
-# 静态资源（H5 解包资源、攻略）的 MIME 由该显式表决定，不依赖运行环境的 /etc/mime.types，保证可复现。
-_ASSET_MIME_TYPES: dict[str, str] = {
-    ".html": "text/html; charset=utf-8",
-    ".htm": "text/html; charset=utf-8",
-    ".js": "text/javascript",
-    ".mjs": "text/javascript",
-    ".css": "text/css",
-    ".json": "application/json",
-    ".wasm": "application/wasm",
-    ".xml": "application/xml",
-    ".svg": "image/svg+xml",
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".webp": "image/webp",
-    ".ico": "image/x-icon",
-    ".woff": "font/woff",
-    ".woff2": "font/woff2",
-    ".ttf": "font/ttf",
-    ".otf": "font/otf",
-    ".eot": "application/vnd.ms-fontobject",
-    ".mp3": "audio/mpeg",
-    ".ogg": "audio/ogg",
-    ".wav": "audio/wav",
-    ".m4a": "audio/mp4",
-    ".mp4": "video/mp4",
-    ".webm": "video/webm",
-    ".txt": "text/plain; charset=utf-8",
-}
+# 两个包（H5 游戏资源包、攻略包）的入口名、上限、路径归一化与解包原语全在
+# `backend/games/archive.py`；真正的解包推迟到运行时，见 `backend/games/runtime_assets.py`。
 
 
 def allowed_body_extensions() -> tuple[str, ...]:
@@ -227,18 +165,10 @@ def detect_game_type(filename: str) -> str:
 
 
 # 游戏名要同时能当 Windows 文件名与百度网盘文件名（本体/封面下载下来就是「游戏名.后缀」，
-# 也会被整包传到网盘），所以按两边的限制取交集校验：非法字符 \ / : * ? " < > |（全角版，
-# 如 ：与 ／，不受影响）、控制字符、结尾的点、保留设备名、长度上限。
-_NAME_ILLEGAL_CHARS = frozenset('\\/:*?"<>|')
-# Windows 保留设备名（大小写不敏感，带扩展名同样保留，如 NUL.nes 也是设备名）
-_WINDOWS_RESERVED_NAMES = frozenset(
-    {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", "CLOCK$"}
-    | {f"COM{i}" for i in range(10)}
-    | {f"LPT{i}" for i in range(10)}
-)
-# 包内路径（H5/攻略）用的非法字符集：与游戏名同一套，但去掉两个路径分隔符——
-# `\` 由路径校验单独拒掉，`/` 是分隔符本身、每段都有。
-_ASSET_ILLEGAL_CHARS = _NAME_ILLEGAL_CHARS - {"/", "\\"}
+# 也会被整包传到网盘），所以按两边的限制取交集校验。规则常量与包内路径校验共用，
+# 放在最底层的 `backend/games/archive.py` 里。
+_NAME_ILLEGAL_CHARS = archive.NAME_ILLEGAL_CHARS
+_WINDOWS_RESERVED_NAMES = archive.WINDOWS_RESERVED_NAMES
 
 
 _CARTRIDGE_ID_RE = re.compile(CARTRIDGE_ID_PATTERN)
@@ -334,172 +264,6 @@ def sanitize_game_name(raw: str, *, fallback: str = "未命名游戏") -> str:
     return cleaned
 
 
-def guess_asset_mime(path: str) -> str:
-    """按后缀返回静态资源 MIME；未知后缀一律 octet-stream。"""
-    return _ASSET_MIME_TYPES.get(PurePosixPath(path).suffix.lower(), _ASSET_DEFAULT_MIME)
-
-
-def normalize_h5_path(raw: str) -> str:
-    """归一化压缩包内相对路径；任何歧义/越界/非法字符都拒绝。"""
-    return _normalize_asset_path(raw, where="压缩包内")
-
-
-def normalize_guide_path(raw: str) -> str:
-    """归一化攻略文件夹内相对路径；规则与 H5 包内路径完全一致。"""
-    return _normalize_asset_path(raw, where="攻略文件夹内")
-
-
-def _normalize_asset_path(raw: str, *, where: str) -> str:
-    """H5 包内路径与攻略内路径共用的归一化：任何歧义/越界/非法字符都拒绝。"""
-    if not raw or not raw.strip():
-        raise ValidationError(f"{where}含空路径。")
-    text = unicodedata.normalize("NFC", raw).strip()
-    if "\\" in text:
-        raise ValidationError(f"{where}含非法路径（反斜杠）。")
-    if any(ord(ch) < 32 for ch in text):
-        raise ValidationError(f"{where}含非法路径（控制字符）。")
-    if any(ch in text for ch in "?#%"):
-        raise ValidationError(f"{where}含非法路径（? # %）。")
-    # 与游戏名同一套 Windows 规则：ZIP 里这些字符完全合法，解到 NTFS 上却会直接抛异常
-    # （`a:b.png` 会被当成数据流、`x?.png` 干脆建不出来），解包到一半失败最难排查。
-    # 刻意不分平台：在 Linux 上也一并拒掉，同一个包在哪都能用。
-    # 去掉两个路径分隔符：`\` 上面已经单独拒过，`/` 是包内路径的分隔符本身。
-    illegal = sorted({ch for ch in text if ch in _ASSET_ILLEGAL_CHARS})
-    if illegal:
-        raise ValidationError(f"{where}含非法路径（{' '.join(illegal)}）。")
-    posix = PurePosixPath(text)
-    if posix.is_absolute():
-        raise ValidationError(f"{where}含绝对路径。")
-    parts = posix.parts
-    if not parts or any(part in ("", ".", "..") for part in parts):
-        raise ValidationError(f"{where}含非法路径（. 或 ..）。")
-    normalized = "/".join(parts)
-    if normalized != text:
-        raise ValidationError(f"{where}含非法路径。")
-    if len(normalized) > _ASSET_MAX_PATH_LENGTH or len(parts) > _ASSET_MAX_PATH_SEGMENTS:
-        raise ValidationError(f"{where}含过长路径。")
-    for part in parts:
-        # Windows 会静默丢掉结尾的点和空格，留着会让「库里的名字」与「磁盘上的名字」对不上
-        if part.endswith(".") or part.endswith(" "):
-            raise ValidationError(f"{where}含非法路径（名字以点或空格结尾）。")
-        if part.split(".", 1)[0].strip().upper() in _WINDOWS_RESERVED_NAMES:
-            raise ValidationError(f"{where}含 Windows 保留设备名。")
-    return normalized
-
-
-def _ensure_path_fits(
-    root: str | None, relative: str, *, where: str, hint: str = "或减少包内的目录层级"
-) -> None:
-    """在 Windows 上卡一下「数据根 + 相对路径」的总长度。
-
-    `_ASSET_MAX_PATH_LENGTH`（512）是**相对**上限，保证不了叠加数据根前缀之后仍在 260 以内。
-    超限的后果不是一条干净的报错，而是解包写到一半失败、或者后面某次读文件莫名「找不到」，
-    所以在收下之前按实际的数据根长度算一遍。其它平台没有这个上限，直接放行。
-    """
-    if not _IS_WINDOWS or not root:
-        return
-    if len(os.path.join(root, relative)) > _WINDOWS_PATH_BUDGET:
-        raise ValidationError(
-            f"{where}存在过长的路径：Windows 下完整路径不能超过 {_WINDOWS_PATH_BUDGET} 个字符，"
-            f"请把数据目录放到更浅的位置（如 D:\\xgame），{hint}。"
-        )
-
-
-def _zip_entry_name(info: zipfile.ZipInfo) -> str:
-    """ZIP 条目名，尽量还原成原本的样子。
-
-    `zipfile` 只在条目带了 UTF-8 标志位（`0x800`）时才按 UTF-8 解码，否则一律按 cp437。
-    用资源管理器或老压缩工具打出来的中文包多半是 GBK 且不带那个标志位，于是解出来是一串乱码
-    ——不报错，但文件名全错。这里按 cp437 把原始字节还原回来再试常见编码。
-    """
-    name = info.filename
-    if info.flag_bits & 0x800:
-        return name
-    try:
-        raw = name.encode("cp437")
-    except UnicodeEncodeError:
-        return name
-    for codec in ("gbk", "utf-8"):
-        try:
-            return raw.decode(codec)
-        except UnicodeDecodeError:
-            continue
-    return name
-
-
-def _h5_skip_entry(name: str) -> bool:
-    """跳过资源里常见的系统垃圾条目（macOS 元数据、.DS_Store）。"""
-    parts = PurePosixPath(name).parts
-    return any(part in _H5_SKIP_NAMES for part in parts)
-
-
-def _has_h5_entry(entries: list[tuple[str, zipfile.ZipInfo]]) -> bool:
-    return any(path.lower() in _H5_ENTRY_NAMES for path, _ in entries)
-
-
-def _strip_h5_wrapper(
-    entries: list[tuple[str, zipfile.ZipInfo]],
-) -> list[tuple[str, zipfile.ZipInfo]]:
-    """压缩包把整个游戏套在一层目录里时剥掉该前缀。
-
-    仅当根目录没有入口、且全部条目共享唯一顶层目录、剥掉后根目录出现入口时才剥离；
-    否则原样返回（避免误剥与入口同级的 assets/ 之类目录）。
-    """
-    if _has_h5_entry(entries):
-        return entries
-    tops = {path.split("/", 1)[0] for path, _ in entries}
-    if len(tops) != 1:
-        return entries
-    top = tops.pop()
-    if not all(path.startswith(f"{top}/") for path, _ in entries):
-        return entries
-    stripped = [(path[len(top) + 1 :], info) for path, info in entries]
-    return stripped if _has_h5_entry(stripped) else entries
-
-
-def _read_zip_entry(archive: zipfile.ZipFile, info: zipfile.ZipInfo) -> tuple[BinaryIO, int]:
-    """把单条条目解压到 spooled 临时文件（超阈值落盘），顺带触发 CRC 校验并得到真实字节数。"""
-    spool: BinaryIO = tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024)
-    try:
-        with archive.open(info) as source:
-            while True:
-                block = source.read(256 * 1024)
-                if not block:
-                    break
-                spool.write(block)
-    except (zipfile.BadZipFile, RuntimeError) as exc:
-        spool.close()
-        raise ValidationError("压缩包内文件损坏，无法解包。") from exc
-    actual = spool.tell()
-    spool.seek(0)
-    return spool, actual
-
-
-class _SeekableStream:
-    """zipfile 需要底层流具备 seekable()/readable()；部分 Python 版本的 spooled 文件没有。"""
-
-    def __init__(self, raw) -> None:
-        self._raw = raw
-
-    def read(self, size: int = -1) -> bytes:
-        return self._raw.read(size)
-
-    def seek(self, offset: int, whence: int = 0) -> int:
-        return self._raw.seek(offset, whence)
-
-    def tell(self) -> int:
-        return self._raw.tell()
-
-    def seekable(self) -> bool:
-        return True
-
-    def readable(self) -> bool:
-        return True
-
-    def writable(self) -> bool:
-        return False
-
-
 @dataclass(frozen=True)
 class GameUpload:
     """一次上传的输入：文件名决定游戏类型与落盘后缀，流由调用方负责关闭。"""
@@ -508,15 +272,6 @@ class GameUpload:
     stream: BinaryIO
     size: int
     mime: str | None
-
-
-@dataclass(frozen=True)
-class GuideUpload:
-    """攻略里的一次上传：path 是文件夹内相对路径（前端已剥掉最外层目录名）。"""
-
-    path: str
-    stream: BinaryIO
-    size: int | None
 
 
 @dataclass
@@ -614,12 +369,16 @@ def _manage_order_clauses() -> tuple:
 
 
 class GameService:
-    def __init__(self, session: Session, storage: StorageBackend) -> None:
+    def __init__(
+        self, session: Session, storage: StorageBackend, runtime_storage: StorageBackend
+    ) -> None:
         self._session = session
-        self._storage = storage
+        self._storage = storage  # 数据根：本体/封面/图集/两个 zip
+        self._runtime_storage = runtime_storage  # 运行时根：H5 与攻略的解包产物
+        self._assets = RuntimeAssets(storage, runtime_storage)
 
     def _storage_root(self) -> str | None:
-        """数据根的绝对路径，只用来算 Windows 的完整路径长度（见 `_ensure_path_fits`）。
+        """数据根的绝对路径，只用来算 Windows 的完整路径长度（见 `archive.ensure_path_fits`）。
 
         `StorageBackend` 协议没有 `root` 这一项（远端实现未必要落到本地目录），所以取不到就
         返回 None、跳过长度检查——宁可少一道检查，也不要为一个可选能力把协议撑大。
@@ -899,6 +658,7 @@ class GameService:
         self._ensure_cartridge_free(new_id, exclude_id=row.id)
 
         moves = self._plan_cartridge_rename(row, new_id)
+        old_id = row.cartridge_id
         done = self._move_dirs_for_rename(moves)
         row.cartridge_id = new_id
         row.updated_at = datetime.now(timezone.utc)
@@ -911,6 +671,9 @@ class GameService:
             self._rollback_dirs_for_rename(done)
             raise ValidationError(f"卡带 ID「{new_id}」已经被占用，换一个吧。") from None
         self._session.refresh(row)
+        # 解包产物按卡带ID 分目录，改完名旧的那份作废（下次访问自动重新解包）。
+        # 数据根那棵树已经被 move_tree 搬走了，这里只管运行时根。
+        self._assets.drop_tree(paths.game_dir(row.game_type, old_id))
         return self._to_item(row)
 
     def _plan_cartridge_rename(self, row: Game, new_id: str) -> list[_CartridgeMove]:
@@ -945,12 +708,12 @@ class GameService:
                 _CartridgeMove(source=source, target=(parent.parent / new_id).as_posix())
             )
 
-        # 本体、封面、H5 清单、图集：路径都在游戏目录里，只换掉那一层前缀
+        # 本体、封面、图集：路径都在数据根的游戏目录里，只换掉那一层前缀
         for holder, attr in ((row, "game_path"), (row, "cover_path")):
             value = getattr(holder, attr)
             if value and value.startswith(f"{old_dir}/"):
                 setattr(holder, attr, self._fit_renamed_path(f"{new_dir}/{value[len(old_dir) + 1:]}"))
-        for asset in (*self._h5_rows(row.id), *self._gallery_rows(row.id)):
+        for asset in self._gallery_rows(row.id):
             if asset.file_path.startswith(f"{old_dir}/"):
                 asset.file_path = self._fit_renamed_path(
                     f"{new_dir}/{asset.file_path[len(old_dir) + 1:]}"
@@ -965,14 +728,23 @@ class GameService:
                 (path.parent.parent / new_id / path.name).as_posix()
             )
             self._session.add(asset)
-        # 攻略目录里的深层文件没有任何表记录，长度只能保证到 guide/ 这一层
-        self._fit_renamed_path(paths.guide_dir(row.game_type, new_id))
+        # 解包产物在运行时根下，按卡带ID 分目录，改完名旧的那份就作废了（下次访问重新解包），
+        # 所以只对新的前缀算长度。解包产物里的深层文件没有任何表记录，长度只能保证到
+        # h5/ 与 guide/ 这一层——解包那一刻会再按真实的包内路径逐条卡一遍。
+        for maker in (paths.h5_dir, paths.guide_dir):
+            self._fit_renamed_path(maker(row.game_type, new_id), root=self._assets.root())
         return moves
 
-    def _fit_renamed_path(self, value: str) -> str:
-        """改名后的路径过一遍 Windows 总长守卫，原样返回（写起来能直接赋值）。"""
-        _ensure_path_fits(
-            self._storage_root(), value, where="改名后", hint="或把卡带 ID 改短一点"
+    def _fit_renamed_path(self, value: str, *, root: str | None = None) -> str:
+        """改名后的路径过一遍 Windows 总长守卫，原样返回（写起来能直接赋值）。
+
+        `root` 缺省是数据根；解包产物在运行时根下，调用方要显式传 `self._assets.root()`。
+        """
+        archive.ensure_path_fits(
+            root if root is not None else self._storage_root(),
+            value,
+            where="改名后",
+            hint="或把卡带 ID 改短一点",
         )
         return value
 
@@ -1022,7 +794,6 @@ class GameService:
         row = self._session.get(Game, game_id)
         if row is None:
             raise NotFoundError("游戏不存在。")
-        h5_rows = self._h5_rows(row.id)
         recent_rows = self._recent_rows(row.id)
         stat_rows = self._stat_rows(row.id)
         snapshot_rows = self._snapshot_rows(row.id)
@@ -1030,7 +801,11 @@ class GameService:
         screenshot_rows = self._screenshot_rows(row.id)
         gallery_rows = self._gallery_rows(row.id)
         # 图集就在游戏目录里，文件随这棵目录树一起没；行要单独删
-        self._storage.remove_tree(paths.game_dir(row.game_type, row.cartridge_id))
+        game_dir = paths.game_dir(row.game_type, row.cartridge_id)
+        self._storage.remove_tree(game_dir)
+        # 解包产物是派生物，跟着整棵游戏目录一起作废（两个根相同时上面那步已经删掉了，
+        # 这里退化成一次 exists() 检查）
+        self._assets.drop_tree(game_dir)
         # 存档与截图的目录名带的是「写入当时的游戏类型」，换过类型的游戏与当前
         # game_type 不一样，所以一律从 file_path 反推目录，绝不用当前类型拼
         save_dirs: set[str] = set()
@@ -1049,8 +824,6 @@ class GameService:
             self._session.delete(image)
         for snapshot in snapshot_rows:
             self._session.delete(snapshot)
-        for asset in h5_rows:
-            self._session.delete(asset)
         for recent in recent_rows:
             self._session.delete(recent)
         for stat in stat_rows:
@@ -1203,8 +976,8 @@ class GameService:
         """把行的类型换成 game_type，返回新本体就位后要收尾的目录搬家。
 
         磁盘目录带游戏类型，所以类型一变，旧目录里的封面也得跟着挪到新目录；
-        但这里只改行状态与 h5 清单（事务内），真正的文件搬家交给调用方在新本体
-        写成功之后做，避免上传失败先把旧档毁了。
+        但这里只改行状态，真正的文件搬家交给调用方在新本体写成功之后做，
+        避免上传失败先把旧档毁了。
         """
         if game_type == row.game_type:
             return None
@@ -1231,9 +1004,6 @@ class GameService:
                 continue
             image.file_path = f"{new_dir}/{image.file_path[len(old_dir) + 1:]}"
             self._session.add(image)
-        if row.game_type == GAME_TYPE_H5:
-            for asset in self._h5_rows(row.id):
-                self._session.delete(asset)
         row.game_path = ""
         row.size = 0
         row.game_type = game_type
@@ -1246,7 +1016,7 @@ class GameService:
         """新本体已就位：把封面与图集挪进新类型目录，再删掉旧类型目录。
 
         这一删是递归的（整个旧游戏目录），所以凡是要留下的子目录都得先搬走——
-        图集就是其中之一（攻略与 H5 资源不迁，随旧目录一起清掉）。
+        图集就是其中之一（两个 zip 与它们的解包产物都不迁，随旧目录一起清掉）。
         """
         if switch is None:
             return
@@ -1254,6 +1024,8 @@ class GameService:
             self._storage.move(switch.cover_from, switch.cover_to)
         self._storage.move_tree(switch.gallery_from, switch.gallery_to)
         self._storage.remove_tree(switch.stale_dir)
+        # 运行时根下同名的解包产物也作废（类型变了，下次访问会按新类型目录重新解包）
+        self._assets.drop_tree(switch.stale_dir)
 
     def open_asset(self, path: str):
         if not path:
@@ -1318,103 +1090,75 @@ class GameService:
         return cartridge_id
 
     def open_h5_asset(self, game_id: int, asset_path: str):
-        """按归一化后的包内相对路径取 H5 资源，返回 (stream, mime, size)。"""
+        """按归一化后的包内相对路径取 H5 资源，返回 (stream, mime, size)。
+
+        资源包在数据根、解包产物在运行时根，两边路径一一对应、没有清单表：先确保已经
+        解包（首次访问才真的解），再按同一个相对路径从运行时根读。
+        """
         item = self.get(game_id)
         if item.game_type != GAME_TYPE_H5:
             raise NotFoundError("游戏文件不存在。")
         path = normalize_h5_path(asset_path)
-        row = self._session.exec(
-            select(GameH5File).where(
-                GameH5File.game_id == game_id, GameH5File.path == path
+        # ensure 必须在 try 外面：解压失败（磁盘满/只读）是服务端故障，不能被吞成 404
+        self._assets.ensure(archive.H5, item.game_type, item.cartridge_id)
+        try:
+            stream = self._runtime_storage.open_download(
+                paths.h5_asset_path(item.game_type, item.cartridge_id, path)
             )
-        ).first()
-        if row is None:
-            raise NotFoundError("游戏文件不存在。")
-        return self._storage.open_download(row.file_path), row.mime or _ASSET_DEFAULT_MIME, row.size
+        except StorageError as exc:
+            raise NotFoundError("游戏文件不存在。") from exc
+        return stream, guess_asset_mime(path), stream.size
 
     def open_guide_asset(self, game_id: int, asset_path: str):
         """按归一化后的攻略内相对路径取静态文件，返回 (stream, mime, size)。
 
-        攻略目录与 URL 路径一一对应，没有清单表：归一化之后直接拼磁盘路径，
-        文件不存在由存储层报错，在这里转成 404（否则 router 会当成 400 上报）。
+        与 H5 同一套：包在数据根、解包产物在运行时根，路径一一对应、没有清单表。
         """
         item = self.get(game_id)
         relpath = normalize_guide_path(asset_path)
+        self._assets.ensure(archive.GUIDE, item.game_type, item.cartridge_id)
         try:
-            stream = self._storage.open_download(
+            stream = self._runtime_storage.open_download(
                 paths.guide_asset_path(item.game_type, item.cartridge_id, relpath)
             )
         except StorageError as exc:
             raise NotFoundError("攻略文件不存在。") from exc
         return stream, guess_asset_mime(relpath), stream.size
 
-    def upload_guide(self, game_id: int, uploads: list[GuideUpload]) -> GameItem:
-        """整目录保存攻略：全量校验 → 写同层暂存目录 → 整体替换 guide/。
+    def upload_guide(self, game_id: int, upload: GameUpload) -> GameItem:
+        """保存攻略：只校验 zip 并写进数据根，一个字节都不解。
 
-        与 H5 一样，磁盘上没有代际前缀，替换靠一次目录改名（旧目录先改名挪开、新的就位、
-        再删挪开的），中途失败旧攻略还在。所有校验都在写下第一个字节之前做完，失败最多
-        留下一个暂存目录，统一在 except 里删掉——磁盘零残留。
+        解包推迟到查看时（`RuntimeAssets.ensure`）。校验在写下第一个字节之前做完，
+        失败磁盘零残留；成功之后运行时根那份旧产物作废，下次查看重新解包。
         """
         row = self._session.get(Game, game_id)
         if row is None:
             raise NotFoundError("游戏不存在。")
-        if not uploads:
-            raise ValidationError("请选择要上传的攻略文件夹。")
-        if len(uploads) > _GUIDE_MAX_FILES:
-            raise ValidationError(f"攻略文件数量过多，最多 {_GUIDE_MAX_FILES} 个。")
-
-        normalized: list[tuple[str, GuideUpload]] = []
-        seen: set[str] = set()
-        total = 0
-        has_entry = False
-        for upload in uploads:
-            path = normalize_guide_path(upload.path)
-            _ensure_path_fits(
-                self._storage_root(),
-                paths.guide_asset_path(row.game_type, row.cartridge_id, path),
-                where="攻略内",
+        filename = (upload.filename or "").strip()
+        if not filename:
+            raise ValidationError("请选择要上传的攻略 ZIP 文件。")
+        if Path(filename).suffix.lower() != ".zip":
+            raise ValidationError("攻略只支持 ZIP 压缩包。")
+        if upload.size is None or upload.size <= 0:
+            raise ValidationError("文件大小无效。")
+        if upload.size > archive.MAX_ZIP_SIZE:
+            raise ValidationError("压缩包过大。")
+        entries = archive.read_manifest(upload.stream, kind=archive.GUIDE)
+        # 包内路径的深度只出现在运行时根下，所以按运行时根算 Windows 完整路径长度
+        for entry in entries:
+            archive.ensure_path_fits(
+                self._assets.root(),
+                paths.guide_asset_path(row.game_type, row.cartridge_id, entry.path),
+                where=archive.WHERE[archive.GUIDE],
             )
-            if path.lower() in _GUIDE_ENTRY_NAMES:
-                # 大小写不敏感识别入口，落盘统一成小写，入口地址才固定
-                path = GUIDE_ENTRY_PATH
-                has_entry = True
-            marker = path.lower()
-            if marker in seen:
-                raise ValidationError("攻略内含重名文件。")
-            seen.add(marker)
-            if upload.size is not None:
-                if upload.size > _GUIDE_MAX_FILE_SIZE:
-                    raise ValidationError("攻略内单个文件过大。")
-                total += upload.size
-                if total > _GUIDE_MAX_TOTAL_SIZE:
-                    raise ValidationError("攻略总体积过大。")
-            normalized.append((path, upload))
-        if not has_entry:
-            raise ValidationError("攻略根目录需包含 index.html。")
-
-        game_type = row.game_type
-        cartridge_id = row.cartridge_id
-        temp_dir = paths.guide_temp_dir(game_type, cartridge_id, uuid4().hex[:12])
-        try:
-            for path, upload in normalized:
-                stored = self._storage.upload(
-                    f"{temp_dir}/{path}",
-                    upload.stream,
-                    upload.size or 0,
-                    guess_asset_mime(path),
-                )
-                if upload.size is not None and stored.size is not None and stored.size != upload.size:
-                    raise StorageError("攻略文件写入大小不一致。")
-            # 新攻略全部就位后再换目录：这一步之后磁盘上已经是新攻略
-            self._storage.replace_tree(temp_dir, paths.guide_dir(game_type, cartridge_id))
-        except (ValidationError, StorageError):
-            self._safe_remove_tree(temp_dir)
-            raise
-        except Exception as exc:
-            logger.warning("攻略上传失败，已清掉暂存目录 game_id=%s", game_id, exc_info=exc)
-            self._safe_remove_tree(temp_dir)
-            raise StorageError("攻略上传失败。") from exc
-
+        _rewind(upload.stream)
+        self._storage.upload(
+            paths.guide_zip_path(row.game_type, row.cartridge_id),
+            upload.stream,
+            upload.size,
+            upload.mime or "application/zip",
+        )
+        self._assets.drop_tree(paths.guide_dir(row.game_type, row.cartridge_id))
         row.updated_at = datetime.now(timezone.utc)
         self._session.add(row)
         self._session.commit()
@@ -1422,23 +1166,16 @@ class GameService:
         return self._to_item(row)
 
     def _has_guide(self, row: Game) -> bool:
-        """磁盘即真相：guide/index.html 在就算这个游戏有攻略。
+        """磁盘即真相：数据根里有 guide.zip 就算这个游戏有攻略。
 
-        攻略没有清单表、也不落库标记，判定就是一次 stat——本地磁盘一次系统调用，
-        列表每行一次可忽略；换来的是「从宿主目录手动删掉攻略，界面立刻跟着变」。
+        攻略不落库标记，判定就是一次 stat——本地磁盘一次系统调用，列表每行一次可忽略；
+        换来的是「从宿主目录手动删掉攻略包，界面立刻跟着变」。
         """
         try:
-            self._storage.stat(paths.guide_entry_path(row.game_type, row.cartridge_id))
+            self._storage.stat(paths.guide_zip_path(row.game_type, row.cartridge_id))
         except StorageError:
             return False
         return True
-
-    def _h5_rows(self, game_id: int) -> list[GameH5File]:
-        return list(
-            self._session.exec(
-                select(GameH5File).where(GameH5File.game_id == game_id)
-            ).all()
-        )
 
     def _recent_rows(self, game_id: int) -> list[GameRecentPlay]:
         """所有用户的该游戏最近游玩记录——删游戏时一并清掉，不留孤儿行。"""
@@ -1493,139 +1230,39 @@ class GameService:
             ).all()
         )
 
-    def _read_h5_manifest(
-        self, stream
-    ) -> list[tuple[str, zipfile.ZipInfo]]:
-        """只校验压缩包清单（不解压数据），返回 (归一化路径, ZipInfo) 列表。"""
-        try:
-            stream.seek(0)
-        except (OSError, ValueError) as exc:
-            raise ValidationError("无法读取上传的压缩包。") from exc
-        try:
-            archive = zipfile.ZipFile(_SeekableStream(stream))
-        except (zipfile.BadZipFile, OSError, ValueError) as exc:
-            raise ValidationError("压缩包无法解析，请上传有效的 ZIP 文件。") from exc
-        entries: list[tuple[str, zipfile.ZipInfo]] = []
-        total = 0
-        with archive:
-            for info in archive.infolist():
-                name = _zip_entry_name(info)
-                if info.is_dir() or _h5_skip_entry(name):
-                    continue
-                if info.flag_bits & 0x1:
-                    raise ValidationError("压缩包包含加密文件，无法解包。")
-                normalized = normalize_h5_path(name)
-                size = int(info.file_size)
-                if size > _H5_MAX_ENTRY_SIZE:
-                    raise ValidationError("压缩包内单个文件过大。")
-                compressed = int(info.compress_size)
-                if (
-                    size > _H5_RATIO_MIN_SIZE
-                    and compressed > 0
-                    and size // compressed > _H5_MAX_RATIO
-                ):
-                    raise ValidationError("压缩包解压比例异常，已拒绝。")
-                entries.append((normalized, info))
-                total += size
-                if len(entries) > _H5_MAX_ENTRIES:
-                    raise ValidationError("压缩包内文件数量过多。")
-                if total > _H5_MAX_TOTAL_SIZE:
-                    raise ValidationError("压缩包解压后体积过大。")
-        if not entries:
-            raise ValidationError("压缩包为空。")
-        entries = _strip_h5_wrapper(entries)
-        seen: set[str] = set()
-        result: list[tuple[str, zipfile.ZipInfo]] = []
-        has_entry = False
-        for path, info in entries:
-            if path.lower() in _H5_ENTRY_NAMES:
-                path = H5_ENTRY_PATH
-                has_entry = True
-            marker = path.lower()
-            if marker in seen:
-                raise ValidationError("压缩包内含重名文件。")
-            seen.add(marker)
-            result.append((path, info))
-        if not has_entry:
-            raise ValidationError("压缩包根目录需包含 index.html。")
-        return result
-
     def _upload_h5_zip(
         self, row: Game, *, stream, size: int | None, mime: str | None, crc32: str
     ) -> GameItem:
-        """解包并保存 H5 游戏：先整包解到暂存目录，再整体换掉 h5 目录，最后落库。
+        """只校验并保存 H5 的 zip，一个字节都不解。
 
-        磁盘上没有代际前缀，所以「换」是靠目录改名完成的：暂存目录与 h5 目录同层，
-        替换是先把旧目录改名挪开、再把暂存目录改名就位，中途失败旧目录都还在。
+        解包推迟到播放时（`RuntimeAssets.ensure`），产物落在运行时根。校验全在写下第一个
+        字节之前做完，不合规的包连覆盖都不会发生；新包就位后运行时根那份旧产物作废。
         """
         if size is None or size <= 0:
             raise ValidationError("文件大小无效。")
-        if size > _H5_MAX_ZIP_SIZE:
+        if size > archive.MAX_ZIP_SIZE:
             raise ValidationError("压缩包过大。")
-        entries = self._read_h5_manifest(stream)
+        entries = archive.read_manifest(stream, kind=archive.H5)
         game_type = row.game_type
         cartridge_id = row.cartridge_id
-        for path, _info in entries:
-            _ensure_path_fits(
-                self._storage_root(),
-                paths.h5_asset_path(game_type, cartridge_id, path),
-                where="压缩包内",
+        # 包内路径的深度只出现在运行时根下，所以按运行时根算 Windows 完整路径长度
+        for entry in entries:
+            archive.ensure_path_fits(
+                self._assets.root(),
+                paths.h5_asset_path(game_type, cartridge_id, entry.path),
+                where=archive.WHERE[archive.H5],
             )
-        temp_dir = paths.h5_temp_dir(game_type, cartridge_id, uuid4().hex[:12])
-        h5_dir = paths.h5_dir(game_type, cartridge_id)
-        zip_path = paths.body_path(game_type, cartridge_id, ".zip")
-        new_rows: list[GameH5File] = []
+        zip_path = paths.h5_zip_path(game_type, cartridge_id)
+        _rewind(stream)
+        self._storage.upload(zip_path, stream, size, mime or "application/zip")
+        # 新包已就位：运行时根的旧解包产物作废，下次播放重新解包
+        self._assets.drop_tree(paths.h5_dir(game_type, cartridge_id))
+        row.game_path = zip_path
+        row.size = size
+        row.crc32 = crc32
+        row.updated_at = datetime.now(timezone.utc)
+        self._session.add(row)
         try:
-            try:
-                stream.seek(0)
-            except (OSError, ValueError) as exc:
-                raise ValidationError("无法读取上传的压缩包。") from exc
-            with zipfile.ZipFile(_SeekableStream(stream)) as archive:
-                for path, info in entries:
-                    spool, actual = _read_zip_entry(archive, info)
-                    try:
-                        if actual != int(info.file_size):
-                            raise ValidationError("压缩包内文件大小与记录不符。")
-                        asset_mime = guess_asset_mime(path)
-                        stored = self._storage.upload(
-                            f"{temp_dir}/{path}", spool, actual, asset_mime
-                        )
-                        if stored.size is not None and stored.size != actual:
-                            raise StorageError("游戏资源写入大小不一致。")
-                        new_rows.append(
-                            GameH5File(
-                                game_id=row.id,
-                                path=path,
-                                file_path=paths.h5_asset_path(game_type, cartridge_id, path),
-                                size=actual,
-                                mime=asset_mime,
-                            )
-                        )
-                    finally:
-                        spool.close()
-            # 新资源全部就位后再换目录：这一步之后磁盘上已经是新包
-            self._storage.replace_tree(temp_dir, h5_dir)
-            stream.seek(0)
-            self._storage.upload(zip_path, stream, size, mime or "application/zip")
-        except (ValidationError, StorageError):
-            self._safe_remove_tree(temp_dir)
-            raise
-        except Exception as exc:  # noqa: BLE001 - 统一转成领域错误并清掉暂存目录
-            logger.warning("H5 上传失败，已清掉暂存目录 game_id=%s", row.id, exc_info=exc)
-            self._safe_remove_tree(temp_dir)
-            raise StorageError("游戏资源上传失败。") from exc
-        try:
-            for old in self._h5_rows(row.id):
-                self._session.delete(old)
-            # 先落旧行删除再插新行，避免 (game_id, path) 唯一约束在重传同包时冲突
-            self._session.flush()
-            for item in new_rows:
-                self._session.add(item)
-            row.game_path = zip_path
-            row.size = size
-            row.crc32 = crc32
-            row.updated_at = datetime.now(timezone.utc)
-            self._session.add(row)
             self._session.commit()
         except Exception as exc:  # noqa: BLE001 - commit 失败只回滚行，磁盘保持新包
             self._session.rollback()

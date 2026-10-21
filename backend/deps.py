@@ -43,7 +43,8 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def get_game_service(request: Request, session: DbSession) -> GameService:
-    return GameService(session, request.app.state.storage)
+    # 两个存储：数据根（素材与两个 zip）与运行时根（H5/攻略的解包产物）
+    return GameService(session, request.app.state.storage, request.app.state.runtime_storage)
 
 
 GameServiceDep = Annotated[GameService, Depends(get_game_service)]

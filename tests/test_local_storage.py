@@ -166,3 +166,18 @@ def test_constructor_creates_root(tmp_path):
     root = tmp_path / "deep" / "storage"
     LocalStorage(root)
     assert root.is_dir()
+
+
+def test_stream_is_seekable(storage):
+    """open_download 的返回值要能被 zipfile 当底层流用：seek/tell/seekable 都要在。"""
+    storage.upload("game/h5/AB/game.zip", io.BytesIO(b"0123456789"), 10, "application/zip")
+    stream = storage.open_download("game/h5/AB/game.zip")
+    try:
+        assert stream.seekable() is True
+        assert stream.readable() is True
+        assert stream.tell() == 0
+        assert stream.seek(4) == 4
+        assert stream.read(2) == b"45"
+        assert stream.seek(0, io.SEEK_END) == 10
+    finally:
+        stream.close()

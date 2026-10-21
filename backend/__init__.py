@@ -55,8 +55,12 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.state.engine = engine
     app.state.session_factory = lambda: Session(engine)
 
-    # 游戏素材与存档都按相对路径落在项目文件根目录下，根目录不存在时自动建出来
+    # 游戏素材与存档都按相对路径落在数据根下，根目录不存在时自动建出来
     app.state.storage = LocalStorage(settings.STORAGE_ROOT)
+    # 运行时根：SQLite 库与 H5/攻略的解包产物都落在这里（解包产物是派生物，删了会自动重建）。
+    # 不配 RUNTIME_ROOT 时它与数据根同目录，两个实例指向同一棵树——RuntimeAssets 的清理
+    # 因此刻意不做「同根就跳过」的分支（见 backend/games/runtime_assets.py）。
+    app.state.runtime_storage = LocalStorage(settings.runtime_root)
 
     app.add_middleware(CSRFMiddleware, settings=settings)
     app.add_middleware(

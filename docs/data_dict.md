@@ -11,17 +11,17 @@
 | SQLite 单文件 | `<运行时根>/db/app.db`（Docker 里是宿主 `${RUNTIME_HOST_DIR}/db/app.db` → 容器 `/runtime/db/app.db`） | 全部业务元数据 |
 | SQLite 备份 | `<数据根>/db/<YYYY-MM>.db` | 启动时备一次、之后每小时一次，**当月只此一份、每次整份重写**（快照最多落后一小时）；不做还原，回滚就手工换回 `app.db` |
 | SQLite 发现索引 | `<数据根>/db/game.db` | 游戏发现的**派生只读库**（外部中英文名录的全文索引 + 按机种的游戏榜单），服务启动时不存在会自动补建、榜单 CSV 变化时会就地补载，也可用 `make index` 重建；**不备份**，可从 CSV 重建，见文末「游戏发现索引」 |
-| 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/H5 资源/攻略/图集、云端存档、游戏截图，以及 `db/` 下的备份与检索索引 |
-| 运行时根目录 | `RUNTIME_ROOT`（不配 = 与数据根相同；容器内固定 `/runtime`，宿主目录由 `RUNTIME_HOST_DIR` 挂进去） | 只有 SQLite 库。单独放是为了让数据根整个可以交给网盘之类的客户端备份——它拷不动一个一直被写着的库文件 |
+| 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/攻略与 H5 的 **zip**/图集、云端存档、游戏截图，以及 `db/` 下的备份与检索索引。**只放原始素材**，会被整体拷走备份 |
+| 运行时根目录 | `RUNTIME_ROOT`（不配 = 与数据根相同；容器内固定 `/runtime`，宿主目录由 `RUNTIME_HOST_DIR` 挂进去） | SQLite 库 + H5/攻略的**解包产物**（派生物，删掉会在下次访问时自动重建）。库单独放是为了让数据根整个可以交给网盘之类的客户端备份——它拷不动一个一直被写着的库文件 |
 | 哨兵文件 | 每个根目录下的 `.mounted` | **人工创建**的空文件；该根的宿主路径在 Windows 盘挂载路径前缀下时启动会检查，缺了服务拒绝启动（见 `backend/mount_guard.py`）。两个根相同时只有一个 |
 
-分工原则：**所有元数据在 SQLite，SQLite 里存的是相对于文件根目录的路径**；文件本身是磁盘上的普通文件，用户可以直接从宿主目录拷走、备份、浏览。相对路径统一用 `/` 作分隔符，读取时由 `LocalStorage` 拼上根路径。
+分工原则：**所有元数据在 SQLite，SQLite 里存的是相对于文件根目录的路径**（两个根下逐字一致）；文件本身是磁盘上的普通文件，用户可以直接从宿主目录拷走、备份、浏览。相对路径统一用 `/` 作分隔符，读取时由 `LocalStorage` 拼上根路径。
 
 SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`str`（无长度）→ `TEXT`；`int` → `INTEGER`；`datetime` → `DATETIME`。整型主键即 SQLite 自增 `INTEGER PRIMARY KEY`。
 
 ## SQLite 结构
 
-库路径在代码里写死为 `<运行时根>/db/app.db`（`backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME`，不可另配；运行时根不配就是数据根），`create_app()` 启动时 `init_db()` 建全部表。**没有迁移框架**：`create_all` 只建缺失的表、不给已存在的表补列，所以后来新增的列靠 `backend/database.py` 的 `_ADDED_COLUMNS` / `_ensure_columns()` 在启动时 `ALTER TABLE … ADD COLUMN` 补上（只加列，不改不删）。
+库路径在代码里写死为 `<运行时根>/db/app.db`（`backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME`，不可另配；运行时根不配就是数据根），`create_app()` 启动时 `init_db()` 建全部表。**没有迁移框架**：`create_all` 只建缺失的表、不给已存在的表补列，所以后来新增的列靠 `backend/database.py` 的 `_ADDED_COLUMNS` / `_ensure_columns()` 在启动时 `ALTER TABLE … ADD COLUMN` 补上（只加列，不改不删）；已经整张删掉的表靠 `_DROPPED_TABLES` / `_drop_tables()` 在启动时 `DROP TABLE`（目前只有 `game_h5_files`）。
 
 数据根的 `db/` 下还有第二个库 `game.db`（游戏发现的检索索引与游戏榜单），它是**派生、只读**的，结构与本节无关，见文末「游戏发现索引」。
 
@@ -32,14 +32,15 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | 1 | `users` | `backend/auth/models.py` | 平台账号（werkzeug 哈希），同时决定存档目录名 |
 | 2 | `login_attempts` | 同上 | 登录失败计数与锁定，按 username 一行 |
 | 3 | `games` | `backend/games/models.py` | 游戏条目（卡带ID、本体/封面相对路径） |
-| 4 | `game_h5_files` | 同上 | H5 游戏 ZIP 解包后的单文件清单（包内相对路径 → 磁盘相对路径） |
-| 5 | `game_cloud_snapshots` | 同上 | 某(用户,游戏)的一次云端存档快照 |
-| 6 | `game_cloud_snapshot_files` | 同上 | 快照里的单个存档文件（.sol / .state）及还原元信息 |
-| 7 | `game_screenshots` | 同上 | 按(用户,游戏)的游玩截图（相对路径 + 描述 + 展示顺序） |
-| 8 | `game_emulator_settings` | 同上 | 按(用户,平台)一份的模拟器设置（键位/选项/金手指，JSON 文本） |
-| 9 | `game_recent_plays` | 同上 | 按(用户,游戏)一行的最近游玩时间（游戏中心 rail 用） |
-| 10 | `game_user_stats` | 同上 | 按(用户,游戏)一行的游玩时长（秒）与进度 |
-| 11 | `game_gallery_images` | 同上 | 游戏图集：一个游戏一套的**共享**展示图（宣传图、说明书扫描件之类） |
+| 4 | `game_cloud_snapshots` | 同上 | 某(用户,游戏)的一次云端存档快照 |
+| 5 | `game_cloud_snapshot_files` | 同上 | 快照里的单个存档文件（.sol / .state）及还原元信息 |
+| 6 | `game_screenshots` | 同上 | 按(用户,游戏)的游玩截图（相对路径 + 描述 + 展示顺序） |
+| 7 | `game_emulator_settings` | 同上 | 按(用户,平台)一份的模拟器设置（键位/选项/金手指，JSON 文本） |
+| 8 | `game_recent_plays` | 同上 | 按(用户,游戏)一行的最近游玩时间（游戏中心 rail 用） |
+| 9 | `game_user_stats` | 同上 | 按(用户,游戏)一行的游玩时长（秒）与进度 |
+| 10 | `game_gallery_images` | 同上 | 游戏图集：一个游戏一套的**共享**展示图（宣传图、说明书扫描件之类） |
+
+> `game_h5_files` 已删除（H5 改成「zip 存在数据根、按需解到运行时根」，不再有清单表）；老库里的空表由启动时的 `_drop_tables()` 清掉。
 
 ### auth — 账号
 
@@ -71,29 +72,15 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | cartridge_id | VARCHAR(64) | NOT NULL, 唯一索引 `uq_games_cartridge_id` | 卡带ID：创建时必填，同时是磁盘上的目录名与「同一盘卡带」的身份标识。规则见 `validate_cartridge_id()`：只允许数字、字母、中划线、下划线，落库前统一转**大写**。**普通编辑（`PUT /manage/{id}`）改不动它**，要换走显式改名接口 `PUT /manage/{id}/cartridge-id`（`GameService.rename_cartridge_id()`）——一次迁移会搬三类目录并改写下面五处路径列（见「文件存储结构」）。游戏榜单页在**请求期**拿它把榜单行关联到库存（`GameService.map_for_cartridge_ids`，比对前经 `normalize_cartridge_id()` 归一；只读、不落库），所以改名后关联**立刻**跟着新 ID 走、不需要重建索引 |
 | cover_type | VARCHAR(20) | NULL | 封面类型：这盘封面被「美化」成了哪种外观，值就是封面样式 id（`flash` DISK / `gb` GB / `gbc` GBC / `gba` GBA / `fc` FC / `nes` NES）。**可空**，空 = 没有封面类型：新建（手动上传 / 网络上传 / 搬运）一律留空，只有管理页**编辑弹框手动选**（`PUT /manage/{id}`）与**「美化封面」**（`POST /manage/{id}/assets` 的 `cover_type` 表单字段，与封面文件同一次提交）两条写入路径。可选集合按游戏类型给，见 `backend/games/models.py` 的 `COVER_TYPES_BY_GAME_TYPE` / `cover_types_for()`——不支持美化封面的 `h5`/`snes`/`sega*` 返回空元组、永远为空；校验入口 `service.py::validate_cover_type()`。换本体导致游戏类型变化时，新类型不认的值清空。游戏中心「全部游戏」在游戏类型分组内再按它分行，空的自成一组排在最后。前端展示层镜像是 `frontend/src/constants/coverStyles.js` 的 `STYLE_BY_GAME_TYPE`（两边 id 集合与顺序必须一致） |
 | description | VARCHAR(200) | NOT NULL, 默认 `''` | 描述。上限 200 字（`validate_description()`）：新建/编辑超长直接 400，搬运抓来的站点简介按上限截断入库 |
-| game_type | VARCHAR(50) | NOT NULL, 索引 | 类型值：`flash`（Ruffle 播放 SWF）、`h5`（上传 ZIP，后端解包为多文件，沙箱 iframe 播放）或主机平台 `nes`/`snes`/`gb`/`gba`/`segaMD`/`segaGG`/`segaMS`（EmulatorJS 播放，值与 EJS system key 一致）。**由本体文件扩展名自动判定**（不手动指定），判定入口与白名单在 `backend/games/service.py` 的 `GAME_TYPES`/`_GAME_TYPE_EXTENSIONS`/`detect_game_type()`。中心列表按 `game_path != ''` 过滤 |
+| game_type | VARCHAR(50) | NOT NULL, 索引 | 类型值：`flash`（Ruffle 播放 SWF）、`h5`（上传 ZIP，播放时按需解包，沙箱 iframe 播放）或主机平台 `nes`/`snes`/`gb`/`gba`/`segaMD`/`segaGG`/`segaMS`（EmulatorJS 播放，值与 EJS system key 一致）。**由本体文件扩展名自动判定**（不手动指定），判定入口与白名单在 `backend/games/service.py` 的 `GAME_TYPES`/`_GAME_TYPE_EXTENSIONS`/`detect_game_type()`。中心列表按 `game_path != ''` 过滤 |
 | size | INTEGER | NOT NULL, 默认 0 | 本体字节数（h5 为 ZIP 压缩包大小） |
 | crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | 本体内容的 CRC32，8 位大写十六进制（如 `D445F698`）。上传本体时算好落库，**用作换本体的锁定凭据**：非空时只接受 CRC32 相同的文件；空（如文件已丢、尚未补传）表示未锁定 |
-| game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径（`game/{game_type}/{卡带ID}/game.{后缀}`）；空串 = 尚未上传。h5 为原始 ZIP，解包资源另见 `game_h5_files` |
+| game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径（`game/{game_type}/{卡带ID}/game.{后缀}`）；空串 = 尚未上传。h5 就是它的 zip（`game.zip`），解包产物不落库 |
 | cover_path | VARCHAR(500) | NULL | 封面相对路径（`game/{game_type}/{卡带ID}/cover.{后缀}`）；NULL = 无封面 |
 | created_at | DATETIME | NOT NULL | |
 | updated_at | DATETIME | NOT NULL | 上传资源 / 改信息时更新 |
 
-> **攻略不落列也不建表**：有没有攻略由 `guide/index.html` 是否存在现算（`GameService._has_guide`），所以这里没有 `has_guide` 字段；接口载荷里的 `has_guide` 是每次按磁盘 stat 出来的。文件本身见下文「路径规则」的攻略一条。
-
-**`game_h5_files`**（H5 游戏一个 ZIP 解包后的资源清单；重传整包替换）
-
-| 列 | 类型 | 约束 | 说明 |
-|----|------|------|------|
-| id | INTEGER | PK 自增 | |
-| game_id | INTEGER | NOT NULL, 索引，联合唯一 `(game_id, path)` | 所属游戏（仅索引，**无 FK**） |
-| path | VARCHAR(512) | NOT NULL | 归一化后的**包内**相对路径；入口固定为 `index.html` |
-| file_path | VARCHAR(700) | NOT NULL | 磁盘**相对路径**（`game/{game_type}/{卡带ID}/h5/{包内相对路径}`） |
-| size | INTEGER | NOT NULL, 默认 0 | 解压后字节数 |
-| mime | VARCHAR(200) | NULL | 按后缀显式映射（`guess_asset_mime`），未知后缀为 `application/octet-stream` |
-| created_at | DATETIME | NOT NULL | |
-
-> 重传 ZIP 时先完整校验清单，再整包解到同层的暂存目录 `game/{类型}/{卡带ID}/.h5-{随机}`，成功后用目录改名整体替换 `h5/`（先把旧目录改名挪开、再把暂存目录改名就位，中途失败旧目录还在），最后单事务替换清单行。删除游戏或把类型改离 `h5` 时连同整个游戏目录一起清掉。
+> **攻略不落列也不建表**：有没有攻略由数据根里的 `guide.zip` 是否存在现算（`GameService._has_guide`），所以这里没有 `has_guide` 字段；接口载荷里的 `has_guide` 是每次按磁盘 stat 出来的。文件本身见下文「路径规则」的攻略一条。
 
 **`game_cloud_snapshots`**（一个云端存档 = 某(用户,游戏)此刻全部本地存档文件的整体快照：Flash 为多条 `.sol`，模拟器恒为 1 条 `.state`（该游戏本地只有一份档，固定名 `save.state`））
 
@@ -196,7 +183,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 ## 文件存储结构
 
-数据根目录由 `backend/config.py` 的 `STORAGE_ROOT` 决定（本机默认 `<仓库>/data/storage`，容器内为 `/data`），`LocalStorage` 构造时自动建出来。**SQLite 里存的都是相对这个根目录的路径**，读取时 `LocalStorage._resolve()` 拼上根路径并挡掉越界（绝对路径、`..` 一律拒绝）。浏览器从不直连磁盘，所有上传/下载都由 API 经 `StorageBackend` 分块流式代理。
+两个根都由 `backend/config.py` 决定：数据根 `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`，容器内为 `/data`）、运行时根 `RUNTIME_ROOT`（不配时等于数据根，容器内为 `/runtime`），`create_app()` 各建一个 `LocalStorage` 实例（`app.state.storage` / `app.state.runtime_storage`），构造时自动建出根目录。**SQLite 里存的都是相对数据根的路径**，读取时 `LocalStorage._resolve()` 拼上对应的根并挡掉越界（绝对路径、`..` 一律拒绝）；两个根下的相对路径**逐字一致**。浏览器从不直连磁盘，所有上传/下载都由 API 经 `StorageBackend` 分块流式代理。
 
 **根目录下还可能有一个不在表里的哨兵文件 `.mounted`**：空文件，**人工创建**（不由 `LocalStorage`、也不由任何代码代建）。**只有该根的宿主路径落在 Windows 盘挂载路径前缀下时**（`backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，默认 `/mnt`）服务启动才会检查它，缺了就打日志等 5 秒退出（`backend/mount_guard.py`）；放普通 Linux 目录下的根不做这个检查。**数据根与运行时根各查一份**（两个根相同时就是同一个文件）。它只用来判断「这个目录确实是挂上了的根目录」，不参与任何业务路径。
 
@@ -204,29 +191,36 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 只有**显式改卡带ID**（`PUT /api/games/manage/<id>/cartridge-id`）会动磁盘：它把
 `game/{类型}/{旧ID}` 一棵树、以及各账号的 `save/{用户名}/{类型}/{旧ID}` 与
 `image/{用户名}/{类型}/{旧ID}` 整体改名，并同步改写 `games.game_path` / `games.cover_path` /
-`game_h5_files.file_path` / `game_gallery_images.file_path` / `game_screenshots.file_path` /
-`game_cloud_snapshot_files.file_path` 这六处（详见下文各条）。
+`game_gallery_images.file_path` / `game_screenshots.file_path` /
+`game_cloud_snapshot_files.file_path` 这五处（详见下文各条）；运行时根下的旧解包产物直接作废。
 
 ### 路径规则
 
+**数据根**（原始素材）：
+
 | 内容 | 相对路径 | 例子 | 生成处 |
 |--------|----------|------|--------|
-| 游戏本体 | `game/{game_type}/{卡带ID}/game.{后缀}` | `game/nes/AB-12/game.nes`、`game/h5/AB-12/game.zip` | `backend/games/paths.py::body_path` |
+| 游戏本体 | `game/{game_type}/{卡带ID}/game.{后缀}` | `game/nes/AB-12/game.nes`、`game/h5/AB-12/game.zip` | `backend/games/paths.py::body_path` / `h5_zip_path` |
 | 游戏封面 | `game/{game_type}/{卡带ID}/cover.{后缀}` | `game/nes/AB-12/cover.png` | `paths.py::cover_path` |
+| 攻略包 | `game/{game_type}/{卡带ID}/guide.zip` | `game/nes/AB-12/guide.zip` | `paths.py::guide_zip_path` |
 | 游戏图集 | `game/{game_type}/{卡带ID}/image/{uuid}.{后缀}` | `game/nes/AB-12/image/3f2a….png` | `paths.py::gallery_file_path` |
-| H5 解包资源 | `game/{game_type}/{卡带ID}/h5/{包内相对路径}` | `game/h5/AB-12/h5/assets/app.js` | `paths.py::h5_asset_path` |
-| H5 解包暂存 | `game/{game_type}/{卡带ID}/.h5-{随机}` | — | `paths.py::h5_temp_dir`（替换完即消失） |
-| 攻略资源 | `game/{game_type}/{卡带ID}/guide/{文件夹内相对路径}` | `game/nes/AB-12/guide/pages/mc/1.html` | `paths.py::guide_asset_path`（入口 `guide_entry_path`） |
-| 攻略上传暂存 | `game/{game_type}/{卡带ID}/.guide-{随机}` | — | `paths.py::guide_temp_dir`（替换完即消失） |
 | 云端存档文件 | `save/{用户名}/{game_type}/{卡带ID}/{uuid}.state` | `save/alice/nes/AB-12/3f2a….state` | `paths.py::save_file_path` |
 | 游戏截图 | `image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀}` | `image/alice/nes/AB-12/3f2a….png` | `paths.py::screenshot_file_path` |
+
+**运行时根**（派生物，删了会自动重建）：
+
+| 内容 | 相对路径 | 例子 | 生成处 |
+|--------|----------|------|--------|
+| H5 解包资源 | `game/{game_type}/{卡带ID}/h5/{包内相对路径}` | `game/h5/AB-12/h5/assets/app.js` | `paths.py::h5_asset_path`（入口 `h5_entry_path`） |
+| 攻略解包资源 | `game/{game_type}/{卡带ID}/guide/{包内相对路径}` | `game/nes/AB-12/guide/pages/mc/1.html` | `paths.py::guide_asset_path`（入口 `guide_entry_path`） |
+| 解包暂存 | `game/{game_type}/{卡带ID}/.{h5,guide}-{随机}` | — | `paths.py::h5_temp_dir` / `guide_temp_dir`（替换完即消失） |
 
 细节说明：
 
 - **类型目录名**：用 `game_type` 的键值（`flash` / `h5` / `nes` / `snes` / `gb` / `gba` / `segaMD` / `segaGG` / `segaMS`），与 SQLite 字段一致，纯标识符、无空格，后端不需要知道中文展示名。
 - **游戏本体 / 封面**：路径随 `game_type` 与卡带ID 固定、不随上传文件名变，**同名重复上传会覆盖同一个文件**（先写同目录临时文件再改名）。本体后缀决定 `game_type`（扩展名与类型一一对应）：`.swf`→`flash`；`.zip`→`h5`；`.nes`→`nes`；`.sfc/.smc`→`snes`；`.gb/.gbc`→`gb`；`.gba`→`gba`；`.md/.gen`→`segaMD`；`.gg`→`segaGG`；`.sms`→`segaMS`；封面 `.jpg/.jpeg/.png/.gif/.webp`。换本体导致类型切换时，封面会跟着从旧类型目录挪到新类型目录（`LocalStorage.move`），随后**整个旧类型目录被递归删掉**；换封面后缀（如 `cover.png` → `cover.jpg`）在新文件写成功后删旧文件。
-- **H5 解包资源**：上传的 ZIP 本体存 `game/{类型}/{卡带ID}/game.zip`；解包出的每个文件按包内相对路径落盘到 `h5/` 下，`game_h5_files` 记录「包内路径 → 磁盘相对路径」。入口固定为根目录 `index.html`（大小写不敏感识别、落库统一小写）；整包套在单一顶层目录时会剥掉该前缀。**磁盘上没有代际前缀**：重传是整包替换，靠目录改名完成（旧 `h5/` 改名挪开 → 暂存目录改名就位 → 删掉挪开的旧目录），中途失败旧目录都还在；删除游戏或换本体离开 `h5` 时连同 ZIP 与整个解包目录一起清。
-- **攻略**：一份攻略就是 `guide/` 下的一个静态目录树，**没有清单表、也没有库里的标记**——「这个游戏有没有攻略」由 `guide/index.html` 是否存在（一次 `stat`）现算，所以从宿主目录手动拷走或删掉攻略，界面立刻跟着变。上传是**前端整目录选、后端一次 multipart 全收**：前端用 `webkitdirectory` 选文件夹、剥掉最外层目录名，把「文件夹内相对路径」按顺序放进 `paths`（JSON 数组，与 `files` 按下标一一对位），后端逐个过路径归一化（与 H5 包内路径同一套规则）、大小写不敏感查重、大小写不敏感识别入口并统一落成小写 `index.html`，根目录没有它就 400。落盘同样**没有代际前缀**：先写同层暂存目录 `.guide-{随机}`，全部就位后一次目录改名整体替换 `guide/`，失败清掉暂存目录、旧攻略还在；单次文件数上限 1000（Starlette 表单解析的硬上限）。读取走 `GET|HEAD /api/games/<id>/guide/<资源路径>`（**需登录**，与 H5 解包资源的免登录不同），路径归一化后直接拼磁盘路径，文件不存在即 404。删除游戏、或换本体把类型改走时，攻略随整个旧游戏目录一起清掉（不参与跨类型迁移）。
+- **H5**：上传的 ZIP 本体存数据根的 `game/{类型}/{卡带ID}/game.zip`，**上传时只校验不解压、也不落任何清单**。播放时按需把整包解到**运行时根**的 `h5/` 下，每个文件按包内相对路径落盘；入口固定为根目录 `index.html`（大小写不敏感识别、落盘统一小写）；整包套在单一顶层目录时会剥掉该前缀。**磁盘上没有代际前缀**：解包先写同层暂存目录、再用目录改名整体替换；入口文件存在就直接复用，不重复解。重传 zip / 换游戏类型 / 改卡带ID / 删游戏时由写路径显式作废运行时根那份（两个根相同时退化成一次 `exists()` 检查）。
+- **攻略**：一份攻略就是一个 **zip 包**，存数据根的 `game/{类型}/{卡带ID}/guide.zip`，**没有清单表、也没有库里的标记**——「这个游戏有没有攻略」由这个包是否存在（一次 `stat`）现算，所以从宿主目录手动拷走或删掉它，界面立刻跟着变。上传是**单个 zip**（multipart 只有一个 `file`），与 H5 共用同一套校验（路径归一化、大小写不敏感查重、入口只认 `index.html`、zip/条目/单条/总量/压缩比上限），**只校验不解压**。查看时按需解到运行时根的 `guide/`：没有代际前缀，先写同层暂存目录再一次目录改名整体替换；入口文件存在就直接复用。重传 / 换类型 / 改卡带ID / 删游戏时由写路径显式作废。读取走 `GET|HEAD /api/games/<id>/guide/<资源路径>`（**需登录**，与 H5 资源的免登录不同），路径归一化后从运行时根取，文件不存在即 404。删除游戏、或换本体把类型改走时，攻略包随整个旧游戏目录一起清掉（不参与跨类型迁移）。
 - **游戏截图**：与云端存档同构——目录按 `用户名/游戏类型/卡带ID` 分，一个截图一个 `{uuid}.{后缀}`（uuid 不可猜、不重名），原始文件名与游戏名都不进路径。后缀由**内容的 magic** 定（播放页截的是 `.png`，图库里手动上传的还可能是 `.jpg`/`.webp`/`.gif`），单张上限 16MB。**目录里的 `game_type` 是上传当时的类型**：截图不参与「换游戏类型」的迁移，所以读取、单张删除、删游戏清理一律用行里的 `file_path`，绝不用游戏当前类型拼目录（换过类型时，同一游戏的截图可能分散在两个类型目录里，功能不受影响）。**改卡带ID 同理**：只把 `file_path` 父目录的最后一段换成新 ID，那一层类型保持原样。
 - **游戏图集**：与截图相反，它在**游戏目录内**（`game/{类型}/{卡带ID}/image/{uuid}.{后缀}`），一个游戏一套、按游戏共享、不记上传者（目录名 `image` 与顶层按账号隔离的截图目录同名，但一个挂在游戏目录下、一个挂在用户名下，是两回事）。**目录里的 `game_type` 跟游戏当前类型走**：换本体换了游戏类型时整个 `image/` 目录随游戏目录一起搬到新类型目录，行里的 `file_path` 同步换成新前缀；读取、单张删除、删游戏清理同样按行里的 `file_path`。
 - **云端存档**：目录按 `用户名/游戏类型/卡带ID` 分，一个快照的每个文件各一个 `{uuid}.state`，文件名不体现原文件名（原名只用于下载时的 `Content-Disposition`，见 `game_cloud_snapshot_files.name`）。用户名进路径是安全的——用户名规则本身就限定在数字/字母/中划线/下划线。下载/删除快照按 `file_path` 定位文件；快照删除时逐文件删；上传中途失败回滚已写的文件（避免孤儿文件）。**删除游戏时连同它的全部存档快照与 `save/{用户名}/{类型}/{卡带ID}/` 目录一起清掉**（目录名带的是快照当时的游戏类型，所以按文件路径反推目录，而不是用游戏当前类型拼）。**改卡带ID 时同样按文件路径反推父目录**：把最后一段换成新 ID 并整目录改名，那一层类型保持原样。

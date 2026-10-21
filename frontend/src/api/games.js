@@ -124,7 +124,7 @@ export function uploadGameAssetAPI(id, formData) {
     });
 }
 
-/** 整目录上传攻略：multipart 里 files 是多个文件、paths 是与之一一对应的相对路径 JSON 数组。 */
+/** 上传攻略 zip：multipart 里只有一个 file 字段（解压后根目录需含 index.html）。 */
 export function uploadGuideAPI(id, formData) {
     return request({
         url: `/api/games/manage/${id}/guide`,

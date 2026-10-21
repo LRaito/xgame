@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -17,7 +16,6 @@ from backend.games.service import (
     MANAGE_PAGE_SIZE_DEFAULT,
     RECENT_LIMIT_DEFAULT,
     GameUpload,
-    GuideUpload,
     allowed_body_extensions,
 )
 from backend.http import iso, json_err, json_ok
@@ -329,45 +327,26 @@ def games_upload_asset(
     return json_ok(_manage_payload(item), status=201)
 
 
-def _parse_guide_paths(raw: str) -> list[str]:
-    """解析随 files 一起提交的相对路径数组；不是字符串数组一律中文 400。"""
-    try:
-        value = json.loads(raw or "[]")
-    except (TypeError, ValueError) as exc:
-        raise ValidationError("攻略路径参数格式不正确。") from exc
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValidationError("攻略路径参数格式不正确。")
-    return value
-
-
 @router.post("/manage/{game_id}/guide")
 def games_upload_guide(
     game_id: int,
     _user: CurrentUser,
     service: GameServiceDep,
-    files: list[UploadFile] | None = File(None),
-    paths: str = Form(""),
+    file: UploadFile | None = File(None),
 ):
-    """整目录上传攻略：多个文件 + 按下标一一对位的文件夹内相对路径 JSON 数组。
+    """上传攻略 ZIP（解压后根目录需含 index.html）。
 
-    前端已经剥掉最外层目录名，所以这里收到的就是攻略根的相对路径。文件数上限 1000 是
-    Starlette 表单解析的硬限制，超过时前端先拦；服务端照样全量校验、整体替换。
+    与 H5 一样只上传 zip：后端只校验、不解压，查看攻略时才按需解到运行时根。
     """
     try:
-        file_list = list(files or [])
-        path_list = _parse_guide_paths(paths)
-        if len(path_list) != len(file_list):
-            raise ValidationError("攻略上传参数不一致，请重新选择文件夹后重试。")
-        uploads = [
-            GuideUpload(path=raw, stream=item.file, size=_uploaded_size(item))
-            for raw, item in zip(path_list, file_list)
-        ]
-        item = service.upload_guide(game_id, uploads)
+        if file is None:
+            raise ValidationError("请选择要上传的攻略 ZIP 文件。")
+        item = service.upload_guide(game_id, _upload_of(file))
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    logger.info("已上传攻略 game_id=%s files=%s", game_id, len(uploads))
+    logger.info("已上传攻略 game_id=%s", game_id)
     return json_ok(_manage_payload(item), status=201)
 
 
@@ -471,7 +450,11 @@ def games_h5_asset(game_id: int, asset_path: str, service: GameServiceDep):
         stream, mime, _size = service.open_h5_asset(game_id, asset_path)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
+    except StorageError as exc:
+        # 懒解压写运行时根失败（磁盘满/只读）是服务端故障，不是客户端的错
+        logger.exception("解压或读取 H5 资源失败 game_id=%s", game_id)
+        return json_err(f"{exc}请检查运行时目录是否可写、空间是否充足。", 500)
+    except ValidationError as exc:
         return json_err(str(exc), 400)
     return build_download_response(stream, content_type=mime, headers=_H5_HEADERS)
 
@@ -483,7 +466,10 @@ def games_h5_asset_head(game_id: int, asset_path: str, service: GameServiceDep):
         stream, mime, size = service.open_h5_asset(game_id, asset_path)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
+    except StorageError as exc:
+        logger.exception("解压或读取 H5 资源失败 game_id=%s", game_id)
+        return json_err(f"{exc}请检查运行时目录是否可写、空间是否充足。", 500)
+    except ValidationError as exc:
         return json_err(str(exc), 400)
     stream.close()
     return Response(
@@ -510,7 +496,11 @@ def games_guide_asset(
         stream, mime, _size = service.open_guide_asset(game_id, asset_path)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
+    except StorageError as exc:
+        # 懒解压写运行时根失败（磁盘满/只读）是服务端故障，不是客户端的错
+        logger.exception("解压或读取攻略失败 game_id=%s", game_id)
+        return json_err(f"{exc}请检查运行时目录是否可写、空间是否充足。", 500)
+    except ValidationError as exc:
         return json_err(str(exc), 400)
     return build_download_response(stream, content_type=mime, headers=_GUIDE_HEADERS)
 
@@ -524,7 +514,10 @@ def games_guide_asset_head(
         stream, mime, size = service.open_guide_asset(game_id, asset_path)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
+    except StorageError as exc:
+        logger.exception("解压或读取攻略失败 game_id=%s", game_id)
+        return json_err(f"{exc}请检查运行时目录是否可写、空间是否充足。", 500)
+    except ValidationError as exc:
         return json_err(str(exc), 400)
     stream.close()
     return Response(

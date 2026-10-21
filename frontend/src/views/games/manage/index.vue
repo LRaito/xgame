@@ -284,30 +284,21 @@
                                 <app-button @click="galleryManagerVisible = true">管理</app-button>
                             </div>
                         </el-form-item>
-                        <!-- 攻略：只在编辑时出现（新建还没有卡带目录可落）。整目录上传，保存时才发出去 -->
+                        <!-- 攻略：只在编辑时出现（新建还没有卡带目录可落）。上传 zip，保存时才发出去 -->
                         <el-form-item v-if="formMode === 'edit'" label="游戏攻略">
                             <div class="game-manage__source">
-                                <!-- webkitdirectory：整目录选择；只传文件夹内的内容，外层目录名由 guideRelPath 剥掉 -->
                                 <input
-                                    ref="guideDirRef"
+                                    ref="guideZipRef"
                                     class="game-manage__file-input"
                                     type="file"
-                                    webkitdirectory
-                                    directory
-                                    multiple
-                                    @change="onGuideDirChange"
+                                    accept=".zip,application/zip"
+                                    @change="onGuideFileChange"
                                 />
-                                <app-button @click="pickGuideDir">上传文件夹</app-button>
+                                <app-button @click="pickGuideZip">上传攻略 ZIP</app-button>
                             </div>
-                            <p v-if="guideFiles.length" class="game-manage__file-hint">
-                                已选 {{ guideFiles.length }} 个文件
-                                <span v-if="!guideHasEntry" class="game-manage__file-warn">
-                                    （缺少 index.html，攻略根目录必须包含它）
-                                </span>
-                                <span v-else-if="guideFiles.length > GUIDE_MAX_FILES" class="game-manage__file-warn">
-                                    （超过 {{ GUIDE_MAX_FILES }} 个，无法上传）
-                                </span>
-                                <button type="button" class="game-manage__clear" @click="clearGuideDir">
+                            <p v-if="guideFile" class="game-manage__file-hint">
+                                已选 {{ guideFile.name }}（重新上传会整体替换）
+                                <button type="button" class="game-manage__clear" @click="clearGuideZip">
                                     清除
                                 </button>
                             </p>
@@ -315,7 +306,7 @@
                                 当前：已有攻略（重新上传会整体替换）
                             </p>
                             <p v-else class="game-manage__file-hint muted">
-                                选择一个文件夹整体上传，只传文件夹内的内容，根目录需含 index.html
+                                选择一个攻略 ZIP（解压后根目录需含 index.html），重新上传会整体替换
                             </p>
                         </el-form-item>
                     </div>
@@ -522,9 +513,9 @@ const editingId = ref(null);
 const editingItem = ref(null);
 const gameFileRef = ref(null);
 const coverFileRef = ref(null);
-const guideDirRef = ref(null);
-// 攻略：只在编辑弹框出现；整目录选好后先存着，点「保存」才一次性提交
-const guideFiles = ref([]);
+const guideZipRef = ref(null);
+// 攻略：只在编辑弹框出现；zip 选好后先存着，点「保存」才提交
+const guideFile = ref(null);
 const form = reactive({
     name: "",
     cartridgeId: "",
@@ -569,8 +560,6 @@ const remoteCoverUrl = ref("");
 
 // 封面允许的图片扩展名（与后端 _COVER_EXTENSIONS 一致）
 const COVER_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
-// 攻略文件数上限：与后端 _GUIDE_MAX_FILES 及 Starlette 单次表单解析上限一致
-const GUIDE_MAX_FILES = 1000;
 
 // 封面预览：刚选的封面用本地 objectURL 即时显示（提交前先看效果），否则显示该游戏当前封面。
 // objectURL 要显式回收：换文件、重开弹窗、离开页面时都清掉。
@@ -800,7 +789,7 @@ function resetForm() {
     form.description = "";
     clearGameFile();
     clearCoverFile();
-    clearGuideDir();
+    clearGuideZip();
     clearRemoteBody();
     form.coverUrl = "";
     remoteBody.url = "";
@@ -927,35 +916,25 @@ function onCoverFileChange(event) {
     }
 }
 
-function pickGuideDir() {
-    guideDirRef.value?.click();
+function pickGuideZip() {
+    guideZipRef.value?.click();
 }
 
-/** 剥掉 webkitRelativePath 的首段（选中的文件夹本身），只留文件夹内的相对路径 */
-function guideRelPath(file) {
-    const parts = (file.webkitRelativePath || "").split("/").filter(Boolean);
-    return (parts.length > 1 ? parts.slice(1) : parts).join("/");
-}
-
-const guideHasEntry = computed(() =>
-    guideFiles.value.some((file) => guideRelPath(file).toLowerCase() === "index.html"),
-);
-
-function onGuideDirChange(event) {
-    const files = Array.from(event.target.files || []);
-    // 拿不到 webkitRelativePath 时拼不出目录结构（子目录会被压平），宁可拒收
-    if (files.length && !files.some((file) => file.webkitRelativePath)) {
-        ElMessage.warning("无法读取文件夹结构，请用「上传文件夹」重新选择");
-        clearGuideDir();
+function onGuideFileChange(event) {
+    const file = (event.target.files || [])[0] || null;
+    // 攻略只收 zip（后端也校验，这里先挡一道，省一次上传）
+    if (file && !file.name.toLowerCase().endsWith(".zip")) {
+        ElMessage.warning("攻略只支持 ZIP 压缩包");
+        clearGuideZip();
         return;
     }
-    guideFiles.value = files;
+    guideFile.value = file;
 }
 
-function clearGuideDir() {
-    guideFiles.value = [];
-    if (guideDirRef.value) {
-        guideDirRef.value.value = "";
+function clearGuideZip() {
+    guideFile.value = null;
+    if (guideZipRef.value) {
+        guideZipRef.value.value = "";
     }
 }
 
@@ -1076,16 +1055,10 @@ async function onBeautifyConfirm({ blob, styleId }) {
     }
 }
 
-/** 一次性提交整个攻略文件夹：files 与 paths 顺序严格对位（后端按下标配对） */
+/** 提交攻略 zip（后端只校验、不解压，查看攻略时才按需解到运行时目录） */
 async function uploadGuide(gameId) {
     const data = new FormData();
-    const paths = [];
-    for (const file of guideFiles.value) {
-        // 必须先 push path 再 append file，两边下标才对得上，顺序不能拆开写
-        paths.push(guideRelPath(file));
-        data.append("files", file);
-    }
-    data.append("paths", JSON.stringify(paths));
+    data.append("file", guideFile.value);
     await uploadGuideAPI(gameId, data);
 }
 
@@ -1129,15 +1102,9 @@ async function onSave() {
             ElMessage.warning("无法识别游戏本体格式，请更换文件或检查下载地址");
             return;
         }
-    } else if (guideFiles.value.length) {
-        if (!guideHasEntry.value) {
-            ElMessage.warning("攻略根目录必须包含 index.html");
-            return;
-        }
-        if (guideFiles.value.length > GUIDE_MAX_FILES) {
-            ElMessage.warning(`攻略文件不能超过 ${GUIDE_MAX_FILES} 个`);
-            return;
-        }
+    } else if (guideFile.value && !guideFile.value.name.toLowerCase().endsWith(".zip")) {
+        ElMessage.warning("攻略只支持 ZIP 压缩包");
+        return;
     }
 
     saving.value = true;
@@ -1163,8 +1130,8 @@ async function onSave() {
                     url: form.coverUrl,
                 });
             }
-            if (guideFiles.value.length) {
-                // 排在换本体之后：同一次保存里换了类型的，攻略要落到新类型目录
+            if (guideFile.value) {
+                // 排在换本体之后：同一次保存里换了类型的，攻略包要落到新类型目录
                 await uploadGuide(editingId.value);
             }
         }

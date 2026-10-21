@@ -643,7 +643,9 @@ def test_ranking_link_follows_cartridge_id_rename(ranked, logged_in, app):
 
     assert _get(logged_in, RANKING_URL)["items"][0]["path"] is None
     with Session(app.state.engine) as session:
-        links = GameService(session, app.state.storage).map_for_cartridge_ids(["NES-SM2"])
+        links = GameService(
+            session, app.state.storage, app.state.runtime_storage
+        ).map_for_cartridge_ids(["NES-SM2"])
     assert links["NES-SM2"].game_id == game_id
 
 

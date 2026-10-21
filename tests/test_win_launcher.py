@@ -148,6 +148,25 @@ def test_ini_template_parses_to_expected_defaults(launcher, monkeypatch):
     assert config.host == "0.0.0.0"
     assert config.open_browser is True
     assert config.data_dir == Path("/opt/xgame/data")
+    # 运行时目录没配时跟着数据目录走（库与解包缓存都在它下面）
+    assert config.runtime_dir == Path("/opt/xgame/data/runtime")
+
+
+def test_runtime_dir_follows_data_dir_and_can_be_overridden(launcher, monkeypatch):
+    """运行时目录默认跟着 data_dir，也可以单独配（两个根与 Docker 那条路线同一个模型）。"""
+    monkeypatch.setattr(launcher, "ROOT", Path("/opt/xgame"))
+
+    follows = launcher.Config(configparser.ConfigParser())
+    assert follows.data_dir == Path("/opt/xgame/data")
+    assert follows.runtime_dir == Path("/opt/xgame/data/runtime")
+
+    parser = configparser.ConfigParser()
+    parser.read_string("[xgame]\ndata_dir = /srv/xgame-data\n")
+    assert launcher.Config(parser).runtime_dir == Path("/srv/xgame-data/runtime")
+
+    parser = configparser.ConfigParser()
+    parser.read_string("[xgame]\nruntime_dir = /srv/xgame-runtime\n")
+    assert launcher.Config(parser).runtime_dir == Path("/srv/xgame-runtime")
 
 
 def test_config_falls_back_on_bad_values(launcher, monkeypatch):

@@ -19,7 +19,7 @@ x 是私人游戏平台，不是对外 SaaS。只做一件事：把 Flash、HTML
 1. **游戏中心**（`games`）— 列表 + 播放。Flash 走 Ruffle、主机 ROM 走 EmulatorJS、H5 走沙箱 iframe；Flash 与主机支持「本地存档 + 按账号的云端存档」，主机还支持截图入库（详情弹框里的图片栏），H5 仅游玩。
 2. **游戏管理**（`games-manage`）— 上传/网络直链/搬运游戏本体与封面、改元数据、删除。
 
-界面是 Vue 3 SPA。FastAPI 只提供 JSON API。**开放注册**（只填账号密码），除注册/登录接口与 H5 解包资源外，所有页面与接口都要求登录。账号不做安全机制，只用于隔离各人的模拟器配置与存档。
+界面是 Vue 3 SPA。FastAPI 只提供 JSON API。**开放注册**（只填账号密码），除注册/登录接口与 H5 资源外，所有页面与接口都要求登录。账号不做安全机制，只用于隔离各人的模拟器配置与存档。
 
 ## 系统设计
 
@@ -37,11 +37,11 @@ x 是私人游戏平台，不是对外 SaaS。只做一件事：把 Flash、HTML
 └─────────────┘             │  storage/access 跨模块流式下载通道    │
                             └──────────┬───────────┬───────────────┘
                                        ▼           ▼
-                            运行时根/db/app.db  项目文件根目录
-                            （RUNTIME_ROOT）    （STORAGE_ROOT 挂载点）
+                     运行时根（RUNTIME_ROOT）   数据根（STORAGE_ROOT 挂载点）
+                     db/app.db + 解包产物        原始素材（本体/zip/存档/截图）
 ```
 
-浏览器只和 nginx 通信。API 负责会话和编排，领域逻辑在 service，I/O 在适配器。Router 不得直接访问 SQLite 或磁盘。游戏文件（本体/封面/H5 资源/攻略/云端存档/截图）落在宿主目录挂进容器的 `STORAGE_ROOT` 下，**SQLite 里存的是相对这个根目录的路径**；SQLite 库本身可以放在另一个宿主目录（`RUNTIME_ROOT`，默认 `./data/runtime`）里。上传/下载都由 API 分块流式代理，浏览器不直连磁盘。
+浏览器只和 nginx 通信。API 负责会话和编排，领域逻辑在 service，I/O 在适配器。Router 不得直接访问 SQLite 或磁盘。原始素材（本体/封面/攻略与 H5 的 zip/云端存档/截图）落在宿主目录挂进容器的 `STORAGE_ROOT` 下，**SQLite 里存的是相对这个根目录的路径**；SQLite 库与 H5/攻略的**解包产物**放在另一个宿主目录（`RUNTIME_ROOT`，默认 `./data/runtime`）里——两个根下的相对路径逐字一致，解包产物是派生物、可随时删。上传/下载都由 API 分块流式代理，浏览器不直连磁盘。
 
 ### 技术栈
 
@@ -130,7 +130,7 @@ backend/
 
 注册与登录都在 CSRF 白名单里（登录页此时还没有 token），其余写接口一律校验 `X-CSRFToken`。
 
-没有游客模式：登录页可在「登录 / 注册」间切换，后端也**没有**「可登录可不登录」的依赖——所有业务端点都依赖 `CurrentUser`，未登录一律 401。唯一例外是 H5 解包资源 `GET /api/games/{id}/h5/{资源路径}`，原因是浏览器约束：H5 在不透明源沙箱 iframe 里播放，它发出的请求按跨站处理，`SameSite=Lax` 的 session cookie 不会带上（详见「决策 8」）。
+没有游客模式：登录页可在「登录 / 注册」间切换，后端也**没有**「可登录可不登录」的依赖——所有业务端点都依赖 `CurrentUser`，未登录一律 401。唯一例外是 H5 资源 `GET /api/games/{id}/h5/{资源路径}`，原因是浏览器约束：H5 在不透明源沙箱 iframe 里播放，它发出的请求按跨站处理，`SameSite=Lax` 的 session cookie 不会带上（详见「决策 8」）。
 
 ### 游戏中心
 
@@ -150,31 +150,33 @@ backend/
   认不出（网盘式无后缀直链）就用该类型的默认后缀；封面直链必须是 jpg/jpeg/png/gif/webp
   换本体：POST /manage/{id}/assets(kind=game) 同样按新扩展名切换类型——先算新本体 CRC32 并与库里已锁定的比对
   （不一致直接 400，连旧文件都不覆盖），再写新本体，成功后才清理旧类型遗留（整个旧类型目录，
-  封面会先挪到新类型目录，h5 清单行一并删），写入失败整体回滚、不动旧档；PUT /manage/{id} 只改
+  封面会先挪到新类型目录，旧类型目录连同两个 zip 与其解包产物一并清掉），写入失败整体回滚、不动旧档；PUT /manage/{id} 只改
   名称/描述/清空封面（clear_cover），不接收 cartridge_id 也不接收 game_type；同一类型下游戏名唯一
   （联合唯一索引 uq_games_game_type_name），不同类型可重名；卡带ID 全局唯一（uq_games_cartridge_id）
   改卡带ID：PUT /manage/{id}/cartridge-id（body {cartridge_id}）——显式迁移，不是普通编辑。
-  它把 game/{类型}/{旧ID} 一棵树（本体/封面/h5/攻略/图集）、以及按 file_path 反推出来的
+  它把 game/{类型}/{旧ID} 一棵树（本体/封面/两个 zip/图集）、以及按 file_path 反推出来的
   save/{用户名}/{类型}/{旧ID} 与 image/{用户名}/{类型}/{旧ID}（存档与截图的目录名带的是**写入当时的**
   类型，换过类型的游戏与当前 game_type 不同，只能从 file_path 反推）整体改名，再在同一个事务里改写
-  games.cartridge_id/game_path/cover_path 与 game_h5_files/game_gallery_images/game_screenshots/
-  game_cloud_snapshot_files 的 file_path。**先搬磁盘、后提交数据库**：搬不动就把已搬的按相反顺序
+  games.cartridge_id/game_path/cover_path 与 game_gallery_images/game_screenshots/
+  game_cloud_snapshot_files 的 file_path；改完名运行时根下的旧解包产物直接作废（下次访问重解）。**先搬磁盘、后提交数据库**：搬不动就把已搬的按相反顺序
   搬回去、库一个字节不动（反过来一旦搬不动，库里所有路径就都指向不存在的位置）。源目录不在
   （本体没上传过/宿主手删过）照常成功；源不在而目标在则 400（否则这盘游戏会指向那个陌生目录）；
   新旧相同是空操作；榜单关联在请求期现算，改完立刻跟着新 ID 走
   落盘路径：本体 game/{类型}/{卡带ID}/game.{后缀}、封面 game/{类型}/{卡带ID}/cover.{后缀}，重传即覆盖
-  h5 的 .zip 另由后端解包：校验清单（路径/重名/上限/必须含 index.html，可剥单一顶层目录）后，
-  整包解到同层暂存目录 .h5-{随机}，再用目录改名整体替换 h5/，单事务替换 game_h5_files 清单
-攻略（登录）：POST /api/games/manage/{id}/guide（multipart：files 多个文件 + paths 与之一一对应的
-  相对路径 JSON 数组；前端用 webkitdirectory 选整个文件夹并剥掉最外层目录名）
-  落盘 game/{类型}/{卡带ID}/guide/{文件夹内相对路径}，入口固定根目录 index.html
-  后端先全量校验（路径归一化／大小写不敏感查重／必须含 index.html／文件数与体积上限），
-  再写同层暂存目录 .guide-{随机}、一次目录改名整体替换 guide/；失败清掉暂存目录、旧攻略不动
-  读取 GET|HEAD /api/games/{id}/guide/{资源路径}（**需登录**）：路径归一化后直接拼磁盘路径，无清单表
-  「有没有攻略」不落库：由 guide/index.html 是否存在现算（载荷里的 has_guide）
+  h5 的 .zip 上传时**只校验、不解压**：backend/games/archive.py 只读中央目录（路径/重名/条目数/单条/
+  总解压量/压缩比/加密条目/必须含 index.html，可剥单一顶层目录），zip 原样存数据根的
+  game/{类型}/{卡带ID}/game.zip，不落任何清单表。播放时 backend/games/runtime_assets.py 按需解包：
+  先 stat 入口文件，在就不再解；否则解到运行时根的同层暂存目录 .h5-{随机}，再目录改名整体替换 h5/。
+  重传 zip / 换类型 / 改卡带ID / 删游戏时由写路径显式作废运行时根那份
+攻略（登录）：POST /api/games/manage/{id}/guide（multipart：单个 file，zip）
+  包存数据根的 game/{类型}/{卡带ID}/guide.zip，入口固定包内根目录 index.html（整包套单层目录会剥掉）
+  与 H5 共用同一套校验与上限；后端只校验不解压，不动本体路径/大小/CRC32
+  查看时按需解到运行时根的 game/{类型}/{卡带ID}/guide/（同一套 ensure 逻辑）
+  读取 GET|HEAD /api/games/{id}/guide/{资源路径}（**需登录**）：路径归一化后从运行时根取，无清单表
+  「有没有攻略」不落库：由 guide.zip 是否存在现算（载荷里的 has_guide）
 搬运（登录）：POST /api/games/manage/import { url, cartridge_id }
   backend/games/importer.py 解析 7k7k / 4399 / flash.homes 游戏页并下载到临时目录，
-  再走上面同一条上传管线（Flash 单个 swf；H5 镜像 bundle 打成 zip 复用解包）；封面一并下载。
+  再走上面同一条上传管线（Flash 单个 swf；H5 镜像 bundle 打成 zip 走同一条 H5 上传）；封面一并下载。
   仅接受 7k7k.com / 4399.com / flash.homes 域名的游戏页地址（防 SSRF），H5 会跟随页面引用的外部资源域名。
   flash.homes 是 Flash 存档站：作品一概是按 sha256 存在 CDN 上的单个 SWF（页面里播放器岛的 props
   给出 sha256 / 标题 / 封面文件名，JSON-LD 兜底），因此搬运结果必为 flash；其 id 是 12 位短码，
@@ -222,9 +224,10 @@ backend/
                               （帧缓冲 256×224，显示 8:7）；wide → fceumm_aspect = 4:3 + 不裁过扫描
                               （帧缓冲 256×240，显示 4:3）
   H5     → /games/h5/{id}      外层 SPA 壳内嵌 sandbox iframe，入口 /api/games/{id}/h5/index.html，
-                              页内相对资源落到同前缀（/api/games/{id}/h5/…）
+                              页内相对资源落到同前缀（/api/games/{id}/h5/…）；首次访问触发按需解包
   攻略   → 不在 SPA 里开页面：游戏中心右键「攻略」用 window.open 在**新标签页顶层**打开
-          /api/games/{id}/guide/index.html，页内相对资源落到同前缀（/api/games/{id}/guide/…）
+          /api/games/{id}/guide/index.html，页内相对资源落到同前缀（/api/games/{id}/guide/…）；
+          首次访问触发按需解包
           资源接口**需登录**（同源顶层导航，cookie 正常带上），响应不带 CSP sandbox，只加 no-cache
   GET /api/games/{id}/play 的 content-type 按本体扩展名：.swf 保持 Flash 专用值，h5/其余统一 octet-stream
 存档：
@@ -333,7 +336,7 @@ backend/
 
 ### 决策 4：不使用 docker 具名卷，数据全落宿主目录
 
-**决定：** compose 里一个具名卷都不用：**数据是两个宿主目录**——数据根 `STORAGE_HOST_DIR`（默认 `./data/storage` → 容器 `/data`，后端读 `STORAGE_ROOT`）装着游戏文件、检索索引与备份；运行时根 `RUNTIME_HOST_DIR`（默认 `./data/runtime` → 容器 `/runtime`，后端读 `RUNTIME_ROOT`）只装 SQLite 库（固定在其下的 `db/app.db`）。备份落在数据根的 `db/` 里。**证书**是仓库里的 `certs/`（`cert.pem` / `cert.key`），compose 只读挂给 web 的 `/etc/nginx/certs`。
+**决定：** compose 里一个具名卷都不用：**数据是两个宿主目录**——数据根 `STORAGE_HOST_DIR`（默认 `./data/storage` → 容器 `/data`，后端读 `STORAGE_ROOT`）装着游戏文件、检索索引与备份；运行时根 `RUNTIME_HOST_DIR`（默认 `./data/runtime` → 容器 `/runtime`，后端读 `RUNTIME_ROOT`）装 SQLite 库（固定在其下的 `db/app.db`）与 H5/攻略的**解包产物**（派生物，删掉会自动重建）。备份落在数据根的 `db/` 里。**证书**是仓库里的 `certs/`（`cert.pem` / `cert.key`），compose 只读挂给 web 的 `/etc/nginx/certs`。
 **原因：** 数据要能被人直接拿到——存档要能自己拷出来备份、本体要能直接扔进模拟器、库要能用 sqlite3 打开看一眼，套一层 docker 卷管理就都得借容器。全部落宿主目录后，备份/迁移/排查都是普通文件操作。
 **为什么库能单独放：** 库一直在被写，网盘这类外部客户端**拷不动**它（文件被占用），而数据目录里其余东西又必须能整体备份走。把库挪到另一个宿主目录（指到网盘之外）就同时满足了：数据目录整个可备份，库不参与外部备份、靠数据目录里那份每月一份的 `<YYYY-MM>.db` 兜底。`.env.example` 默认就是分开的（`./data/storage` 与 `./data/runtime`）；不建 `.env` 时 compose 退到「两个都用 `./data/storage`」，等于不分开。
 **代价与时序要求：** 宿主 bind 在 WSL 发行版（或 Windows 盘）未就绪时会被挂成空目录（详见「排障」）。
@@ -352,20 +355,20 @@ backend/
 
 ### 决策 6：H5 游戏以 ZIP 上传并用沙箱隔离
 
-**决定：** H5 游戏本体是 `.zip`，后端解包为多文件（`game_h5_files` 清单 + `game/{类型}/{卡带ID}/h5/{路径}` 文件），入口固定 `index.html`；播放时在 `GameShell` 内嵌 sandbox iframe，资源响应带 `Content-Security-Policy: sandbox`（不含 `allow-same-origin`）。H5 不接入云存档。
+**决定：** H5 游戏本体是 `.zip`，上传时**只校验、不解压**：zip 原样存数据根的 `game/{类型}/{卡带ID}/game.zip`，播放时按需解到**运行时根**的 `game/{类型}/{卡带ID}/h5/{路径}`（入口固定 `index.html`，已解过就不再解；重传/换类型/改卡带ID/删游戏时显式作废），没有清单表；播放时在 `GameShell` 内嵌 sandbox iframe，资源响应带 `Content-Security-Policy: sandbox`（不含 `allow-same-origin`）。H5 不接入云存档。
 **原因：** H5 是从外部站点抓取/导入的第三方 HTML/JS，若与本站同源，游戏脚本可读取并操作本站接口。sandbox 不透明源让游戏读不到 cookie/DOM、无法注册 Service Worker、也无法调用 `/api`；资源另加 `Access-Control-Allow-Origin: *` 以放行不透明源下的 `fetch`/ES module/引擎 `.wasm` 读取。
 **代价：** 不透明源下 `localStorage`/`IndexedDB`/Web Worker 不可用，依赖它们的游戏可能报错；`<video>/<audio>` 的 Range 请求不支持。若需兼容，升级路径是给 H5 单独端口/子域（本期不做）。
 **何时重评：** 有大量依赖浏览器存储的 H5 游戏时，改为独立源承载。
 
 ### 决策 7：文件存储走「相对路径 + 本地目录」，保留流式协议
 
-**决定：** `StorageBackend` 协议（`backend/storage/types.py`）只含 `upload`（分块流式写）/ `delete` / `stat` / `open_download`（流式读），唯一实现是 `LocalStorage`（`backend/storage/local.py`）：把 SQLite 里的相对路径拼上 `STORAGE_ROOT` 读写，写文件先落同目录临时文件再改名。目录级操作（`remove_tree` / `replace_tree` / `move`）由它单独提供（删游戏、H5 整包替换、类型切换挪封面）。列表来自 SQLite，协议没有 `list`。
+**决定：** `StorageBackend` 协议（`backend/storage/types.py`）只含 `upload`（分块流式写）/ `delete` / `stat` / `open_download`（流式读），唯一实现是 `LocalStorage`（`backend/storage/local.py`）：把 SQLite 里的相对路径拼上根读写，写文件先落同目录临时文件再改名。`create_app()` 建**两个实例**——`app.state.storage`（数据根，素材与两个 zip）与 `app.state.runtime_storage`（运行时根，解包产物）；两个根下相对路径逐字一致。目录级操作（`remove_tree` / `replace_tree` / `move`）由它单独提供（删游戏、解包整体替换、类型切换挪封面）。列表来自 SQLite，协议没有 `list`。`open_download()` 返回的流还透传 `seek/tell`，供 `zipfile` 把 zip 当底层流读。
 **原因：** 磁盘上没有元数据存储，所以「上传时的 mime」不落盘，读取时按后缀现猜（H5 资源另有显式 MIME 表，由 router 传入 content-type）；相对路径 + 统一拼根路径既让 SQLite 的引用稳定（换盘只改一个环境变量），又保住了分块流式与「service 不知道根目录在哪」的分层。
 **何时重评：** 需要多机共享或对象存储语义时再换实现，service 侧不用改。
 
 ### 决策 8：全部页面与接口需登录（H5 资源接口除外）
 
-**决定：** 不做游客模式——前端所有路由经 `permission.js` 拦、后端除注册/登录接口外全部依赖 `CurrentUser`。唯一免登录的业务接口是 H5 解包资源 `GET /api/games/{id}/h5/{资源路径}`。
+**决定：** 不做游客模式——前端所有路由经 `permission.js` 拦、后端除注册/登录接口外全部依赖 `CurrentUser`。唯一免登录的业务接口是 H5 资源 `GET /api/games/{id}/h5/{资源路径}`（首次访问会触发按需解包写盘，代价上界是一份已上传内容的解压副本）。
 **原因：** 游戏库不需要对外公开，一道登录墙就能挡住爬取与围观。H5 例外不是设计选择而是浏览器约束：H5 在沙箱 iframe（不透明源，无 `allow-same-origin`）里播放，它发出的请求一律按跨站处理，`SameSite=Lax` 的 session cookie 不会随请求带上（只有 `SameSite=None` 才可能，而默认拦截三方 cookie 的浏览器连它也不发），给这个接口加登录依赖只会让游戏加载不了 JS/图片。播放页本身仍要登录，未登录也拿不到游戏 id 与入口地址。
 **攻略不在例外里：** 它是登录用户上传的同源静态页，在**新标签页顶层导航**打开（不是沙箱 iframe），请求照常带 cookie，所以 `GET|HEAD /api/games/{id}/guide/{资源路径}` 与其它业务接口一样依赖 `CurrentUser`，响应也不加 CSP `sandbox`。**取舍**：同源意味着攻略里的脚本能以登录用户身份读写本站 localStorage、调 `/api`（只有登录用户能上传，威胁模型是家庭自托管；隔离方案见决策 6 的代价，需改承载方式）。
 **何时重评：** 若要连 H5 资源也严格鉴权，得改承载方式（父页面代取后经 blob/postMessage 交给沙箱，或把 H5 放到独立源，见决策 6），而不是给资源接口加登录。攻略若要隔离，同样得改成沙箱承载（代价：资源接口必须免登录、攻略内不能用 localStorage）。
@@ -406,6 +409,13 @@ backend/
 **代价：** 服务进程持有的那个数据根必须有**写权限**，自动补建与榜单补载才可能成功——数据根被 Docker 以 root 建过时，宿主机上直跑会因权限失败（只记一条 warning，页面提示尚未构建/尚未加载；容器里是 root，不受影响）。另外这 4MB 名录 CSV 与榜单 CSV 随 `backend/` 进了 api 镜像，换数据要重建镜像（换来的是容器首次启动也能自建，不必先跑命令）。英文按整词索引，缩写（`ff vii`）搜不到，不做拼音与错别字容错；榜单不分页，假设单机种条目量有限。
 **何时重评：** 若名录或榜单将来变成平台业务数据（可在界面上增删改），它们就该并回 `app.db` 并走正常的写入路径；若单次查询的耗时随数据量增长到需要缓存，再考虑加内存索引而不是改库。
 
+### 决策 14：H5 与攻略只上传 zip，按需解到运行时根
+
+**决定：** H5 游戏与攻略的交付形态都是**一个 zip**（根目录含 `index.html`，整包套单层目录会自动剥掉）。上传时**只校验、不解压**：`backend/games/archive.py` 的 `read_manifest()` 读中央目录做全量校验（路径归一化、重名、条目数、单条/总量、压缩比、加密条目），zip 原样写进**数据根**（H5 是 `game/{类型}/{卡带ID}/game.zip`，攻略是 `.../guide.zip`），**没有清单表**。播放 H5 或查看攻略时，`backend/games/runtime_assets.py` 的 `RuntimeAssets.ensure()` 检查**运行时根**里解包产物的入口文件：在就直接用，不在才把整包解到同层暂存目录 `.h5-{随机}` / `.guide-{随机}`，再用一次目录改名整体替换。相对路径与数据根逐字一致，只是拼的根不同。
+**原因：** 数据根是「整个拷走交给网盘备份」的那一份，解包产物是派生物——放进数据根等于同一份内容存两遍，还会让备份体积随游玩历史膨胀。把派生物赶到运行时根之后，恢复数据根不需要恢复解包产物（首次访问自动重建），而 zip 仍然是唯一的事实来源。攻略改成 zip 也是为了砍掉「前端 `webkitdirectory` + `paths`/`files` 按下标对位」那套接口形态：zip 是这类静态站点的自然交付格式，校验只需要一处、前端不需要剥目录名。
+**代价：** 每个游戏**首次**播放/查看会多一次解压（128MB 的包约 1–3 秒）。解包必须防并发重复：`RuntimeAssets` 用模块级 `threading.Lock`（键 = 类别 + 类型 + 卡带ID）串行化同一个游戏，**因此 gunicorn 必须保持 `--workers 1`**——多进程下锁不跨进程，并发 `os.replace` 覆盖非空目录会在 POSIX 上报 `ENOTEMPTY`。解包产物必须由写路径显式作废（重传 zip / 换游戏类型 / 改卡带ID / 删游戏 → `drop_tree`），刻意不做「两个根相同就跳过」的分支：重传只覆盖 zip 一个文件，同一棵树里的解包目录不会被碰到。`RUNTIME_ROOT` 不配时它就是数据根（本机默认、Windows 包的 `data/runtime` 之外的情形），此时清理退化成一次 `exists()` 检查。免登录的 H5 资源接口现在会触发解包写盘，代价上界是一份已上传内容的解压副本。
+**何时重评：** 如果解压耗时成为体感问题，可以在上传后台预先解一次（仍是同一套幂等逻辑）；如果将来支持多进程部署，锁要换成文件锁或把解包挪到一个专职进程。
+
 ## 模块依赖
 
 ```
@@ -415,7 +425,7 @@ frontend views / api/*
         ↓
      services（auth/game/cloud-save/screenshot/emulator-settings/game-stats …）
         ↓
-   adapters（models、storage/local、paths）
+   adapters（models、storage/local、paths、games/archive、games/runtime_assets）
         ↓
    config / database / deps / http / errors
 ```
@@ -442,7 +452,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 | `/api/csrf` | 取 CSRF token |
 | `/api/register` `/api/login` `/api/logout` `/api/me` | 注册 / 登录 / 登出 / 当前用户 |
 | `/api/tools` | 工具注册表（导航用，前端目前不消费） |
-| `/api/games` | 列表、状态、`/manage`（增删改 + `/manage/import` 搬运 + `/manage/{id}/guide` 攻略上传 + `/manage/{id}/cartridge-id` 改卡带ID）、`/{id}/cover`、`/{id}/play`、`/{id}/h5/{资源路径}`、`/{id}/guide/{资源路径}` |
+| `/api/games` | 列表、状态、`/manage`（增删改 + `/manage/import` 搬运 + `/manage/{id}/guide` 攻略 zip 上传 + `/manage/{id}/cartridge-id` 改卡带ID）、`/{id}/cover`、`/{id}/play`、`/{id}/h5/{资源路径}`、`/{id}/guide/{资源路径}` |
 | `/api/games/stats` | 游玩时长与进度：心跳累加时长、手动设置总时长、手动设置进度 |
 | `/api/games/saves` | 云端存档整体快照 CRUD + 单文件下载 |
 | `/api/games/screenshots` | 游戏截图：列表 / 上传 / 取图 / 改描述 / 拖动排序 / 删除（按账号隔离，全部需登录） |
@@ -451,7 +461,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 | `/api/games/search` | 游戏发现（检索）：外部中英文名录的只读全文检索（服务端分页 + 机种过滤）；`/consoles` 给机种下拉。索引是独立只读库，启动时不存在会自动补建，也可用 `make index` 重建 |
 | `/api/games/search/ranking` | 游戏发现（榜单）：按机种的整份榜单（不分页），`/ranking/consoles` 给机种下拉与默认机种。榜单 CSV 由 `make index` 或启动时就地补进同一个 `game.db`；与库存关联上的行多 `game_id` / `path`（请求期按卡带 ID 现查一次，只读、不落库） |
 
-**免登录：** 只有 `/health`、`/api/csrf`、`/api/register`、`/api/login`，以及 H5 解包资源 `GET|HEAD /api/games/{id}/h5/{资源路径}`（沙箱不透明源带不上 cookie，见决策 8）。`/play` 的 content-type 按本体扩展名：`.swf` 保持 Flash 专用值，主机 ROM 与 h5 ZIP 统一 `octet-stream`。其余端点均需登录，写操作另带 `X-CSRFToken`。
+**免登录：** 只有 `/health`、`/api/csrf`、`/api/register`、`/api/login`，以及 H5 资源 `GET|HEAD /api/games/{id}/h5/{资源路径}`（沙箱不透明源带不上 cookie，见决策 8）。`/play` 的 content-type 按本体扩展名：`.swf` 保持 Flash 专用值，主机 ROM 与 h5 ZIP 统一 `octet-stream`。其余端点均需登录，写操作另带 `X-CSRFToken`。
 
 ## 安全架构
 
@@ -463,7 +473,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 - 写操作（除 register/login/csrf/health 外）校验 `X-CSRFToken`。
 - 免登录面只有注册/登录接口、`/health` 与 H5 资源（见上节）；攻略资源**需登录**（同源顶层导航，见决策 8）。
 - H5 游戏内容按不可信处理：资源响应强制 CSP `sandbox`（不含 `allow-same-origin`）+ `nosniff` + `Referrer-Policy: no-referrer`，播放页 iframe 再加 `sandbox` 属性，双重保证游戏无法访问本站 cookie/DOM/接口或注册 Service Worker。
-- 上传有大小上限（web nginx `client_max_body_size` 128m 为上传网关；游戏本体走直链另有 `MAX_REMOTE_BYTES` = 512MB）与每类型扩展名白名单；H5 ZIP 解包另有条目数/单条/总解压量/压缩比上限，并拒绝绝对路径、`..`、重名与加密条目；攻略整目录上传同样过路径归一化与大小/文件数上限（1000 个，Starlette 表单解析的硬上限）；上传内容不执行（H5 在沙箱 iframe 内运行；攻略是登录用户上传的同源页面，见决策 8 的取舍说明）。
+- 上传有大小上限（web nginx `client_max_body_size` 128m 为上传网关；游戏本体走直链另有 `MAX_REMOTE_BYTES` = 512MB）与每类型扩展名白名单；H5 与攻略的 zip 共用同一套校验（`backend/games/archive.py`）：zip ≤128MB、条目 ≤2000、单条 ≤64MB、解压后 ≤256MB、压缩比 ≤200、拒绝绝对路径/`..`/重名/加密条目/缺 `index.html`；**解压那一步会再校验一次**（数据根是宿主可写的普通目录）；上传内容不执行（H5 在沙箱 iframe 内运行；攻略是登录用户上传的同源页面，见决策 8 的取舍说明）。
 - **所有落盘路径都经 `LocalStorage._resolve()` 校验**：拒绝绝对路径与含 `..` 的相对路径；卡带ID（`^[0-9A-Z_-]+$`）与用户名（`^[0-9A-Za-z_-]+$`）的字符集本身就是文件系统安全的，H5 包内路径与攻略内路径另有 `normalize_h5_path()` / `normalize_guide_path()` 归一化（同一套规则）。
 - **搬运会发起服务端出站请求**：入口地址只接受 7k7k.com / 4399.com / flash.homes 域名（`importer.detect_site` 按 host 校验），避免被当作任意 URL 代理（SSRF）；H5 镜像会跟随被信任游戏页里引用的外部资源域名（抓的是静态资源，不跟着外链网页乱爬），并受文件数/单文件体积上限约束。
 - 本应用只给主人与（游戏的）访客使用，不加 OAuth、多租户角色、公开分享。
@@ -488,7 +498,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 
 证书是随仓库提交的自签名证书（`certs/cert.pem` / `certs/cert.key`）；要换就 `scripts/gen-certs.sh`（`make certs`）重新生成，全程只用 openssl、不需要 docker。
 
-**备份**：数据目录里的一切都可以整体拷走——存档（`STORAGE_HOST_DIR/save/`）与截图（`STORAGE_HOST_DIR/image/`）不可重建，本体/封面/H5 资源/攻略可以重传；只有 SQLite 库不在里面（它在运行时根里，一直被写、外部客户端拷不动），靠下面那份快照兜底。
+**备份**：数据目录里的一切都可以整体拷走——存档（`STORAGE_HOST_DIR/save/`）与截图（`STORAGE_HOST_DIR/image/`）不可重建，本体/封面/两个 zip 可以重传；只有 SQLite 库不在里面（它在运行时根里，一直被写、外部客户端拷不动），靠下面那份快照兜底。运行时根里的解包产物不用备份——恢复数据根后首次访问会自动重建。
 
 **SQLite 的滚动备份**（`backend/backup.py`）：`create_app()` 启动时立刻备一次，之后每 `BACKUP_INTERVAL_SECONDS`（1 小时）由一个守护线程再备一次。**一个自然月只有一份** `<YYYY-MM>.db`，文件名按**本机本地时间**取月份，写在**数据根**的 `db/` 里（不是库所在的目录），**每次都整份重写**——所以快照最多落后一小时。用 `sqlite3` 的 backup API 而不是拷文件（服务一直在写，裸拷会撕裂），先写 `.tmp` 再 `os.replace` 改名，读的人永远看到完整文件；失败只记 warning、绝不拦住启动。**不做还原功能**：要回滚就停服务，把备份文件改名成 `app.db` 手动替换。
 
@@ -510,7 +520,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 | 变量 | 默认 | 用途 |
 |----------|----------|---------|
 | `STORAGE_HOST_DIR` | `./data/storage` | **宿主侧**数据根目录；容器里挂到 `/data`，同时作为环境变量传进容器供哨兵判断。游戏文件、检索索引与备份在它下面 |
-| `RUNTIME_HOST_DIR` | `./data/runtime` | **宿主侧**运行时根目录，只放 SQLite 库；容器里挂到 `/runtime`，留空则同 `STORAGE_HOST_DIR` |
+| `RUNTIME_HOST_DIR` | `./data/runtime` | **宿主侧**运行时根目录，放 SQLite 库与 H5/攻略的解包产物；容器里挂到 `/runtime`，留空则同 `STORAGE_HOST_DIR` |
 | `WEB_HTTPS_PORT` | `443` | 对外发布的 HTTPS 端口（容器内 nginx 固定听 443，见「安全架构」） |
 
 代码内固定：`SECRET_KEY`（session cookie 的签名密钥，换值让所有已登录会话失效）、`STORAGE_ROOT`（容器 `/data`，本机 `<repo>/data/storage`）、`RUNTIME_ROOT`（容器 `/runtime`，本机不设 = 同 `STORAGE_ROOT`）、`WINDOWS_MOUNT_PREFIX`（Windows 盘挂载路径前缀，默认 `/mnt`；根在它下面才要求 `.mounted` 哨兵）、SQLite 路径 `<RUNTIME_ROOT>/db/app.db`、备份间隔 1 小时、证书 `certs/cert.pem` / `certs/cert.key`、`SESSION_COOKIE_SECURE`；nginx `client_max_body_size 128m` 是上传网关（游戏 GBA 整卡 32MiB 等大文件经它放行）。
@@ -530,7 +540,7 @@ pytest            # 后端（临时 SQLite + 临时 STORAGE_ROOT + TestClient）
 cd frontend && npm run lint
 ```
 
-最低要求：未登录写接口 401；`/health` 未登录 200；注册（合法/非法用户名、重名、注册即登录）与登录锁定；`LocalStorage` 的读写/覆盖/删除/目录替换与越界路径拒绝；游戏创建必填卡带ID、转大写、唯一、`PUT` 改不动；上传后文件按 `game/{类型}/{卡带ID}/…` 真实落盘；改卡带ID 把三类目录都搬了（含换过类型的历史 `save/{用户}/{旧类型}/{旧ID}`）、四张子表的 `file_path` 都改了、多账号都搬、改完素材与存档截图仍读得到、磁盘上不留旧 ID 的残迹，以及非法/被占用/游戏不存在/新旧相同/源不在而目标在/搬不动回滚/Windows 路径过长各分支；未登录访问游戏接口（列表/状态/封面/本体/管理/存档/截图/攻略）一律 401、H5 资源接口可匿名访问；攻略整目录上传按目录落盘、缺 `index.html` / 路径越界 / 重名一律 400 且磁盘零残留、重传整体替换、无攻略 404、删游戏与换类型后目录不留、`has_guide` 跟磁盘走；模拟器设置按 (user, game_type) 隔离、非法平台或 payload 返回 400；截图按 (user, game) 隔离（越权 404）、落盘 `image/{用户名}/{类型}/{卡带ID}/{uuid}.{后缀}`、认不出的图片内容 / 空文件 / 超限 / 描述超 15 字返回 400、拖到越界位置返回 400、删游戏清干净。
+最低要求：未登录写接口 401；`/health` 未登录 200；注册（合法/非法用户名、重名、注册即登录）与登录锁定；`LocalStorage` 的读写/覆盖/删除/目录替换与越界路径拒绝；游戏创建必填卡带ID、转大写、唯一、`PUT` 改不动；上传后文件按 `game/{类型}/{卡带ID}/…` 真实落盘；改卡带ID 把三类目录都搬了（含换过类型的历史 `save/{用户}/{旧类型}/{旧ID}`）、三张子表的 `file_path` 都改了、多账号都搬、改完素材与存档截图仍读得到、两个根下都不留旧 ID 的残迹，以及非法/被占用/游戏不存在/新旧相同/源不在而目标在/搬不动回滚/Windows 路径过长各分支；未登录访问游戏接口（列表/状态/封面/本体/管理/存档/截图/攻略）一律 401、H5 资源接口可匿名访问；H5/攻略的 zip 只校验不解压（上传后运行时根仍然干净）、首次访问才解到运行时根、二次访问不重解、重传后旧解包产物作废、缺 `index.html` / 路径越界 / 重名 / 超上限一律 400 且两个根零残留、无攻略 404、删游戏 / 换类型 / 改卡带ID 后运行时根也清干净（两个根分开时另跑一遍）、`has_guide` 跟 `guide.zip` 走；模拟器设置按 (user, game_type) 隔离、非法平台或 payload 返回 400；截图按 (user, game) 隔离（越权 404）、落盘 `image/{用户名}/{类型}/{卡带ID}/{uuid}.{后缀}`、认不出的图片内容 / 空文件 / 超限 / 描述超 15 字返回 400、拖到越界位置返回 400、删游戏清干净。
 
 ## 排障（设计层面）
 
@@ -547,11 +557,13 @@ cd frontend && npm run lint
 处理：换一个卡带ID，或先删掉占用它的游戏。
 
 **问题：H5 游戏页面能打开但资源 404**
-原因：重传 ZIP 时入口路径变了（例如整包从带顶层目录变成不带），或包内路径大小写与引用不一致。
-处理：H5 清单以包内路径为准，入口固定根目录 `index.html`；重传后刷新播放页（资源响应带 `no-cache`）。
+原因：包内路径大小写与引用对不上，或整包从带顶层目录变成不带（入口被剥到根上了）。
+处理：入口固定根目录 `index.html`，包内路径以 zip 条目的原始写法为准；重传后刷新播放页（资源响应带 `no-cache`）。
+若资源仍在 404，先确认运行时根里已经解出那个文件（`<运行时根>/game/{类型}/{卡带ID}/h5/`）——
+没解出来说明解包那一步失败了，日志里会有 `解包失败`；解包产物可以整个删掉，下次访问会自动重建。
 
 ## 相关资源
 
 - [`AGENTS.md`](../AGENTS.md) — 编码 Agent 的实现约定（权威）
-- [`data_dict.md`](data_dict.md) — SQLite 10 表 + 文件路径规则
+- [`data_dict.md`](data_dict.md) — SQLite 9 表 + 文件路径规则
 - [FastAPI](https://fastapi.tiangolo.com/) / [SQLModel](https://sqlmodel.tiangolo.com/) / [Ruffle](https://ruffle.rs/) / [EmulatorJS](https://emulatorjs.org/)

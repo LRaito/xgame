@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
@@ -40,11 +42,29 @@ def register_as(client, username="alice", password="secret123"):
 
 @pytest.fixture
 def app(tmp_path):
-    # 数据根目录不用预先建：create_app 启动时会建出来
+    # 数据根目录不用预先建：create_app 启动时会建出来。
+    # 刻意**不设** RUNTIME_ROOT：这时运行时根退回数据根，两个 LocalStorage 指向同一棵树，
+    # 与 Docker 默认之外的另外两条路线（本机直跑、Windows 包的 data_dir 未改）一致。
     application = create_app(
         {
             "TESTING": True,
             "STORAGE_ROOT": str(tmp_path / "storage"),
+        }
+    )
+    yield application
+
+
+@pytest.fixture
+def split_app(tmp_path):
+    """两个根分开的 app：数据根 tmp/storage、运行时根 tmp/runtime（Docker 的形态）。
+
+    解包产物的失效、清理与「同根时不重复出错」两类行为都要在这一组里再验一遍。
+    """
+    application = create_app(
+        {
+            "TESTING": True,
+            "STORAGE_ROOT": str(tmp_path / "storage"),
+            "RUNTIME_ROOT": str(tmp_path / "runtime"),
         }
     )
     yield application
@@ -57,8 +77,19 @@ def storage_root(app, tmp_path):
 
 
 @pytest.fixture
+def runtime_root(app):
+    """运行时根目录（H5/攻略的解包产物、SQLite 库）。不配 RUNTIME_ROOT 时就是数据根。"""
+    return Path(app.state.settings.runtime_root)
+
+
+@pytest.fixture
 def client(app):
     return TestClient(app)
+
+
+@pytest.fixture
+def split_client(split_app):
+    return TestClient(split_app)
 
 
 @pytest.fixture
@@ -71,6 +102,15 @@ def user(app):
 def logged_in(client, user):
     login_as(client)
     return client
+
+
+@pytest.fixture
+def split_logged_in(split_client, split_app):
+    """两个根分开的 app 上建号并登录（只给新用例用，现有用例继续走 logged_in）。"""
+    with Session(split_app.state.engine) as session:
+        AuthService(session).create_user("alice", "secret123")
+    login_as(split_client)
+    return split_client
 
 
 @pytest.fixture
