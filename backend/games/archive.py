@@ -1,9 +1,10 @@
 """压缩包（H5 游戏资源包、攻略包）的校验与解包原语。
 
-H5 与攻略的交付格式是同一套东西——一个根目录含 `index.html` 的 zip，所以规则、上限与
-中文报错措辞都在这里集中一份，只按 `kind`（`H5` / `GUIDE`）取入口名与措辞。两个包都
+H5 与 ZIP 形态的攻略的交付格式是同一套东西——一个根目录含 `index.html` 的 zip，所以规则、
+上限与中文报错措辞都在这里集中一份，只按 `kind`（`H5` / `GUIDE`）取入口名与措辞。两个包都
 **只上传 zip**：上传时 `read_manifest()` 只读中央目录做全量校验、一个字节都不解；
-真正的解压发生在运行时（`backend/games/runtime_assets.py`）。
+真正的解压发生在运行时（`backend/games/runtime_assets.py`）。攻略另有 PDF 形态，
+原样存数据根、不解包，不经过本模块。
 
 这是 `backend/games/` 里最底层的一个模块——`service.py` 与 `runtime_assets.py` 都依赖它，
 它自己不依赖包内任何东西。共用的 Windows 文件名规则（游戏名校验与包内路径校验都按它）

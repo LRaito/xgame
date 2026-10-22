@@ -124,7 +124,7 @@ export function uploadGameAssetAPI(id, formData) {
     });
 }
 
-/** 上传攻略 zip：multipart 里只有一个 file 字段（解压后根目录需含 index.html）。 */
+/** 上传攻略：multipart 里只有一个 file 字段（ZIP 解压后根目录需含 index.html，或单个 PDF）。 */
 export function uploadGuideAPI(id, formData) {
     return request({
         url: `/api/games/manage/${id}/guide`,
@@ -132,6 +132,11 @@ export function uploadGuideAPI(id, formData) {
         data: formData,
         timeout: 0,
     });
+}
+
+/** 删除攻略（ZIP/PDF 都删），返回更新后的管理条目。 */
+export function deleteGuideAPI(id) {
+    return request({ url: `/api/games/manage/${id}/guide`, method: "delete" });
 }
 
 /**
@@ -181,6 +186,11 @@ export function h5EntryPath(id, updatedAt = "") {
 /** 攻略入口页地址（新标签页顶层打开，同源请求会带上登录 cookie，所以接口要登录）。 */
 export function guideEntryPath(id) {
     return `/api/games/${id}/guide/index.html`;
+}
+
+/** 攻略 PDF 地址（数据根直读，新标签页内联展示；接口同样需登录）。 */
+export function guidePdfPath(id) {
+    return `/api/games/${id}/guide.pdf`;
 }
 
 /** 游戏封面的下载地址（download=1 时附件下载，文件名 cover.{后缀}）；

@@ -100,6 +100,16 @@ MANAGE_PAGE_SIZE_MAX = 100
 # 搬运的卡带ID 不用手填，由本体（Flash 的 .swf / H5 的 .zip）CRC32 自动生成
 _IMPORT_CARTRIDGE_PREFIX = "F-"
 
+# 攻略的两种形态：ZIP（静态站点，查看时按需解包）与 PDF（原样存数据根、不解包）。
+# 同一个游戏同时只保留一种，上传一种会删掉另一种。
+GUIDE_KIND_ZIP = "zip"
+GUIDE_KIND_PDF = "pdf"
+# PDF 与 ZIP 共用 nginx `client_max_body_size`（128m）这条网关上限。
+GUIDE_PDF_MAX_SIZE = 128 * 1024 * 1024
+_GUIDE_PDF_MAGIC = b"%PDF-"
+# PDF 规范允许 `%PDF-` 前有少量垃圾字节，按 1024 字节内出现即认可。
+_GUIDE_PDF_HEADER_BYTES = 1024
+
 # 两个包（H5 游戏资源包、攻略包）的入口名、上限、路径归一化与解包原语全在
 # `backend/games/archive.py`；真正的解包推迟到运行时，见 `backend/games/runtime_assets.py`。
 
@@ -327,7 +337,8 @@ class GameItem:
     cover_path: str | None
     created_at: datetime
     updated_at: datetime
-    has_guide: bool = False
+    # ""（没有攻略）/ "zip"（静态站点）/ "pdf"
+    guide_kind: str = ""
 
     @property
     def path(self) -> str:
@@ -363,7 +374,7 @@ def _manage_order_clauses() -> tuple:
 
     与游戏中心的 `_game_order_clauses()`（类型顺序 → 名称）不同：管理页是
     「最近动过什么」的工作台视图，中心页则要保持类型分组。`updated_at` 在编辑、
-    换本体/封面、传攻略等改动时都会刷新，所以它就是管理页展示的那一列。
+    换本体/封面、传攻略、删攻略等改动时都会刷新，所以它就是管理页展示的那一列。
     """
     return (col(Game.updated_at).desc(), col(Game.id).desc())
 
@@ -1006,6 +1017,8 @@ class GameService:
             self._session.add(image)
         row.game_path = ""
         row.size = 0
+        # 旧类型目录随后被 _finish_type_switch 整棵删掉；攻略不跨类型迁移
+        row.guide_kind = ""
         row.game_type = game_type
         # 封面类型跟着游戏类型走：新类型不认当前值（如 NES 的 FC 壳换成 SNES）就清空
         if row.cover_type is not None and row.cover_type not in cover_types_for(game_type):
@@ -1113,8 +1126,11 @@ class GameService:
         """按归一化后的攻略内相对路径取静态文件，返回 (stream, mime, size)。
 
         与 H5 同一套：包在数据根、解包产物在运行时根，路径一一对应、没有清单表。
+        攻略形态以库里的 `guide_kind` 为准——手动拷进数据根的文件不会凭空变成攻略。
         """
         item = self.get(game_id)
+        if item.guide_kind != GUIDE_KIND_ZIP:
+            raise NotFoundError("攻略文件不存在。")
         relpath = normalize_guide_path(asset_path)
         self._assets.ensure(archive.GUIDE, item.game_type, item.cartridge_id)
         try:
@@ -1125,57 +1141,105 @@ class GameService:
             raise NotFoundError("攻略文件不存在。") from exc
         return stream, guess_asset_mime(relpath), stream.size
 
-    def upload_guide(self, game_id: int, upload: GameUpload) -> GameItem:
-        """保存攻略：只校验 zip 并写进数据根，一个字节都不解。
+    def open_guide_pdf(self, game_id: int):
+        """返回攻略 PDF 的 (stream, size)；PDF 不解包，直接从数据根读。"""
+        item = self.get(game_id)
+        if item.guide_kind != GUIDE_KIND_PDF:
+            raise NotFoundError("攻略文件不存在。")
+        try:
+            stream = self._storage.open_download(
+                paths.guide_pdf_path(item.game_type, item.cartridge_id)
+            )
+        except StorageError as exc:
+            raise NotFoundError("攻略文件不存在。") from exc
+        return stream, stream.size
 
-        解包推迟到查看时（`RuntimeAssets.ensure`）。校验在写下第一个字节之前做完，
-        失败磁盘零残留；成功之后运行时根那份旧产物作废，下次查看重新解包。
+    def upload_guide(self, game_id: int, upload: GameUpload) -> GameItem:
+        """保存攻略：ZIP 静态站点包（只校验、不解压）或 PDF，二者互斥。
+
+        上传一种形态会删掉另一种，并作废运行时根里的旧解包产物。校验在写下第一个
+        字节之前做完，失败磁盘零残留；删旧形态失败时把新文件也删掉再报错，避免留下
+        「两种攻略并存」的脏状态。
         """
         row = self._session.get(Game, game_id)
         if row is None:
             raise NotFoundError("游戏不存在。")
         filename = (upload.filename or "").strip()
         if not filename:
-            raise ValidationError("请选择要上传的攻略 ZIP 文件。")
-        if Path(filename).suffix.lower() != ".zip":
-            raise ValidationError("攻略只支持 ZIP 压缩包。")
+            raise ValidationError("请选择要上传的攻略文件（ZIP 或 PDF）。")
+        suffix = Path(filename).suffix.lower()
+        if suffix not in (".zip", ".pdf"):
+            raise ValidationError("攻略只支持 ZIP 压缩包或 PDF 文件。")
         if upload.size is None or upload.size <= 0:
             raise ValidationError("文件大小无效。")
-        if upload.size > archive.MAX_ZIP_SIZE:
-            raise ValidationError("压缩包过大。")
-        entries = archive.read_manifest(upload.stream, kind=archive.GUIDE)
-        # 包内路径的深度只出现在运行时根下，所以按运行时根算 Windows 完整路径长度
-        for entry in entries:
-            archive.ensure_path_fits(
-                self._assets.root(),
-                paths.guide_asset_path(row.game_type, row.cartridge_id, entry.path),
-                where=archive.WHERE[archive.GUIDE],
-            )
+
+        game_type, cartridge_id = row.game_type, row.cartridge_id
+        if suffix == ".zip":
+            if upload.size > archive.MAX_ZIP_SIZE:
+                raise ValidationError("压缩包过大。")
+            entries = archive.read_manifest(upload.stream, kind=archive.GUIDE)
+            # 包内路径的深度只出现在运行时根下，所以按运行时根算 Windows 完整路径长度
+            for entry in entries:
+                archive.ensure_path_fits(
+                    self._assets.root(),
+                    paths.guide_asset_path(game_type, cartridge_id, entry.path),
+                    where=archive.WHERE[archive.GUIDE],
+                )
+            target = paths.guide_zip_path(game_type, cartridge_id)
+            obsolete = paths.guide_pdf_path(game_type, cartridge_id)
+            mime = "application/zip"
+            guide_kind = GUIDE_KIND_ZIP
+        else:
+            if upload.size > GUIDE_PDF_MAX_SIZE:
+                raise ValidationError("攻略 PDF 过大。")
+            _validate_pdf_header(upload.stream)
+            target = paths.guide_pdf_path(game_type, cartridge_id)
+            obsolete = paths.guide_zip_path(game_type, cartridge_id)
+            mime = "application/pdf"
+            guide_kind = GUIDE_KIND_PDF
+
         _rewind(upload.stream)
-        self._storage.upload(
-            paths.guide_zip_path(row.game_type, row.cartridge_id),
-            upload.stream,
-            upload.size,
-            upload.mime or "application/zip",
-        )
-        self._assets.drop_tree(paths.guide_dir(row.game_type, row.cartridge_id))
+        self._storage.upload(target, upload.stream, upload.size, mime)
+        try:
+            self._storage.delete(obsolete)
+        except StorageError:
+            # 旧形态没删掉：新文件也删掉再报错，库里仍是旧形态、磁盘也只留旧文件
+            try:
+                self._storage.delete(target)
+            except StorageError:
+                logger.warning("回滚新攻略文件失败：%s", target, exc_info=True)
+            raise
+        self._assets.drop_tree(paths.guide_dir(game_type, cartridge_id))
+        row.guide_kind = guide_kind
         row.updated_at = datetime.now(timezone.utc)
         self._session.add(row)
         self._session.commit()
         self._session.refresh(row)
         return self._to_item(row)
 
-    def _has_guide(self, row: Game) -> bool:
-        """磁盘即真相：数据根里有 guide.zip 就算这个游戏有攻略。
+    def delete_guide(self, game_id: int) -> GameItem:
+        """删除这个游戏的攻略：文件、解包产物与库里的形态一起清掉。
 
-        攻略不落库标记，判定就是一次 stat——本地磁盘一次系统调用，列表每行一次可忽略；
-        换来的是「从宿主目录手动删掉攻略包，界面立刻跟着变」。
+        幂等：本来就没有攻略也返回成功（数据根里可能还有历史遗留文件，一并清掉）。
+        文件删除失败会抛 `StorageError`，此时库里的标记保持不变，方便重试；只有确实
+        有攻略时才刷新 `updated_at`，重复 DELETE 不会把游戏反复顶到管理列表最前。
         """
-        try:
-            self._storage.stat(paths.guide_zip_path(row.game_type, row.cartridge_id))
-        except StorageError:
-            return False
-        return True
+        row = self._session.get(Game, game_id)
+        if row is None:
+            raise NotFoundError("游戏不存在。")
+        game_type, cartridge_id = row.game_type, row.cartridge_id
+        # 两种形态都删：同一游戏正常只有一种，这里顺手清掉宿主手放的孤儿文件。
+        # 直接调 storage.delete（不能用会吞错的 _delete_storage_key）：删失败就不清列。
+        self._storage.delete(paths.guide_zip_path(game_type, cartridge_id))
+        self._storage.delete(paths.guide_pdf_path(game_type, cartridge_id))
+        self._assets.drop_tree(paths.guide_dir(game_type, cartridge_id))
+        if row.guide_kind:
+            row.guide_kind = ""
+            row.updated_at = datetime.now(timezone.utc)
+            self._session.add(row)
+            self._session.commit()
+            self._session.refresh(row)
+        return self._to_item(row)
 
     def _recent_rows(self, game_id: int) -> list[GameRecentPlay]:
         """所有用户的该游戏最近游玩记录——删游戏时一并清掉，不留孤儿行。"""
@@ -1321,7 +1385,7 @@ class GameService:
             cover_path=row.cover_path,
             created_at=row.created_at,
             updated_at=row.updated_at,
-            has_guide=self._has_guide(row),
+            guide_kind=row.guide_kind,
         )
 
 
@@ -1349,6 +1413,20 @@ def _rewind(stream: BinaryIO) -> None:
         stream.seek(0)
     except (OSError, ValueError) as exc:
         raise ValidationError("无法读取上传的文件。") from exc
+
+
+def _validate_pdf_header(stream: BinaryIO) -> None:
+    """按内容认 PDF：`%PDF-` 出现在前 1024 字节内即可（不信任文件名与 Content-Type）。
+
+    校验只读文件头；调用方随后用 `_rewind()` 把流绕回开头再写存储。
+    """
+    try:
+        stream.seek(0)
+    except (OSError, ValueError) as exc:
+        raise ValidationError("无法读取上传的 PDF 文件。") from exc
+    head = stream.read(_GUIDE_PDF_HEADER_BYTES)
+    if _GUIDE_PDF_MAGIC not in head:
+        raise ValidationError("PDF 文件无法解析，请上传有效的 PDF 文件。")
 
 
 def _open_upload(stack: ExitStack, path: Path, mime: str | None) -> GameUpload:

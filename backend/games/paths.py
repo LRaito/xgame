@@ -10,7 +10,8 @@
 
     game/{game_type}/{卡带ID}/game.{后缀}           本体（H5 就是 game.zip）
     game/{game_type}/{卡带ID}/cover.{后缀}          封面
-    game/{game_type}/{卡带ID}/guide.zip             攻略包（原始 zip）
+    game/{game_type}/{卡带ID}/guide.zip             攻略包（原始 zip，与 guide.pdf 二选一）
+    game/{game_type}/{卡带ID}/guide.pdf             攻略 PDF（与 guide.zip 二选一）
     game/{game_type}/{卡带ID}/image/{uuid}.{后缀}   图集（全站共享，随游戏类型迁移）
     save/{用户名}/{game_type}/{卡带ID}/{uuid}.state 云端存档文件
     image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀} 游戏截图（按账号隔离；播放页截的是 .png）
@@ -41,8 +42,8 @@ ENTRY_NAME = "index.html"
 GALLERY_DIR_NAME = "image"
 BODY_STEM = "game"
 COVER_STEM = "cover"
-# 攻略包与解包目录同名不同后缀（guide.zip / guide/），一眼能对上
-GUIDE_ZIP_STEM = "guide"
+# 攻略包与解包目录同名不同后缀（guide.zip | guide.pdf / guide/），一眼能对上
+GUIDE_STEM = "guide"
 SAVE_EXTENSION = ".state"
 SCREENSHOT_EXTENSION = ".png"  # 播放页截图固定 PNG；图库里手动上传的还可能是 jpg/webp/gif
 
@@ -98,8 +99,13 @@ def guide_dir(game_type: str, cartridge_id: str) -> str:
 
 
 def guide_zip_path(game_type: str, cartridge_id: str) -> str:
-    """攻略包：原始 zip（数据根下）；它存在就算这个游戏有攻略。"""
-    return f"{game_dir(game_type, cartridge_id)}/{GUIDE_ZIP_STEM}.zip"
+    """攻略包：原始 zip（数据根下）；它与 guide.pdf 任一存在就算有攻略。"""
+    return f"{game_dir(game_type, cartridge_id)}/{GUIDE_STEM}.zip"
+
+
+def guide_pdf_path(game_type: str, cartridge_id: str) -> str:
+    """攻略 PDF（数据根下）；与 guide.zip 二选一，PDF 不解包。"""
+    return f"{game_dir(game_type, cartridge_id)}/{GUIDE_STEM}.pdf"
 
 
 def guide_entry_path(game_type: str, cartridge_id: str) -> str:

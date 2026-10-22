@@ -9,11 +9,15 @@ from backend.storage.types import StoredObjectStream
 _CHUNK_SIZE = 256 * 1024
 
 
-def content_disposition(filename: str) -> str:
-    """Content-Disposition：附件下载，原名走 RFC5987（支持中文等非 ASCII）。"""
+def content_disposition(filename: str, *, inline: bool = False) -> str:
+    """Content-Disposition：默认附件下载；inline=True 时让浏览器就地展示。
+
+    原名走 RFC5987（支持中文等非 ASCII）。
+    """
     ascii_name = filename.encode("ascii", "ignore").decode("ascii") or "download"
     ascii_name = ascii_name.replace('"', "").replace("\\", "")
-    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+    kind = "inline" if inline else "attachment"
+    return f"{kind}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
 
 def build_download_response(

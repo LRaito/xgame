@@ -284,29 +284,38 @@
                                 <app-button @click="galleryManagerVisible = true">管理</app-button>
                             </div>
                         </el-form-item>
-                        <!-- 攻略：只在编辑时出现（新建还没有卡带目录可落）。上传 zip，保存时才发出去 -->
+                        <!-- 攻略：只在编辑时出现（新建还没有卡带目录可落）。上传 ZIP 或 PDF，保存时才发出去 -->
                         <el-form-item v-if="formMode === 'edit'" label="游戏攻略">
                             <div class="game-manage__source">
                                 <input
-                                    ref="guideZipRef"
+                                    ref="guideFileRef"
                                     class="game-manage__file-input"
                                     type="file"
-                                    accept=".zip,application/zip"
+                                    accept=".zip,.pdf,application/zip,application/pdf"
                                     @change="onGuideFileChange"
                                 />
-                                <app-button @click="pickGuideZip">上传攻略 ZIP</app-button>
+                                <app-button @click="pickGuide">上传攻略</app-button>
+                                <app-button
+                                    v-if="editingItem?.has_guide"
+                                    type="danger"
+                                    :loading="guideDeleting"
+                                    :disabled="saving || guideDeleting"
+                                    @click="onDeleteGuide"
+                                >
+                                    删除攻略
+                                </app-button>
                             </div>
                             <p v-if="guideFile" class="game-manage__file-hint">
                                 已选 {{ guideFile.name }}（重新上传会整体替换）
-                                <button type="button" class="game-manage__clear" @click="clearGuideZip">
+                                <button type="button" class="game-manage__clear" @click="clearGuide">
                                     清除
                                 </button>
                             </p>
                             <p v-else-if="editingItem?.has_guide" class="game-manage__file-hint muted">
-                                当前：已有攻略（重新上传会整体替换）
+                                当前：已有攻略（{{ editingItem.guide_kind === "pdf" ? "PDF" : "ZIP" }}，重新上传会整体替换）
                             </p>
                             <p v-else class="game-manage__file-hint muted">
-                                选择一个攻略 ZIP（解压后根目录需含 index.html），重新上传会整体替换
+                                选择一个攻略 ZIP 或 PDF（ZIP 解压后根目录需含 index.html），重新上传会整体替换
                             </p>
                         </el-form-item>
                     </div>
@@ -471,6 +480,7 @@ import GalleryManagerDialog from "@components/games/GalleryManagerDialog.vue";
 import ImageUploadButton from "@components/games/ImageUploadButton.vue";
 import {
     createManageGameAPI,
+    deleteGuideAPI,
     deleteManageGameAPI,
     gamesStatusAPI,
     getManageGameAPI,
@@ -513,9 +523,10 @@ const editingId = ref(null);
 const editingItem = ref(null);
 const gameFileRef = ref(null);
 const coverFileRef = ref(null);
-const guideZipRef = ref(null);
-// 攻略：只在编辑弹框出现；zip 选好后先存着，点「保存」才提交
+const guideFileRef = ref(null);
+// 攻略：只在编辑弹框出现；ZIP 或 PDF 选好后先存着，点「保存」才提交
 const guideFile = ref(null);
+const guideDeleting = ref(false);
 const form = reactive({
     name: "",
     cartridgeId: "",
@@ -789,7 +800,8 @@ function resetForm() {
     form.description = "";
     clearGameFile();
     clearCoverFile();
-    clearGuideZip();
+    clearGuide();
+    guideDeleting.value = false;
     clearRemoteBody();
     form.coverUrl = "";
     remoteBody.url = "";
@@ -916,25 +928,30 @@ function onCoverFileChange(event) {
     }
 }
 
-function pickGuideZip() {
-    guideZipRef.value?.click();
+function pickGuide() {
+    guideFileRef.value?.click();
+}
+
+/** 攻略只收 ZIP 与 PDF（后端也校验，这里先挡一道，省一次上传） */
+function isGuideFileName(name) {
+    const lower = (name || "").toLowerCase();
+    return lower.endsWith(".zip") || lower.endsWith(".pdf");
 }
 
 function onGuideFileChange(event) {
     const file = (event.target.files || [])[0] || null;
-    // 攻略只收 zip（后端也校验，这里先挡一道，省一次上传）
-    if (file && !file.name.toLowerCase().endsWith(".zip")) {
-        ElMessage.warning("攻略只支持 ZIP 压缩包");
-        clearGuideZip();
+    if (file && !isGuideFileName(file.name)) {
+        ElMessage.warning("攻略只支持 ZIP 压缩包或 PDF 文件");
+        clearGuide();
         return;
     }
     guideFile.value = file;
 }
 
-function clearGuideZip() {
+function clearGuide() {
     guideFile.value = null;
-    if (guideZipRef.value) {
-        guideZipRef.value.value = "";
+    if (guideFileRef.value) {
+        guideFileRef.value.value = "";
     }
 }
 
@@ -1055,11 +1072,51 @@ async function onBeautifyConfirm({ blob, styleId }) {
     }
 }
 
-/** 提交攻略 zip（后端只校验、不解压，查看攻略时才按需解到运行时目录） */
+/** 提交攻略（ZIP 只校验不解压、PDF 原样存；查看时才按需解到运行时目录） */
 async function uploadGuide(gameId) {
     const data = new FormData();
     data.append("file", guideFile.value);
     await uploadGuideAPI(gameId, data);
+}
+
+/** 删除攻略：确认后立即生效（不随「保存」提交），并清掉还没保存的新文件选择。 */
+async function onDeleteGuide() {
+    const item = editingItem.value;
+    if (!item?.has_guide || guideDeleting.value) {
+        return;
+    }
+    const targetId = editingId.value;
+    const staged = Boolean(guideFile.value);
+    try {
+        await ElMessageBox.confirm(
+            `确定删除「${item.name}」的攻略？删除后无法恢复。` +
+                (staged ? "已选但尚未保存的新攻略也会一起丢弃。" : ""),
+            "删除攻略",
+            {
+                confirmButtonText: "删除",
+                cancelButtonText: "取消",
+                type: "warning",
+                confirmButtonClass: "el-button--danger",
+            },
+        );
+    } catch {
+        return;
+    }
+    guideDeleting.value = true;
+    try {
+        const updated = await deleteGuideAPI(targetId);
+        // 请求在途时可能已经关掉弹框又打开别的游戏，别用旧响应覆盖
+        if (editingId.value === targetId) {
+            editingItem.value = updated;
+            clearGuide();
+        }
+        ElMessage.success("攻略已删除");
+        await reload();
+    } catch (err) {
+        if (!err.reported) ElMessage.error(err.message || "删除攻略失败");
+    } finally {
+        guideDeleting.value = false;
+    }
 }
 
 async function onCreate() {
@@ -1085,6 +1142,10 @@ async function onCreate() {
 }
 
 async function onSave() {
+    // 删除请求在途时不要再提交上传，避免同一次操作里又删又传
+    if (guideDeleting.value) {
+        return;
+    }
     if (!form.name.trim()) {
         ElMessage.warning("请填写游戏名称");
         return;
@@ -1102,8 +1163,8 @@ async function onSave() {
             ElMessage.warning("无法识别游戏本体格式，请更换文件或检查下载地址");
             return;
         }
-    } else if (guideFile.value && !guideFile.value.name.toLowerCase().endsWith(".zip")) {
-        ElMessage.warning("攻略只支持 ZIP 压缩包");
+    } else if (guideFile.value && !isGuideFileName(guideFile.value.name)) {
+        ElMessage.warning("攻略只支持 ZIP 压缩包或 PDF 文件");
         return;
     }
 

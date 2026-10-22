@@ -128,6 +128,7 @@ import { ElMessage } from "element-plus";
 import {
     gamesStatusAPI,
     guideEntryPath,
+    guidePdfPath,
     listGamesAPI,
     listRecentGamesAPI,
     setGamePlaytimeAPI,
@@ -273,15 +274,18 @@ function openDetail() {
     detailVisible.value = true;
 }
 
-// 右键「攻略」：在新标签页顶层打开入口页。资源接口需登录，同源的新标签会带上 session cookie。
+// 右键「攻略」：在新标签页顶层打开。资源接口需登录，同源的新标签会带上 session cookie。
+// ZIP 攻略打开静态站入口 index.html；PDF 攻略直接交给浏览器内置查看器就地展示。
 function openGuide() {
     const game = menu.value.game;
     if (!game) {
         return;
     }
     closeMenu();
+    const url =
+        game.guide_kind === "pdf" ? guidePdfPath(game.id) : guideEntryPath(game.id);
     // noopener：断开新页面与本站的 window.opener 引用
-    window.open(guideEntryPath(game.id), "_blank", "noopener");
+    window.open(url, "_blank", "noopener");
 }
 
 function openHoursDialog() {

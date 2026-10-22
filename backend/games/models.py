@@ -82,6 +82,12 @@ class Game(SQLModel, table=True):
     crc32: str = Field(default="", max_length=8)  # 本体内容摘要（8 位大写十六进制）；空 = 尚未算出
     game_path: str = Field(default="", max_length=500)
     cover_path: str | None = Field(default=None, max_length=500)
+    # 攻略形态："" = 没有 / "zip"（静态站包）/ "pdf"。随上传、删除、换游戏类型维护。
+    guide_kind: str = Field(
+        default="",
+        max_length=10,
+        sa_column_kwargs={"server_default": ""},
+    )
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
 

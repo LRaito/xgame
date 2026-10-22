@@ -11,7 +11,7 @@
 | SQLite 单文件 | `<运行时根>/db/app.db`（Docker 里是宿主 `${RUNTIME_HOST_DIR}/db/app.db` → 容器 `/runtime/db/app.db`） | 全部业务元数据 |
 | SQLite 备份 | `<数据根>/db/<YYYY-MM>.db` | 启动时备一次、之后每小时一次，**当月只此一份、每次整份重写**（快照最多落后一小时）；不做还原，回滚就手工换回 `app.db` |
 | SQLite 发现索引 | `<数据根>/db/game.db` | 游戏发现的**派生只读库**（外部中英文名录的全文索引 + 按机种的游戏榜单），服务启动时不存在会自动补建、榜单 CSV 变化时会就地补载，也可用 `make index` 重建；**不备份**，可从 CSV 重建，见文末「游戏发现索引」 |
-| 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/攻略与 H5 的 **zip**/图集、云端存档、游戏截图，以及 `db/` 下的备份与检索索引。**只放原始素材**，会被整体拷走备份 |
+| 数据根目录 | `STORAGE_ROOT`（本机默认 `<仓库>/data/storage`；容器内固定 `/data`，宿主目录由 `STORAGE_HOST_DIR` 挂进去） | 游戏本体/封面/攻略（ZIP 或 PDF）与 H5 的 **zip**/图集、云端存档、游戏截图，以及 `db/` 下的备份与检索索引。**只放原始素材**，会被整体拷走备份 |
 | 运行时根目录 | `RUNTIME_ROOT`（不配 = 与数据根相同；容器内固定 `/runtime`，宿主目录由 `RUNTIME_HOST_DIR` 挂进去） | SQLite 库 + H5/攻略的**解包产物**（派生物，删掉会在下次访问时自动重建）。库单独放是为了让数据根整个可以交给网盘之类的客户端备份——它拷不动一个一直被写着的库文件 |
 | 哨兵文件 | 每个根目录下的 `.mounted` | **人工创建**的空文件；该根的宿主路径在 Windows 盘挂载路径前缀下时启动会检查，缺了服务拒绝启动（见 `backend/mount_guard.py`）。两个根相同时只有一个 |
 
@@ -77,10 +77,11 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | 本体内容的 CRC32，8 位大写十六进制（如 `D445F698`）。上传本体时算好落库，**用作换本体的锁定凭据**：非空时只接受 CRC32 相同的文件；空（如文件已丢、尚未补传）表示未锁定 |
 | game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径（`game/{game_type}/{卡带ID}/game.{后缀}`）；空串 = 尚未上传。h5 就是它的 zip（`game.zip`），解包产物不落库 |
 | cover_path | VARCHAR(500) | NULL | 封面相对路径（`game/{game_type}/{卡带ID}/cover.{后缀}`）；NULL = 无封面 |
+| guide_kind | VARCHAR(10) | NOT NULL, 默认 `''` | 攻略形态：`''` = 没有、`'zip'` = ZIP 静态站包、`'pdf'` = 单个 PDF。**上传攻略写值、删除攻略/换游戏类型清空**；列表接口据此给出 `has_guide`，不再 stat 磁盘。老库补列时旧行一律空串（不回填磁盘已有文件） |
 | created_at | DATETIME | NOT NULL | |
-| updated_at | DATETIME | NOT NULL | 上传资源 / 改信息时更新 |
+| updated_at | DATETIME | NOT NULL | 上传资源 / 改信息 / 传攻略 / 删攻略时更新 |
 
-> **攻略不落列也不建表**：有没有攻略由数据根里的 `guide.zip` 是否存在现算（`GameService._has_guide`），所以这里没有 `has_guide` 字段；接口载荷里的 `has_guide` 是每次按磁盘 stat 出来的。文件本身见下文「路径规则」的攻略一条。
+> **攻略状态落列、不建表**：形态记在 `games.guide_kind`（`''` / `'zip'` / `'pdf'`），上传写值、删除清空、换游戏类型清空；接口载荷里的 `has_guide` 由它派生。旧库补列时不做磁盘回填，因此宿主手动放进数据根的文件不会自动变成攻略。文件本身见下文「路径规则」的攻略一条。
 
 **`game_cloud_snapshots`**（一个云端存档 = 某(用户,游戏)此刻全部本地存档文件的整体快照：Flash 为多条 `.sol`，模拟器恒为 1 条 `.state`（该游戏本地只有一份档，固定名 `save.state`））
 
@@ -203,6 +204,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | 游戏本体 | `game/{game_type}/{卡带ID}/game.{后缀}` | `game/nes/AB-12/game.nes`、`game/h5/AB-12/game.zip` | `backend/games/paths.py::body_path` / `h5_zip_path` |
 | 游戏封面 | `game/{game_type}/{卡带ID}/cover.{后缀}` | `game/nes/AB-12/cover.png` | `paths.py::cover_path` |
 | 攻略包 | `game/{game_type}/{卡带ID}/guide.zip` | `game/nes/AB-12/guide.zip` | `paths.py::guide_zip_path` |
+| 攻略 PDF | `game/{game_type}/{卡带ID}/guide.pdf` | `game/nes/AB-12/guide.pdf` | `paths.py::guide_pdf_path` |
 | 游戏图集 | `game/{game_type}/{卡带ID}/image/{uuid}.{后缀}` | `game/nes/AB-12/image/3f2a….png` | `paths.py::gallery_file_path` |
 | 云端存档文件 | `save/{用户名}/{game_type}/{卡带ID}/{uuid}.state` | `save/alice/nes/AB-12/3f2a….state` | `paths.py::save_file_path` |
 | 游戏截图 | `image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀}` | `image/alice/nes/AB-12/3f2a….png` | `paths.py::screenshot_file_path` |
@@ -220,7 +222,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 - **类型目录名**：用 `game_type` 的键值（`flash` / `h5` / `nes` / `snes` / `gb` / `gba` / `segaMD` / `segaGG` / `segaMS`），与 SQLite 字段一致，纯标识符、无空格，后端不需要知道中文展示名。
 - **游戏本体 / 封面**：路径随 `game_type` 与卡带ID 固定、不随上传文件名变，**同名重复上传会覆盖同一个文件**（先写同目录临时文件再改名）。本体后缀决定 `game_type`（扩展名与类型一一对应）：`.swf`→`flash`；`.zip`→`h5`；`.nes`→`nes`；`.sfc/.smc`→`snes`；`.gb/.gbc`→`gb`；`.gba`→`gba`；`.md/.gen`→`segaMD`；`.gg`→`segaGG`；`.sms`→`segaMS`；封面 `.jpg/.jpeg/.png/.gif/.webp`。换本体导致类型切换时，封面会跟着从旧类型目录挪到新类型目录（`LocalStorage.move`），随后**整个旧类型目录被递归删掉**；换封面后缀（如 `cover.png` → `cover.jpg`）在新文件写成功后删旧文件。
 - **H5**：上传的 ZIP 本体存数据根的 `game/{类型}/{卡带ID}/game.zip`，**上传时只校验不解压、也不落任何清单**。播放时按需把整包解到**运行时根**的 `h5/` 下，每个文件按包内相对路径落盘；入口固定为根目录 `index.html`（大小写不敏感识别、落盘统一小写）；整包套在单一顶层目录时会剥掉该前缀。**磁盘上没有代际前缀**：解包先写同层暂存目录、再用目录改名整体替换；入口文件存在就直接复用，不重复解。重传 zip / 换游戏类型 / 改卡带ID / 删游戏时由写路径显式作废运行时根那份（两个根相同时退化成一次 `exists()` 检查）。
-- **攻略**：一份攻略就是一个 **zip 包**，存数据根的 `game/{类型}/{卡带ID}/guide.zip`，**没有清单表、也没有库里的标记**——「这个游戏有没有攻略」由这个包是否存在（一次 `stat`）现算，所以从宿主目录手动拷走或删掉它，界面立刻跟着变。上传是**单个 zip**（multipart 只有一个 `file`），与 H5 共用同一套校验（路径归一化、大小写不敏感查重、入口只认 `index.html`、zip/条目/单条/总量/压缩比上限），**只校验不解压**。查看时按需解到运行时根的 `guide/`：没有代际前缀，先写同层暂存目录再一次目录改名整体替换；入口文件存在就直接复用。重传 / 换类型 / 改卡带ID / 删游戏时由写路径显式作废。读取走 `GET|HEAD /api/games/<id>/guide/<资源路径>`（**需登录**，与 H5 资源的免登录不同），路径归一化后从运行时根取，文件不存在即 404。删除游戏、或换本体把类型改走时，攻略包随整个旧游戏目录一起清掉（不参与跨类型迁移）。
+- **攻略**：一份攻略可以是 **ZIP 静态站包或单个 PDF**，二者互斥，存数据根的 `game/{类型}/{卡带ID}/guide.zip` / `guide.pdf`。形态记在 `games.guide_kind`（`''` / `zip` / `pdf`），**上传写值、删除清空、换游戏类型清空**，列表载荷的 `has_guide` / `guide_kind` 直接来自这一列，**不再 stat 磁盘**；宿主手动增删文件不会自动反映（手动删掉文件后打开会 404）。上传是**单个文件**（multipart 只有一个 `file`）：ZIP 与 H5 共用同一套校验（路径归一化、大小写不敏感查重、入口只认 `index.html`、zip/条目/单条/总量/压缩比上限），**只校验不解压**；PDF 只查后缀、大小（≤128MB）与前 1024 字节含 `%PDF-`，**原样存储**。**上传一种会删掉另一种**，并作废旧的解包产物。删除走 `DELETE /api/games/manage/<id>/guide`：ZIP/PDF 文件、运行时解包目录与 `guide_kind` 一起清掉，幂等。查看 ZIP 时按需解到运行时根的 `guide/`：没有代际前缀，先写同层暂存目录再一次目录改名整体替换；入口文件存在就直接复用。重传 / 换类型 / 改卡带ID / 删游戏时由写路径显式作废。读取 ZIP 资源走 `GET|HEAD /api/games/<id>/guide/<资源路径>`（**需登录**，与 H5 资源的免登录不同），路径归一化后从运行时根取；PDF 走 `GET|HEAD /api/games/<id>/guide.pdf`（同样需登录），从数据根直读并以 `application/pdf` inline 返回。文件不存在或形态不符即 404。删除游戏、或换本体把类型改走时，攻略文件随整个旧游戏目录一起清掉（不参与跨类型迁移）。
 - **游戏截图**：与云端存档同构——目录按 `用户名/游戏类型/卡带ID` 分，一个截图一个 `{uuid}.{后缀}`（uuid 不可猜、不重名），原始文件名与游戏名都不进路径。后缀由**内容的 magic** 定（播放页截的是 `.png`，图库里手动上传的还可能是 `.jpg`/`.webp`/`.gif`），单张上限 16MB。**目录里的 `game_type` 是上传当时的类型**：截图不参与「换游戏类型」的迁移，所以读取、单张删除、删游戏清理一律用行里的 `file_path`，绝不用游戏当前类型拼目录（换过类型时，同一游戏的截图可能分散在两个类型目录里，功能不受影响）。**改卡带ID 同理**：只把 `file_path` 父目录的最后一段换成新 ID，那一层类型保持原样。
 - **游戏图集**：与截图相反，它在**游戏目录内**（`game/{类型}/{卡带ID}/image/{uuid}.{后缀}`），一个游戏一套、按游戏共享、不记上传者（目录名 `image` 与顶层按账号隔离的截图目录同名，但一个挂在游戏目录下、一个挂在用户名下，是两回事）。**目录里的 `game_type` 跟游戏当前类型走**：换本体换了游戏类型时整个 `image/` 目录随游戏目录一起搬到新类型目录，行里的 `file_path` 同步换成新前缀；读取、单张删除、删游戏清理同样按行里的 `file_path`。
 - **云端存档**：目录按 `用户名/游戏类型/卡带ID` 分，一个快照的每个文件各一个 `{uuid}.state`，文件名不体现原文件名（原名只用于下载时的 `Content-Disposition`，见 `game_cloud_snapshot_files.name`）。用户名进路径是安全的——用户名规则本身就限定在数字/字母/中划线/下划线。下载/删除快照按 `file_path` 定位文件；快照删除时逐文件删；上传中途失败回滚已写的文件（避免孤儿文件）。**删除游戏时连同它的全部存档快照与 `save/{用户名}/{类型}/{卡带ID}/` 目录一起清掉**（目录名带的是快照当时的游戏类型，所以按文件路径反推目录，而不是用游戏当前类型拼）。**改卡带ID 时同样按文件路径反推父目录**：把最后一段换成新 ID 并整目录改名，那一层类型保持原样。

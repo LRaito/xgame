@@ -83,7 +83,7 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.include_router(games_router)
     # 紧跟 games_router。注意 `/api/games/search`、`/api/games/search/consoles` 与
     # `/api/games/search/ranking…` 之所以不会被 games_router 的 `/{game_id}/…` 抢走，是因为那些
-    # 路由的第二段字面量只有 cover/play/h5/guide，且 `/api/games` 下没有单段 `/{game_id}`。
+    # 路由的第二段字面量只有 cover/play/h5/guide/guide.pdf，且 `/api/games` 下没有单段 `/{game_id}`。
     # 以后若给 games_router 加一条单段动态路由，这里就会撞车。
     app.include_router(game_search_router)
     # 榜单与检索共用同一个只读库（game.db），只是读另一张表，所以也挂在这条前缀下

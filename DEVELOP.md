@@ -13,7 +13,7 @@
 
 Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`），ORM 是 SQLModel，库是 SQLite。
 两块功能：**游戏中心**（Flash 用 Ruffle、HTML5 解包后走沙箱 iframe、主机 ROM 用 EmulatorJS）
-与**游戏管理**（上传 / 直链 / 搬运、卡带 ID 与元数据、整目录上传攻略）。账号开放注册，
+与**游戏管理**（上传 / 直链 / 搬运、卡带 ID 与元数据、上传攻略（ZIP/PDF））。账号开放注册，
 只用于隔离各人的模拟器配置与存档 / 截图。
 
 ## 目录结构
@@ -304,7 +304,7 @@ db/game.db                                   游戏发现索引（派生只读�
 game/{游戏类型}/{卡带ID}/game.{后缀}          本体
 game/{游戏类型}/{卡带ID}/cover.{后缀}         封面
 game/{游戏类型}/{卡带ID}/h5/{相对路径}        H5 解包资源（清单在 game_h5_files 表）
-game/{游戏类型}/{卡带ID}/guide/{相对路径}     攻略（入口固定 index.html，库里不存标记）
+game/{游戏类型}/{卡带ID}/guide/{相对路径}     攻略解包资源（ZIP 攻略；入口固定 index.html，形态见 games.guide_kind）
 game/{游戏类型}/{卡带ID}/image/{uuid}.{后缀}  图集（按游戏共享，随游戏类型迁移）
 save/{用户名}/{游戏类型}/{卡带ID}/{uuid}.state  云端存档快照（按账号）
 image/{用户名}/{游戏类型}/{卡带ID}/{uuid}.png   游戏截图（按账号）

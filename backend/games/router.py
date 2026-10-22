@@ -63,8 +63,9 @@ def _center_payload(item, stat=None) -> dict:
         "cover_path": item.cover_path,
         "game_path": item.game_path,
         "updated_at": iso(item.updated_at),
-        # 攻略按磁盘现状报（guide/index.html 在不在），前端据此决定右键菜单里出不出现
-        "has_guide": item.has_guide,
+        # 攻略形态来自 games.guide_kind（上传写值、删除/换类型清空），列表不 stat 磁盘
+        "has_guide": bool(item.guide_kind),
+        "guide_kind": item.guide_kind,
         # 游玩统计按账号走，没有记录时是 0 秒 + 未开始
         "play_seconds": stat.play_seconds if stat else 0,
         "progress": stat.progress if stat else PROGRESS_NOT_STARTED,
@@ -91,7 +92,8 @@ def _manage_payload(item) -> dict:
         "path": item.path,
         "created_at": iso(item.created_at),
         "updated_at": iso(item.updated_at),
-        "has_guide": item.has_guide,
+        "has_guide": bool(item.guide_kind),
+        "guide_kind": item.guide_kind,
     }
 
 
@@ -334,13 +336,14 @@ def games_upload_guide(
     service: GameServiceDep,
     file: UploadFile | None = File(None),
 ):
-    """上传攻略 ZIP（解压后根目录需含 index.html）。
+    """上传攻略：ZIP 静态站点包（解压后根目录需含 index.html）或单个 PDF。
 
-    与 H5 一样只上传 zip：后端只校验、不解压，查看攻略时才按需解到运行时根。
+    ZIP 与 H5 一样只校验、不解压，查看时才按需解到运行时根；PDF 原样存数据根。
+    同一个游戏只保留一种形态，上传一种会替换掉另一种。
     """
     try:
         if file is None:
-            raise ValidationError("请选择要上传的攻略 ZIP 文件。")
+            raise ValidationError("请选择要上传的攻略文件（ZIP 或 PDF）。")
         item = service.upload_guide(game_id, _upload_of(file))
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)
@@ -348,6 +351,21 @@ def games_upload_guide(
         return json_err(str(exc), 404)
     logger.info("已上传攻略 game_id=%s", game_id)
     return json_ok(_manage_payload(item), status=201)
+
+
+@router.delete("/manage/{game_id}/guide")
+def games_delete_guide(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """删除攻略（ZIP/PDF 都删）并清空 `guide_kind`；幂等，没有攻略也返回 200。"""
+    try:
+        item = service.delete_guide(game_id)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except StorageError as exc:
+        # 磁盘删不掉是服务端故障；此时列不会被清空，重试即可
+        logger.exception("删除攻略失败 game_id=%s", game_id)
+        return json_err(str(exc), 500)
+    logger.info("已删除攻略 game_id=%s", game_id)
+    return json_ok(_manage_payload(item))
 
 
 @router.get("/{game_id}/cover")
@@ -486,6 +504,12 @@ _GUIDE_HEADERS = {
     "Cache-Control": "no-cache, must-revalidate",
 }
 
+# PDF 攻略与 ZIP 攻略同一套缓存/嗅探策略；显式 inline 让浏览器就地渲染而不是当附件。
+_GUIDE_PDF_HEADERS = {
+    **_GUIDE_HEADERS,
+    "Content-Disposition": content_disposition("guide.pdf", inline=True),
+}
+
 
 @router.get("/{game_id}/guide/{asset_path:path}")
 def games_guide_asset(
@@ -524,4 +548,33 @@ def games_guide_asset_head(
         content=b"",
         media_type=mime,
         headers={**_GUIDE_HEADERS, "Content-Length": str(size)},
+    )
+
+
+# PDF 攻略单独一条路径：它不解包，直接从数据根读。路径段 `guide.pdf` 与上面的
+# `/{game_id}/guide/{asset_path}` 不冲突（后者第二段必须是字面量 `guide`）。
+@router.get("/{game_id}/guide.pdf")
+def games_guide_pdf(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """流式返回攻略 PDF（inline，浏览器内置查看器就地打开）；需登录。"""
+    try:
+        stream, _size = service.open_guide_pdf(game_id)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    return build_download_response(
+        stream, content_type="application/pdf", headers=_GUIDE_PDF_HEADERS
+    )
+
+
+@router.head("/{game_id}/guide.pdf")
+def games_guide_pdf_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """HEAD 与 GET 同响应头，供浏览器预探测。"""
+    try:
+        stream, size = service.open_guide_pdf(game_id)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    stream.close()
+    return Response(
+        content=b"",
+        media_type="application/pdf",
+        headers={**_GUIDE_PDF_HEADERS, "Content-Length": str(size)},
     )

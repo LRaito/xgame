@@ -12,7 +12,11 @@ _engines: dict[str, Engine] = {}
 # DDL 是代码里的常量，不拼接任何外部输入。
 _ADDED_COLUMNS: dict[str, dict[str, str]] = {
     # 封面类型可空：老库里的旧行没有值，加列时不能带 NOT NULL（也没必要给默认值）
-    "games": {"cover_type": "VARCHAR(20)"},
+    "games": {
+        "cover_type": "VARCHAR(20)",
+        # 攻略形态（""/"zip"/"pdf"）。老库里的旧行一律是空串；不做磁盘回填。
+        "guide_kind": "VARCHAR(10) NOT NULL DEFAULT ''",
+    },
 }
 
 # 已删除的表：create_all 只建不删，老库里可能还留着，启动时顺手清掉。没有迁移框架，

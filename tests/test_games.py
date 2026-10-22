@@ -11,7 +11,7 @@ import pytest
 from sqlmodel import Session, select
 
 from backend.auth.service import AuthService
-from backend.errors import ValidationError
+from backend.errors import StorageError, ValidationError
 from backend.config import DB_SUBDIR
 from backend.games import importer, paths
 from backend.games import archive as games_archive
@@ -1505,6 +1505,40 @@ def test_init_db_adds_missing_cover_type_column(tmp_path):
         assert session.get(Game, 1).cover_type is None
 
 
+def test_init_db_adds_missing_guide_kind_column(tmp_path):
+    """老库的 games 表没有 guide_kind：启动时补上非空列，旧行是空串（不回填磁盘）。"""
+    from sqlalchemy import inspect as sa_inspect
+    from sqlmodel import create_engine
+
+    from backend.database import init_db
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE games ("
+            "id INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL, "
+            "cartridge_id VARCHAR(64) NOT NULL, description VARCHAR(200) NOT NULL, "
+            "game_type VARCHAR(50) NOT NULL, size INTEGER NOT NULL, "
+            "crc32 VARCHAR(8) NOT NULL, game_path VARCHAR(500) NOT NULL, "
+            "cover_path VARCHAR(500), created_at DATETIME NOT NULL, "
+            "updated_at DATETIME NOT NULL)"
+        )
+        conn.exec_driver_sql(
+            "INSERT INTO games (id, name, cartridge_id, description, game_type, size, "
+            "crc32, game_path, created_at, updated_at) VALUES "
+            "(1, '老游戏', 'OLD1', '', 'nes', 0, '', '', "
+            "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
+        )
+
+    init_db(engine)
+
+    columns = {c["name"]: c for c in sa_inspect(engine).get_columns("games")}
+    assert "guide_kind" in columns
+    assert columns["guide_kind"]["nullable"] is False
+    with Session(engine) as session:
+        assert session.get(Game, 1).guide_kind == ""
+
+
 def test_update_ignores_manual_game_type(logged_in_games):
     """类型不接受手动指定：PUT 带 game_type 也只当普通字段忽略，类型不变。"""
     created = _create_game(logged_in_games, "F", "a.swf", b"swf-body").json()["data"]
@@ -2040,7 +2074,7 @@ def test_h5_missing_asset_returns_404(logged_in_games):
     assert logged_in_games.get(f"/api/games/{flash['id']}/h5/index.html").status_code == 404
 
 
-# ---------- 攻略（zip 包） ----------
+# ---------- 攻略（ZIP 静态站 / PDF） ----------
 
 
 def _upload_guide_zip(client, game_id: int, payload: bytes, filename="guide.zip"):
@@ -2054,6 +2088,23 @@ def _upload_guide_zip(client, game_id: int, payload: bytes, filename="guide.zip"
 def _upload_guide(client, game_id: int, files: dict[str, bytes]):
     """把 {包内路径: 内容} 打成一个 zip 上传（最常用的写法）。"""
     return _upload_guide_zip(client, game_id, _make_zip(files))
+
+
+_PDF_BODY = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n"
+
+
+def _upload_guide_pdf(client, game_id: int, payload=_PDF_BODY, filename="guide.pdf"):
+    """上传攻略 PDF（multipart 里只有一个 file 字段）。"""
+    return client.post(
+        f"/api/games/manage/{game_id}/guide",
+        files={"file": (filename, payload, "application/pdf")},
+    )
+
+
+def _guide_kind_of(app, game_id: int) -> str:
+    """直接读库里 games.guide_kind，确认攻略状态确实落库。"""
+    with Session(app.state.engine) as session:
+        return session.get(Game, game_id).guide_kind
 
 
 def _guide_game(logged_in_games, name="攻略 demo"):
@@ -2074,6 +2125,7 @@ def test_guide_upload_and_serve(logged_in_games, storage_root, runtime_root):
     )
     assert upload.status_code == 201
     assert upload.json()["data"]["has_guide"] is True
+    assert upload.json()["data"]["guide_kind"] == "zip"
     # 上传只落 zip：两个根里都还没有解包产物
     assert _exists(storage_root, f"game/flash/{cid}/guide.zip")
     assert not _exists(storage_root, f"game/flash/{cid}/guide/index.html")
@@ -2132,7 +2184,7 @@ def test_guide_wrapper_dir_stripped(logged_in_games, runtime_root):
     assert _exists(runtime_root, f"game/flash/{cid}/guide/pages/1.html")
 
 
-def test_guide_requires_zip_file(logged_in_games, storage_root):
+def test_guide_requires_file(logged_in_games, storage_root):
     """不带 file 字段直接 400，磁盘什么都不留。"""
     game_id = _guide_game(logged_in_games)
     before = _files(storage_root)
@@ -2142,8 +2194,8 @@ def test_guide_requires_zip_file(logged_in_games, storage_root):
     assert _files(storage_root) == before
 
 
-def test_guide_rejects_non_zip(logged_in_games, storage_root):
-    """攻略只收 zip：扩展名不对就 400，连内容都不看。"""
+def test_guide_rejects_unsupported_extension(logged_in_games, storage_root):
+    """攻略只收 ZIP 与 PDF：扩展名不对就 400，连内容都不看。"""
     game_id = _guide_game(logged_in_games)
     before = _files(storage_root)
     response = _upload_guide_zip(
@@ -2151,6 +2203,7 @@ def test_guide_rejects_non_zip(logged_in_games, storage_root):
     )
     assert response.status_code == 400
     assert "ZIP" in response.json()["message"]
+    assert "PDF" in response.json()["message"]
     assert _files(storage_root) == before
 
 
@@ -2232,6 +2285,214 @@ def test_guide_reupload_replaces_whole_package(
     assert _exists(storage_root, f"game/flash/{cid}/guide.zip")
 
 
+def test_guide_upload_pdf_and_serve(logged_in_games, storage_root, runtime_root):
+    """PDF 攻略：数据根只落 guide.pdf、运行时根不留解包产物；GET 返回内联 PDF。"""
+    game_id = _guide_game(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+
+    upload = _upload_guide_pdf(logged_in_games, game_id)
+    assert upload.status_code == 201
+    data = upload.json()["data"]
+    assert data["has_guide"] is True
+    assert data["guide_kind"] == "pdf"
+    assert _exists(storage_root, f"game/flash/{cid}/guide.pdf")
+    assert not _exists(storage_root, f"game/flash/{cid}/guide.zip")
+    assert not (Path(runtime_root) / "game" / "flash" / cid / "guide").exists()
+
+    response = logged_in_games.get(f"/api/games/{game_id}/guide.pdf")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"].startswith("inline")
+    assert response.headers["cache-control"] == "no-cache, must-revalidate"
+    assert response.headers["x-content-type-options"] == "nosniff"
+    assert response.content == _PDF_BODY
+
+    head = logged_in_games.head(f"/api/games/{game_id}/guide.pdf")
+    assert head.status_code == 200
+    assert head.headers["content-type"] == "application/pdf"
+    assert head.headers["content-length"] == str(len(_PDF_BODY))
+    # PDF 不解包：查看后运行时根仍然干净，ZIP 入口也不存在
+    assert not (Path(runtime_root) / "game" / "flash" / cid / "guide").exists()
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 404
+
+
+def test_guide_pdf_replaces_zip_and_zip_replaces_pdf(
+    logged_in_games, storage_root, runtime_root
+):
+    """一份攻略只有一种形态：传 PDF 删 zip 与其解包产物，再传 zip 删 PDF。"""
+    game_id = _guide_game(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    _upload_guide(logged_in_games, game_id, {"index.html": b"zip"})
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
+    assert _exists(runtime_root, f"game/flash/{cid}/guide/index.html")
+
+    pdf = _upload_guide_pdf(logged_in_games, game_id)
+    assert pdf.status_code == 201
+    assert pdf.json()["data"]["guide_kind"] == "pdf"
+    assert not _exists(storage_root, f"game/flash/{cid}/guide.zip")
+    assert not (Path(runtime_root) / "game" / "flash" / cid / "guide").exists()
+    assert logged_in_games.get(f"/api/games/{game_id}/guide.pdf").status_code == 200
+
+    again = _upload_guide(logged_in_games, game_id, {"index.html": b"zip2"})
+    assert again.status_code == 201
+    assert again.json()["data"]["guide_kind"] == "zip"
+    assert not _exists(storage_root, f"game/flash/{cid}/guide.pdf")
+    assert logged_in_games.get(f"/api/games/{game_id}/guide.pdf").status_code == 404
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").content == b"zip2"
+
+
+def test_guide_pdf_rejects_invalid_content(logged_in_games, storage_root):
+    """文件名是 .pdf 但内容不是 PDF：400 且磁盘零残留。"""
+    game_id = _guide_game(logged_in_games)
+    before = _files(storage_root)
+    response = _upload_guide_pdf(logged_in_games, game_id, payload=b"not a pdf")
+    assert response.status_code == 400
+    assert "PDF" in response.json()["message"]
+    assert _files(storage_root) == before
+
+
+def test_guide_pdf_requires_login(client, user, do_login):
+    """PDF 攻略与 ZIP 攻略一样要登录。"""
+    do_login(client)
+    game_id = _guide_game(client)
+    assert _upload_guide_pdf(client, game_id).status_code == 201
+    assert client.post("/api/logout").status_code == 200
+    assert client.get(f"/api/games/{game_id}/guide.pdf").status_code == 401
+    assert client.head(f"/api/games/{game_id}/guide.pdf").status_code == 401
+    assert _upload_guide_pdf(client, game_id).status_code == 401
+
+
+def test_guide_pdf_missing_returns_404(logged_in_games):
+    """没有 PDF 攻略时（包括只有 ZIP 攻略）读 /guide.pdf 一律 404。"""
+    game_id = _guide_game(logged_in_games)
+    assert logged_in_games.get(f"/api/games/{game_id}/guide.pdf").status_code == 404
+    assert logged_in_games.head(f"/api/games/{game_id}/guide.pdf").status_code == 404
+    _upload_guide(logged_in_games, game_id, {"index.html": b"x"})
+    assert logged_in_games.get(f"/api/games/{game_id}/guide.pdf").status_code == 404
+
+
+def test_guide_delete_zip_removes_files_and_state(
+    logged_in_games, storage_root, runtime_root
+):
+    """删除 ZIP 攻略：数据根文件、运行时解包产物、库里的形态一起清掉。"""
+    game_id = _guide_game(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    _upload_guide(logged_in_games, game_id, {"index.html": b"x", "a.css": b"a"})
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
+    assert _exists(runtime_root, f"game/flash/{cid}/guide/index.html")
+
+    response = logged_in_games.delete(f"/api/games/manage/{game_id}/guide")
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["has_guide"] is False
+    assert data["guide_kind"] == ""
+    assert _guide_kind_of(logged_in_games.app, game_id) == ""
+    assert not _exists(storage_root, f"game/flash/{cid}/guide.zip")
+    assert not (Path(runtime_root) / "game" / "flash" / cid / "guide").exists()
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 404
+    # 删攻略不影响本体
+    assert logged_in_games.get(f"/api/games/{game_id}/play").status_code == 200
+
+
+def test_guide_delete_pdf(logged_in_games, storage_root):
+    """删除 PDF 攻略：guide.pdf 消失、读取 404、库里形态清空。"""
+    game_id = _guide_game(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    assert _upload_guide_pdf(logged_in_games, game_id).status_code == 201
+
+    response = logged_in_games.delete(f"/api/games/manage/{game_id}/guide")
+    assert response.status_code == 200
+    assert response.json()["data"]["guide_kind"] == ""
+    assert not _exists(storage_root, f"game/flash/{cid}/guide.pdf")
+    assert logged_in_games.get(f"/api/games/{game_id}/guide.pdf").status_code == 404
+    assert _guide_kind_of(logged_in_games.app, game_id) == ""
+
+
+def test_guide_delete_without_guide_is_idempotent(logged_in_games):
+    """没有攻略时 DELETE 仍返回 200；重复删除不再刷新 updated_at。"""
+    game_id = _guide_game(logged_in_games)
+    assert logged_in_games.delete(f"/api/games/manage/{game_id}/guide").status_code == 200
+
+    _upload_guide(logged_in_games, game_id, {"index.html": b"x"})
+    assert logged_in_games.delete(f"/api/games/manage/{game_id}/guide").status_code == 200
+    stamp = logged_in_games.get(f"/api/games/manage/{game_id}").json()["data"]["updated_at"]
+    again = logged_in_games.delete(f"/api/games/manage/{game_id}/guide")
+    assert again.status_code == 200
+    assert again.json()["data"]["has_guide"] is False
+    latest = logged_in_games.get(f"/api/games/manage/{game_id}").json()["data"]["updated_at"]
+    assert latest == stamp
+
+
+def test_guide_delete_requires_login(client, user, do_login):
+    """删除攻略与其它管理接口一样要登录。"""
+    do_login(client)
+    game_id = _guide_game(client)
+    assert _upload_guide(client, game_id, {"index.html": b"x"}).status_code == 201
+    assert client.post("/api/logout").status_code == 200
+    assert client.delete(f"/api/games/manage/{game_id}/guide").status_code == 401
+
+
+def test_guide_delete_missing_game_returns_404(logged_in_games):
+    assert logged_in_games.delete("/api/games/manage/999999/guide").status_code == 404
+
+
+def test_guide_kind_survives_cartridge_rename(logged_in_games, storage_root):
+    """改卡带ID 只搬目录，攻略形态保留，文件跟着到新目录、仍可打开。"""
+    game_id = _guide_game(logged_in_games)
+    cid = _cartridge_of(logged_in_games.app, game_id)
+    assert _upload_guide_pdf(logged_in_games, game_id).status_code == 201
+
+    assert _rename(logged_in_games, game_id, "RENAMED-1").status_code == 200
+    assert _guide_kind_of(logged_in_games.app, game_id) == "pdf"
+    assert _exists(storage_root, "game/flash/RENAMED-1/guide.pdf")
+    assert not _exists(storage_root, f"game/flash/{cid}/guide.pdf")
+    assert logged_in_games.get(f"/api/games/{game_id}/guide.pdf").status_code == 200
+
+
+def test_guide_delete_with_split_roots(split_logged_in, split_app):
+    """数据根与运行时根分开时，删除攻略把两边的产物都清掉。"""
+    storage = Path(split_app.state.settings.STORAGE_ROOT)
+    runtime = Path(split_app.state.settings.runtime_root)
+    game_id = _guide_game(split_logged_in)
+    cid = _cartridge_of(split_app, game_id)
+    _upload_guide(split_logged_in, game_id, {"index.html": b"x"})
+    assert split_logged_in.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
+    assert _exists(storage, f"game/flash/{cid}/guide.zip")
+    assert _exists(runtime, f"game/flash/{cid}/guide/index.html")
+
+    assert split_logged_in.delete(f"/api/games/manage/{game_id}/guide").status_code == 200
+    assert not _exists(storage, f"game/flash/{cid}/guide.zip")
+    assert not (runtime / "game" / "flash" / cid / "guide").exists()
+
+
+def test_guide_delete_keeps_state_when_file_delete_fails(logged_in_games, monkeypatch):
+    """文件删不掉时返回 500，且库里的形态保持原样，方便重试。"""
+    game_id = _guide_game(logged_in_games)
+    _upload_guide(logged_in_games, game_id, {"index.html": b"x"})
+
+    def fail(_key):
+        raise StorageError("删除文件失败，请检查存储目录权限。")
+
+    monkeypatch.setattr(logged_in_games.app.state.storage, "delete", fail)
+    response = logged_in_games.delete(f"/api/games/manage/{game_id}/guide")
+    assert response.status_code == 500
+    assert _guide_kind_of(logged_in_games.app, game_id) == "zip"
+
+
+def test_game_lists_do_not_stat_guide_files(logged_in_games, monkeypatch):
+    """攻略形态来自库：列表接口不再对攻略文件做 stat。"""
+    game_id = _guide_game(logged_in_games)
+    _upload_guide(logged_in_games, game_id, {"index.html": b"x"})
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("列表不应 stat 攻略文件")
+
+    monkeypatch.setattr(logged_in_games.app.state.storage, "stat", boom)
+    assert logged_in_games.get("/api/games").status_code == 200
+    assert logged_in_games.get("/api/games/manage").status_code == 200
+    assert logged_in_games.get(f"/api/games/manage/{game_id}").status_code == 200
+
+
 def test_guide_requires_login(client, user, do_login):
     """攻略资源与其它业务接口一样要登录（与 H5 的免登录正好相反）。"""
     do_login(client)
@@ -2280,26 +2541,45 @@ def test_guide_removed_on_game_type_switch(logged_in_games, storage_root, runtim
     assert switch.status_code == 201
     assert switch.json()["data"]["game_type"] == "nes"
     assert switch.json()["data"]["has_guide"] is False
+    assert switch.json()["data"]["guide_kind"] == ""
+    assert _guide_kind_of(logged_in_games.app, game_id) == ""
     assert not (Path(storage_root) / "game" / "flash" / cid).exists()
     assert not (Path(runtime_root) / "game" / "flash" / cid).exists()
 
 
-def test_guide_has_flag_follows_disk(logged_in_games, storage_root):
-    """没有库标记：标记完全跟磁盘走，手动增删数据根里的 guide.zip 界面立刻变。"""
+def test_guide_state_comes_from_database(logged_in_games, storage_root):
+    """攻略形态以库里的 games.guide_kind 为准，不再每次列表 stat 磁盘。"""
     game_id = _guide_game(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
-    guide_zip = Path(storage_root) / "game" / "flash" / cid / "guide.zip"
+    game_dir = Path(storage_root) / "game" / "flash" / cid
+    guide_zip = game_dir / "guide.zip"
+    guide_pdf = game_dir / "guide.pdf"
 
-    def flag():
+    def state():
         listed = logged_in_games.get("/api/games").json()["data"]
-        return next(item["has_guide"] for item in listed if item["id"] == game_id)
+        item = next(item for item in listed if item["id"] == game_id)
+        return item["has_guide"], item["guide_kind"]
 
-    assert flag() is False
-    guide_zip.parent.mkdir(parents=True, exist_ok=True)
-    guide_zip.write_bytes(_make_zip({"index.html": b"manual"}))
-    assert flag() is True
+    # 没有攻略时，宿主手动放进文件也不会被当成攻略
+    assert state() == (False, "")
+    game_dir.mkdir(parents=True, exist_ok=True)
+    guide_pdf.write_bytes(_PDF_BODY)
+    assert state() == (False, "")
+    assert logged_in_games.get(f"/api/games/{game_id}/guide.pdf").status_code == 404
+
+    # 正常上传后由库记录形态；宿主删掉文件也不会改变库里的状态（打开时才 404）
+    assert _upload_guide(logged_in_games, game_id, {"index.html": b"x"}).status_code == 201
+    assert state() == (True, "zip")
+    assert _guide_kind_of(logged_in_games.app, game_id) == "zip"
     guide_zip.unlink()
-    assert flag() is False
+    assert state() == (True, "zip")
+    assert _guide_kind_of(logged_in_games.app, game_id) == "zip"
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 404
+
+    # 删除攻略会同时清掉库里的形态
+    assert logged_in_games.delete(f"/api/games/manage/{game_id}/guide").status_code == 200
+    assert state() == (False, "")
+    assert _guide_kind_of(logged_in_games.app, game_id) == ""
 
 
 def test_guide_enforces_limits(logged_in_games, storage_root, monkeypatch):
@@ -2323,6 +2603,7 @@ def test_guide_enforces_limits(logged_in_games, storage_root, monkeypatch):
 def test_guide_path_helpers():
     assert paths.guide_dir("flash", "AB-1") == "game/flash/AB-1/guide"
     assert paths.guide_zip_path("flash", "AB-1") == "game/flash/AB-1/guide.zip"
+    assert paths.guide_pdf_path("flash", "AB-1") == "game/flash/AB-1/guide.pdf"
     assert paths.guide_entry_path("flash", "AB-1") == "game/flash/AB-1/guide/index.html"
     assert (
         paths.guide_asset_path("flash", "AB-1", "pages/1.html")
