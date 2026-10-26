@@ -1,6 +1,6 @@
 <template>
     <div v-if="modelValue" class="save-manager" @click.self="onClose">
-        <section class="save-manager__card">
+        <section class="save-manager__card" :class="{ 'save-manager__card--tree': isTreeMode }">
             <app-button
                 class="save-manager__close"
                 variant="ghost"
@@ -23,7 +23,7 @@
                 @change="switchTab"
             />
 
-            <div class="save-manager__body">
+            <div class="save-manager__body" :class="{ 'save-manager__body--tree': isTreeMode }">
                 <!-- 本地存档 -->
                 <template v-if="activeTab === 'local'">
                     <div class="save-manager__toolbar">
@@ -108,130 +108,142 @@
                             aria-label="云端存档展示方式"
                         />
                     </div>
-                    <p v-if="!cloudSaves.length" class="save-manager__empty">
-                        还没有云端存档。切到「本地存档」点「同步至云端」把当前本地存档整体备份一份。
-                    </p>
-                    <ul v-else class="save-manager__list">
-                        <li v-for="snapshot in cloudSaves" :key="snapshot.id" class="save-manager__item save-manager__cloud-item">
-                            <div class="save-manager__item-info">
-                                <div class="save-manager__cloud-title">
-                                    <span class="save-manager__item-name save-manager__cloud-time">
-                                        {{ formatDateTime(snapshot.created_at) }}
-                                    </span>
-                                    <span class="save-manager__item-key save-manager__cloud-meta">
-                                        {{ snapshot.file_count }} 个文件 · {{ formatBytes(snapshot.total_size) }}
+                    <template v-if="cloudViewMode === 'list'">
+                        <p v-if="!cloudSaves.length" class="save-manager__empty">
+                            还没有云端存档。切到「本地存档」点「同步至云端」把当前本地存档整体备份一份。
+                        </p>
+                        <ul v-else class="save-manager__list">
+                            <li v-for="snapshot in cloudSaves" :key="snapshot.id" class="save-manager__item save-manager__cloud-item">
+                                <div class="save-manager__item-info">
+                                    <div class="save-manager__cloud-title">
+                                        <span class="save-manager__item-name save-manager__cloud-time">
+                                            {{ formatDateTime(snapshot.created_at) }}
+                                        </span>
+                                        <span class="save-manager__item-key save-manager__cloud-meta">
+                                            {{ snapshot.file_count }} 个文件 · {{ formatBytes(snapshot.total_size) }}
+                                        </span>
+                                    </div>
+                                    <span class="save-manager__cloud-desc">
+                                        {{ firstLine(snapshot.remark) }}
                                     </span>
                                 </div>
-                                <span class="save-manager__cloud-desc">
-                                    {{ firstLine(snapshot.remark) }}
-                                </span>
-                            </div>
-                            <div class="save-manager__item-actions">
-                                <app-button
-                                    variant="primary"
-                                    tone="dark"
-                                    size="sm"
-                                    :disabled="cloudBusy"
-                                    @click="onSyncToLocal(snapshot)"
-                                >
-                                    同步至本地
-                                </app-button>
-                                <app-button
-                                    variant="secondary"
-                                    tone="dark"
-                                    size="sm"
-                                    :disabled="cloudBusy"
-                                    @click="onToggleDetail(snapshot)"
-                                >
-                                    {{ expandedId === snapshot.id ? "收起" : "详情" }}
-                                </app-button>
-                                <app-button
-                                    variant="danger"
-                                    plain
-                                    tone="dark"
-                                    size="sm"
-                                    :disabled="cloudBusy"
-                                    @click="onDeleteSnapshot(snapshot)"
-                                >
-                                    删除
-                                </app-button>
-                            </div>
-                            <ul v-if="expandedId === snapshot.id" class="save-manager__files">
-                                <li v-if="detailLoading" class="save-manager__files-loading">加载中…</li>
-                                <template v-else>
-                                    <li class="save-manager__desc-item">
-                                        <div
-                                            class="save-manager__desc-box"
-                                            :class="{ 'save-manager__desc-box--editable': editingId !== snapshot.id }"
-                                            @click="onDescBoxClick(snapshot)"
-                                        >
-                                            <p
-                                                v-if="editingId !== snapshot.id"
-                                                class="save-manager__desc-content"
-                                                :class="{ 'save-manager__desc-content--empty': !(cloudDetails[snapshot.id] || {}).remark }"
-                                            >
-                                                {{ (cloudDetails[snapshot.id] || {}).remark || "暂无描述" }}
-                                            </p>
-                                            <textarea
-                                                v-else
-                                                :ref="(el) => (descInputRef = el)"
-                                                v-model="descDraft"
-                                                class="save-manager__desc-input"
-                                                maxlength="100"
-                                                placeholder="填写描述"
-                                            ></textarea>
-                                        </div>
-                                        <div class="save-manager__desc-foot">
-                                            <span v-if="editingId === snapshot.id" class="save-manager__desc-count">
-                                                {{ descDraft.length }}/100
-                                            </span>
-                                            <span v-else class="save-manager__desc-hint">单击描述框即可编辑</span>
-                                            <div v-if="editingId === snapshot.id" class="save-manager__desc-actions">
-                                                <app-button
-                                                    variant="secondary"
-                                                    tone="dark"
-                                                    size="sm"
-                                                    :disabled="cloudBusy"
-                                                    @click="onCancelEditDesc"
-                                                >
-                                                    取消
-                                                </app-button>
-                                                <app-button
-                                                    variant="primary"
-                                                    tone="dark"
-                                                    size="sm"
-                                                    :disabled="cloudBusy"
-                                                    @click="onSaveDesc(snapshot)"
-                                                >
-                                                    保存
-                                                </app-button>
-                                            </div>
-                                        </div>
-                                    </li>
-                                    <li v-if="!detailFilesOf(snapshot).length" class="save-manager__files-loading">
-                                        该快照没有文件。
-                                    </li>
-                                    <li
-                                        v-for="file in detailFilesOf(snapshot)"
-                                        :key="file.id"
-                                        class="save-manager__files-row"
+                                <div class="save-manager__item-actions">
+                                    <app-button
+                                        variant="primary"
+                                        tone="dark"
+                                        size="sm"
+                                        :disabled="cloudBusy"
+                                        @click="onSyncToLocal(snapshot)"
                                     >
-                                        <span class="save-manager__item-name">{{ file.name }}.sol</span>
-                                        <span class="save-manager__item-key">{{ formatBytes(file.size) }}</span>
-                                        <app-button
-                                            variant="secondary"
-                                            tone="dark"
-                                            size="sm"
-                                            :disabled="cloudBusy"
-                                            @click="onDownloadCloudFile(snapshot, file)"
+                                        同步至本地
+                                    </app-button>
+                                    <app-button
+                                        variant="secondary"
+                                        tone="dark"
+                                        size="sm"
+                                        :disabled="cloudBusy"
+                                        @click="onToggleDetail(snapshot)"
+                                    >
+                                        {{ expandedId === snapshot.id ? "收起" : "详情" }}
+                                    </app-button>
+                                    <app-button
+                                        variant="danger"
+                                        plain
+                                        tone="dark"
+                                        size="sm"
+                                        :disabled="cloudBusy"
+                                        @click="onDeleteSnapshot(snapshot)"
+                                    >
+                                        删除
+                                    </app-button>
+                                </div>
+                                <ul v-if="expandedId === snapshot.id" class="save-manager__files">
+                                    <li v-if="detailLoading" class="save-manager__files-loading">加载中…</li>
+                                    <template v-else>
+                                        <li class="save-manager__desc-item">
+                                            <div
+                                                class="save-manager__desc-box"
+                                                :class="{ 'save-manager__desc-box--editable': editingId !== snapshot.id }"
+                                                @click="onDescBoxClick(snapshot)"
+                                            >
+                                                <p
+                                                    v-if="editingId !== snapshot.id"
+                                                    class="save-manager__desc-content"
+                                                    :class="{ 'save-manager__desc-content--empty': !(cloudDetails[snapshot.id] || {}).remark }"
+                                                >
+                                                    {{ (cloudDetails[snapshot.id] || {}).remark || "暂无描述" }}
+                                                </p>
+                                                <textarea
+                                                    v-else
+                                                    :ref="(el) => (descInputRef = el)"
+                                                    v-model="descDraft"
+                                                    class="save-manager__desc-input"
+                                                    maxlength="100"
+                                                    placeholder="填写描述"
+                                                ></textarea>
+                                            </div>
+                                            <div class="save-manager__desc-foot">
+                                                <span v-if="editingId === snapshot.id" class="save-manager__desc-count">
+                                                    {{ descDraft.length }}/100
+                                                </span>
+                                                <span v-else class="save-manager__desc-hint">单击描述框即可编辑</span>
+                                                <div v-if="editingId === snapshot.id" class="save-manager__desc-actions">
+                                                    <app-button
+                                                        variant="secondary"
+                                                        tone="dark"
+                                                        size="sm"
+                                                        :disabled="cloudBusy"
+                                                        @click="onCancelEditDesc"
+                                                    >
+                                                        取消
+                                                    </app-button>
+                                                    <app-button
+                                                        variant="primary"
+                                                        tone="dark"
+                                                        size="sm"
+                                                        :disabled="cloudBusy"
+                                                        @click="onSaveDesc(snapshot)"
+                                                    >
+                                                        保存
+                                                    </app-button>
+                                                </div>
+                                            </div>
+                                        </li>
+                                        <li v-if="!detailFilesOf(snapshot).length" class="save-manager__files-loading">
+                                            该快照没有文件。
+                                        </li>
+                                        <li
+                                            v-for="file in detailFilesOf(snapshot)"
+                                            :key="file.id"
+                                            class="save-manager__files-row"
                                         >
-                                            下载
-                                        </app-button>
-                                    </li>
-                                </template>
-                            </ul>
-                        </li>
-                    </ul>
+                                            <span class="save-manager__item-name">{{ file.name }}.sol</span>
+                                            <span class="save-manager__item-key">{{ formatBytes(file.size) }}</span>
+                                            <app-button
+                                                variant="secondary"
+                                                tone="dark"
+                                                size="sm"
+                                                :disabled="cloudBusy"
+                                                @click="onDownloadCloudFile(snapshot, file)"
+                                            >
+                                                下载
+                                            </app-button>
+                                        </li>
+                                    </template>
+                                </ul>
+                            </li>
+                        </ul>
+                    </template>
+                    <save-tree-view
+                        v-else
+                        ref="treeViewRef"
+                        :snapshots="cloudSaves"
+                        :busy="cloudBusy"
+                        @sync-local="onSyncToLocal"
+                        @delete="onDeleteSnapshot"
+                        @parents-changed="onTreeParentsChanged"
+                        @refresh="refreshCloud"
+                    />
                 </template>
             </div>
         </section>
@@ -288,7 +300,7 @@
 </template>
 
 <script setup>
-import { nextTick, onBeforeUnmount, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import { confirmAction, dangerConfirm } from "@/utils/confirm";
 import { downloadLocalSave, isB64SOL } from "@/utils/ruffle";
@@ -303,6 +315,7 @@ import {
     listCloudSavesAPI,
     updateCloudSaveAPI,
 } from "@/api/games";
+import SaveTreeView from "@components/games/SaveTreeView.vue";
 
 const props = defineProps({
     modelValue: { type: Boolean, default: false },
@@ -333,11 +346,16 @@ const editingId = ref(null);
 const descDraft = ref("");
 const descInputRef = ref(null);
 const fileInputRef = ref(null);
+const treeViewRef = ref(null);
 // “同步至云端”的描述填写面板
 const uploadPromptVisible = ref(false);
 const uploadDesc = ref("");
-// 云端存档展示方式；树形模式暂未实现，选项先占位
+// 云端存档展示方式：列表 / 树形
 const cloudViewMode = ref("list");
+
+const isTreeMode = computed(
+    () => activeTab.value === "cloud" && cloudViewMode.value === "tree",
+);
 
 /** 列表收起时只展示描述的第一行（按换行符截断）。 */
 function firstLine(text) {
@@ -348,9 +366,12 @@ function onClose() {
     emit("update:modelValue", false);
 }
 
-// Esc 由内到外逐层收：先结束描述编辑，再收「同步至云端」面板，最后关弹窗
+// Esc 由内到外逐层收：先收树形详情/全屏，再结束描述编辑，再收「同步至云端」面板，最后关弹窗
 function onKeydown(event) {
     if (event.key !== "Escape") {
+        return;
+    }
+    if (isTreeMode.value && treeViewRef.value?.handleEscape?.()) {
         return;
     }
     if (editingId.value !== null) {
@@ -462,9 +483,16 @@ async function onSyncToLocal(snapshot) {
 }
 
 async function onDeleteSnapshot(snapshot) {
-    const confirmed = await dangerConfirm("删除这份云端存档？删除后无法恢复。", {
-        title: "删除云端存档",
-    });
+    const childCount = cloudSaves.value.filter(
+        (item) => item.parent_id === snapshot.id,
+    ).length;
+    const childHint = childCount
+        ? `其 ${childCount} 个子存档会变为顶层。`
+        : "";
+    const confirmed = await dangerConfirm(
+        `删除这份云端存档？${childHint}删除后无法恢复。`,
+        { title: "删除云端存档" },
+    );
     if (!confirmed) {
         return;
     }
@@ -481,6 +509,14 @@ async function onDeleteSnapshot(snapshot) {
         // 已 toast
     } finally {
         cloudBusy.value = false;
+    }
+}
+
+/** 树形模式拖动改完父子后，把父级回写到共用列表，切回列表模式也不丢。 */
+function onTreeParentsChanged({ id, parentId }) {
+    const target = cloudSaves.value.find((item) => item.id === id);
+    if (target) {
+        target.parent_id = parentId;
     }
 }
 
@@ -720,6 +756,20 @@ defineExpose({
     background: linear-gradient(180deg, #1e293b 0%, #0f172a 100%);
     box-shadow: 0 24px 64px rgba(2, 6, 23, 0.5);
     color: #f8fafc;
+    overflow: hidden;
+}
+
+/* 树形模式要左右两栏 + 画布，卡片加宽加高；遮罩有 24px 内边距，别顶出去 */
+.save-manager__card--tree {
+    width: min(1180px, calc(100vw - 48px));
+    height: min(780px, calc(100vh - 48px));
+    max-height: none;
+}
+
+.save-manager__body--tree {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
     overflow: hidden;
 }
 

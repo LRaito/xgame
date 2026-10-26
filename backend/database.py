@@ -17,7 +17,17 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         # 攻略形态（""/"zip"/"pdf"）。老库里的旧行一律是空串；不做磁盘回填。
         "guide_kind": "VARCHAR(10) NOT NULL DEFAULT ''",
     },
+    # 云端存档的父节点（NULL = 顶层）。老库里没有这一列，补成可空列即可。
+    "game_cloud_snapshots": {
+        "parent_id": "INTEGER",
+    },
 }
+
+# create_all 只给新表建索引，不会给已存在的表补索引；老库靠这里补齐（幂等）。
+_ADDED_INDEXES: tuple[str, ...] = (
+    "CREATE INDEX IF NOT EXISTS ix_game_cloud_snapshots_parent_id "
+    "ON game_cloud_snapshots (parent_id)",
+)
 
 # 已删除的表：create_all 只建不删，老库里可能还留着，启动时顺手清掉。没有迁移框架，
 # 破坏性动作只允许「删掉整张已经没有任何代码读写的表」这一种；表名是代码里的常量，
@@ -49,6 +59,7 @@ def init_db(engine: Engine) -> None:
 
     SQLModel.metadata.create_all(engine)
     _ensure_columns(engine)
+    _ensure_indexes(engine)
     _drop_tables(engine)
 
 
@@ -63,6 +74,13 @@ def _ensure_columns(engine: Engine) -> None:
             for name, ddl in columns.items():
                 if name not in existing:
                     conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+
+
+def _ensure_indexes(engine: Engine) -> None:
+    """给已存在的表补上后来新增的索引（DDL 是代码常量，`IF NOT EXISTS` 幂等）。"""
+    with engine.begin() as conn:
+        for ddl in _ADDED_INDEXES:
+            conn.exec_driver_sql(ddl)
 
 
 def _drop_tables(engine: Engine) -> None:

@@ -68,6 +68,7 @@ const pressedState = computed(() => {
     height: var(--_btn-h, var(--app-control-h-md));
     padding: 0 var(--_btn-px, var(--app-control-px-md));
     border-radius: var(--_btn-radius, var(--app-radius-control));
+    font-family: inherit;
     font-size: var(--_btn-fs, var(--app-font-size-md));
     font-weight: 500;
     transition:

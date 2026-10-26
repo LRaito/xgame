@@ -101,6 +101,10 @@ class GameCloudSnapshot(SQLModel, table=True):
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", index=True)
     game_id: int = Field(index=True)
+    # None = 顶层；非空时必须是同一 (user_id, game_id) 下的另一条快照。
+    # 不加物理外键：SQLite 未开 PRAGMA foreign_keys，且老库靠 ALTER 补列，
+    # 加 FK 会让新旧库结构不一致；父子完整性由 service 保证。
+    parent_id: int | None = Field(default=None, index=True)
     remark: str = Field(default="", max_length=100)  # 描述上限 100 字
     created_at: datetime = Field(default_factory=_utcnow)
 

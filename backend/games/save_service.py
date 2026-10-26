@@ -30,6 +30,7 @@ def _clean_remark(remark: str | None) -> str:
 class CloudSnapshotItem:
     id: int
     game_id: int
+    parent_id: int | None
     remark: str
     file_count: int
     total_size: int
@@ -49,6 +50,7 @@ class CloudSnapshotFile:
 class CloudSnapshotDetail:
     id: int
     game_id: int
+    parent_id: int | None
     remark: str
     created_at: datetime
     files: list[CloudSnapshotFile] = field(default_factory=list)
@@ -83,7 +85,10 @@ class CloudSaveService:
                 GameCloudSnapshot.user_id == user_id,
                 GameCloudSnapshot.game_id == game_id,
             )
-            .order_by(col(GameCloudSnapshot.created_at).desc())
+            .order_by(
+                col(GameCloudSnapshot.created_at).desc(),
+                col(GameCloudSnapshot.id).desc(),
+            )
         ).all()
         if not snapshots:
             return []
@@ -102,6 +107,7 @@ class CloudSaveService:
             CloudSnapshotItem(
                 id=snapshot.id,
                 game_id=snapshot.game_id,
+                parent_id=snapshot.parent_id,
                 remark=snapshot.remark,
                 file_count=agg.get(snapshot.id, (0, 0))[0],
                 total_size=agg.get(snapshot.id, (0, 0))[1],
@@ -116,6 +122,7 @@ class CloudSaveService:
         return CloudSnapshotDetail(
             id=snapshot.id,
             game_id=snapshot.game_id,
+            parent_id=snapshot.parent_id,
             remark=snapshot.remark,
             created_at=snapshot.created_at,
             files=files,
@@ -196,6 +203,7 @@ class CloudSaveService:
         return CloudSnapshotDetail(
             id=snapshot.id,
             game_id=snapshot.game_id,
+            parent_id=snapshot.parent_id,
             remark=snapshot.remark,
             created_at=snapshot.created_at,
             files=self._to_file_list(file_rows),
@@ -203,6 +211,15 @@ class CloudSaveService:
 
     def delete_snapshot(self, user_id: int, snapshot_id: int) -> None:
         snapshot = self._get_owned_snapshot(user_id, snapshot_id)
+        # 子节点不级联删除，也不接续祖父：直接变成顶层存档。
+        children = self._session.exec(
+            select(GameCloudSnapshot).where(
+                GameCloudSnapshot.parent_id == snapshot_id
+            )
+        ).all()
+        for child in children:
+            child.parent_id = None
+            self._session.add(child)
         file_rows = self._session.exec(
             select(GameCloudSnapshotFile).where(
                 GameCloudSnapshotFile.snapshot_id == snapshot_id
@@ -214,6 +231,42 @@ class CloudSaveService:
         self._session.delete(snapshot)
         self._session.commit()
 
+    def set_parent(
+        self, user_id: int, snapshot_id: int, parent_id: int | None
+    ) -> CloudSnapshotDetail:
+        """设置或清除快照的父级；parent_id=None 表示设为顶层。"""
+        child = self._get_owned_snapshot(user_id, snapshot_id)
+        if parent_id is not None:
+            if parent_id == snapshot_id:
+                raise ValidationError("不能把存档挂到自己下面。")
+            parent = self._get_owned_snapshot(user_id, parent_id)
+            if parent.game_id != child.game_id:
+                raise ValidationError("只能在同一游戏的存档之间建立层级。")
+            self._assert_no_cycle(child, parent)
+        if child.parent_id != parent_id:
+            child.parent_id = parent_id
+            self._session.add(child)
+            self._session.commit()
+        return self.get_snapshot(user_id, snapshot_id)
+
+    def _assert_no_cycle(self, child: GameCloudSnapshot, parent: GameCloudSnapshot) -> None:
+        """沿父链向上走：遇到 child 就说明会成环；父链本身异常（重复/跨账号）也拦下。"""
+        seen: set[int] = set()
+        cursor: GameCloudSnapshot | None = parent
+        while cursor is not None:
+            if cursor.id == child.id:
+                raise ValidationError("不能形成循环的存档层级。")
+            if cursor.id in seen:
+                raise ValidationError("存档层级数据异常。")
+            if cursor.user_id != child.user_id or cursor.game_id != child.game_id:
+                raise ValidationError("存档层级数据异常。")
+            seen.add(cursor.id)
+            cursor = (
+                self._session.get(GameCloudSnapshot, cursor.parent_id)
+                if cursor.parent_id is not None
+                else None
+            )
+
     def update_remark(self, user_id: int, snapshot_id: int, remark: str) -> CloudSnapshotDetail:
         snapshot = self._get_owned_snapshot(user_id, snapshot_id)
         snapshot.remark = _clean_remark(remark)
@@ -223,6 +276,7 @@ class CloudSaveService:
         return CloudSnapshotDetail(
             id=snapshot.id,
             game_id=snapshot.game_id,
+            parent_id=snapshot.parent_id,
             remark=snapshot.remark,
             created_at=snapshot.created_at,
             files=self._list_files(snapshot.id),

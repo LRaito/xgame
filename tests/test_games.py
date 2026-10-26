@@ -1627,6 +1627,34 @@ def test_init_db_adds_missing_guide_kind_column(tmp_path):
         assert session.get(Game, 1).guide_kind == ""
 
 
+def test_init_db_adds_missing_snapshot_parent_column_and_index(tmp_path):
+    """老库的 game_cloud_snapshots 表没有 parent_id：启动时补可空列与索引。"""
+    from sqlalchemy import inspect as sa_inspect
+    from sqlmodel import create_engine
+
+    from backend.database import init_db
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with engine.begin() as conn:
+        conn.exec_driver_sql(
+            "CREATE TABLE game_cloud_snapshots ("
+            "id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, "
+            "game_id INTEGER NOT NULL, remark VARCHAR(100) NOT NULL, "
+            "created_at DATETIME NOT NULL)"
+        )
+
+    init_db(engine)
+
+    columns = {
+        c["name"]: c for c in sa_inspect(engine).get_columns("game_cloud_snapshots")
+    }
+    assert "parent_id" in columns
+    assert columns["parent_id"]["nullable"] is True
+
+    indexes = sa_inspect(engine).get_indexes("game_cloud_snapshots")
+    assert any(index["column_names"] == ["parent_id"] for index in indexes)
+
+
 def test_update_ignores_manual_game_type(logged_in_games):
     """类型不接受手动指定：PUT 带 game_type 也只当普通字段忽略，类型不变。"""
     created = _create_game(logged_in_games, "F", "a.swf", b"swf-body").json()["data"]

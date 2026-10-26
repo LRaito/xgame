@@ -24,6 +24,10 @@ class CloudSaveUpdateBody(BaseModel):
     remark: str = ""
 
 
+class CloudSaveParentBody(BaseModel):
+    parent_id: int | None = None
+
+
 def _uploaded_size(file: UploadFile) -> int:
     spool = file.file
     spool.seek(0, os.SEEK_END)
@@ -36,6 +40,7 @@ def _item_payload(item) -> dict:
     return {
         "id": item.id,
         "game_id": item.game_id,
+        "parent_id": item.parent_id,
         "remark": item.remark,
         "file_count": item.file_count,
         "total_size": item.total_size,
@@ -47,6 +52,7 @@ def _detail_payload(detail) -> dict:
     return {
         "id": detail.id,
         "game_id": detail.game_id,
+        "parent_id": detail.parent_id,
         "remark": detail.remark,
         "created_at": iso(detail.created_at),
         "files": [
@@ -163,6 +169,31 @@ def cloud_saves_file_download(
     return build_download_response(
         stream, filename=filename, content_type=_SOL_DOWNLOAD_CONTENT_TYPE
     )
+
+
+@router.put("/{snapshot_id}/parent")
+def cloud_saves_set_parent(
+    snapshot_id: int,
+    body: CloudSaveParentBody,
+    _user: CurrentUser,
+    service: SaveServiceDep,
+):
+    """设置或清除快照的父级；parent_id=null 表示设为顶层。"""
+    try:
+        detail = service.set_parent(
+            user_id=_user.id, snapshot_id=snapshot_id, parent_id=body.parent_id
+        )
+    except ValidationError as exc:
+        return json_err(str(exc), 400)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    logger.info(
+        "已设置云端存档父级 user_id=%s snapshot_id=%s parent_id=%s",
+        _user.id,
+        snapshot_id,
+        body.parent_id,
+    )
+    return json_ok(_detail_payload(detail))
 
 
 @router.put("/{snapshot_id}")

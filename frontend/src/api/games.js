@@ -230,6 +230,15 @@ export function updateCloudSaveAPI(id, remark) {
     return request({ url: `/api/games/saves/${id}`, method: "put", data: { remark } });
 }
 
+/** 设置/清除云端存档的父级（parentId=null 表示设为顶层）。 */
+export function setCloudSaveParentAPI(id, parentId) {
+    return request({
+        url: `/api/games/saves/${id}/parent`,
+        method: "put",
+        data: { parent_id: parentId },
+    });
+}
+
 /** 云端存档单个文件的同源流式地址（octet-stream）。 */
 export function cloudSaveFileDownloadPath(id, fileId) {
     return `/api/games/saves/${id}/files/${fileId}/download`;

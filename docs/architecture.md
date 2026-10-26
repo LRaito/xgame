@@ -249,6 +249,11 @@ backend/
   内容按 save/{用户名}/{类型}/{卡带ID}/{uuid}.state 落盘（文件名不体现原名；
   name 含扩展名时下载名原样）
   「同步至本地」按快照逐文件取回写回本地存储（Flash 写 localStorage；模拟器覆盖 x_emusave 的 state1）
+  树形模式：快照之间可有父子关系（game_cloud_snapshots.parent_id，NULL = 顶层，允许多个顶层），
+  用 PUT /api/games/saves/{id}/parent 设置/清除（校验同一用户、同一游戏、非自身、无环）；
+  删除一个快照时直接子级改回顶层（不接续祖父）。前端「列表模式 / 树形模式」共用同一份列表，
+  树形视图按 parent_id 自动布局（不存坐标），支持拖动建树、拖到空白/右键设为顶层、滚轮缩放、
+  空白拖动或方向键平移、全屏
   删除游戏：素材目录、所有账号在该游戏上的存档快照（行 + 文件 + save/…/{卡带ID}/ 目录）、
   最近游玩与游玩统计行一并清掉——游戏一删，它的快照就再也没有入口能列出来
 游戏截图（登录，按账号）：GET/POST /api/games/screenshots · GET /{id}/image ·
@@ -382,6 +387,7 @@ backend/
 
 **决定：** 「云端存档」不是逐键覆盖，而是把某(用户,游戏)此刻全部本地存档文件（Flash `.sol` / 模拟器 `.state`）上传成一个不可变快照（`game_cloud_snapshots` + `game_cloud_snapshot_files` 两行），内容按 `save/{用户名}/{类型}/{卡带ID}/{uuid}.state` 落盘；元数据按 (user_id, game_id) 隔离、越权访问返回 404。本地存储形态由前端决定：Flash 直接读写 Ruffle 的 localStorage（一个游戏可有多条），模拟器由 xgame 的 `emulatorSaves.js` 单一本地档（每游戏固定 `x_emusave:{gameId}:state1`，内容 IndexedDB）+ 播放宿主 `__ejsRpc` 维护，云快照对二者提供同一套接口与 local_key 语义。
 **原因：** 存档是「回滚点」语义，快照保证还原一致性；文件名用 uuid 而非原名，是为了让磁盘上的存档文件不可猜、不重名，原始文件名仍留在 SQLite 里供下载时还原。
+**代价/边界：** 快照之间只允许**同一 `(用户, 游戏)` 内的父子关系**（`parent_id`），用来表达存档分支，是森林而不是通用 DAG；父级归属、同游戏与防环由 service 校验，删除父快照时直接子级变回顶层。节点位置完全由前端按 `parent_id` 自动布局，**不落库**。
 **何时重评：** 需要增量同步时再演进协议。
 
 ### 决策 10：卡带ID 是游戏身份，改名走显式迁移
@@ -459,7 +465,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 | `/api/tools` | 工具注册表（导航用，前端目前不消费） |
 | `/api/games` | 列表、状态、`/manage`（增删改 + `/manage/import` 搬运 + `/manage/{id}/guide` 攻略上传（ZIP/PDF）与删除 + `/manage/{id}/cartridge-id` 改卡带ID）、`/{id}/cover`、`/{id}/play`、`/{id}/h5/{资源路径}`、`/{id}/guide/{资源路径}`、`/{id}/guide.pdf` |
 | `/api/games/stats` | 游玩时长与进度：心跳累加时长、手动设置总时长、手动设置进度 |
-| `/api/games/saves` | 云端存档整体快照 CRUD + 单文件下载 |
+| `/api/games/saves` | 云端存档整体快照 CRUD + 父子层级设置 + 单文件下载 |
 | `/api/games/screenshots` | 游戏截图：列表 / 上传 / 取图 / 改描述 / 拖动排序 / 删除（按账号隔离，全部需登录） |
 | `/api/games/gallery` | 游戏图集：同一套接口，但**按游戏共享**（不记上传者，任何登录用户都能改） |
 | `/api/games/emulator-settings` | 登录用户的模拟器设置（键位等）按平台读写，存 SQLite |
