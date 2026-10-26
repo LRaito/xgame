@@ -166,7 +166,26 @@ class CloudSaveService:
         if game is None:
             raise NotFoundError("游戏不存在。")
 
-        snapshot = GameCloudSnapshot(user_id=user_id, game_id=game_id, remark=remark)
+        # 新快照自动接在同组最新一条后面；第一条没有父级。
+        # 排序与列表接口一致（created_at DESC, id DESC），保证“最新”语义相同。
+        latest = self._session.exec(
+            select(GameCloudSnapshot)
+            .where(
+                GameCloudSnapshot.user_id == user_id,
+                GameCloudSnapshot.game_id == game_id,
+            )
+            .order_by(
+                col(GameCloudSnapshot.created_at).desc(),
+                col(GameCloudSnapshot.id).desc(),
+            )
+            .limit(1)
+        ).first()
+        snapshot = GameCloudSnapshot(
+            user_id=user_id,
+            game_id=game_id,
+            remark=remark,
+            parent_id=latest.id if latest is not None else None,
+        )
         self._session.add(snapshot)
         self._session.flush()  # 先拿 snapshot.id 给存档行做外键
 

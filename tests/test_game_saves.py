@@ -308,16 +308,73 @@ def test_emulator_state_snapshot_keeps_extension(logged_in_saves):
         assert ".sol" not in disposition
 
 
-def test_cloud_snapshot_default_parent_is_null(logged_in_saves):
-    """新增存档默认没有父节点：创建返回、列表、详情三处都是 null。"""
+def test_cloud_snapshot_auto_parent_latest(logged_in_saves):
+    """新快照自动接在同组最新一条后面；第一条才是顶层。"""
     client = logged_in_saves
     game_id = _make_game(client, cartridge_id="TREE-1")["id"]
-    snapshot = _create_snapshot(client, game_id)
+    first = _create_snapshot(client, game_id, remark="第一条")
+    second = _create_snapshot(client, game_id, remark="第二条")
+    third = _create_snapshot(client, game_id, remark="第三条")
 
-    assert snapshot["parent_id"] is None
-    assert _list_snapshots(client, game_id)[0]["parent_id"] is None
-    detail = client.get(f"/api/games/saves/{snapshot['id']}")
-    assert detail.json()["data"]["parent_id"] is None
+    assert first["parent_id"] is None
+    assert second["parent_id"] == first["id"]
+    assert third["parent_id"] == second["id"]
+
+    listed = {item["id"]: item for item in _list_snapshots(client, game_id)}
+    assert listed[first["id"]]["parent_id"] is None
+    assert listed[second["id"]]["parent_id"] == first["id"]
+    assert listed[third["id"]]["parent_id"] == second["id"]
+
+    for item, expected in ((first, None), (second, first["id"]), (third, second["id"])):
+        detail = client.get(f"/api/games/saves/{item['id']}")
+        assert detail.json()["data"]["parent_id"] == expected
+
+
+def test_cloud_snapshot_auto_parent_scoped_to_game(logged_in_saves):
+    """自动父级只看同一游戏；另一个游戏的第一条仍是顶层。"""
+    client = logged_in_saves
+    game_a = _make_game(client, "游戏 A", cartridge_id="TREE-1A")["id"]
+    game_b = _make_game(client, "游戏 B", cartridge_id="TREE-1B")["id"]
+    first_a = _create_snapshot(client, game_a)
+    second_a = _create_snapshot(client, game_a)
+    first_b = _create_snapshot(client, game_b)
+
+    assert first_a["parent_id"] is None
+    assert second_a["parent_id"] == first_a["id"]
+    assert first_b["parent_id"] is None
+
+
+def test_cloud_snapshot_auto_parent_after_latest_deleted(logged_in_saves):
+    """删掉最新一条后再建，会接到剩余的最新一条。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-1C")["id"]
+    first = _create_snapshot(client, game_id, remark="第一条")
+    second = _create_snapshot(client, game_id, remark="第二条")
+
+    assert client.delete(f"/api/games/saves/{second['id']}").status_code == 200
+    third = _create_snapshot(client, game_id, remark="第三条")
+    assert third["parent_id"] == first["id"]
+
+
+def test_cloud_snapshot_auto_parent_tiebreak_id_desc(logged_in_saves):
+    """同一 created_at 时，“最新”按 id 倒序取。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-1D")["id"]
+    first = _create_snapshot(client, game_id)
+    second = _create_snapshot(client, game_id)
+
+    with Session(client.app.state.engine) as session:
+        rows = session.exec(
+            select(GameCloudSnapshot).where(GameCloudSnapshot.game_id == game_id)
+        ).all()
+        fixed = rows[0].created_at
+        for row in rows:
+            row.created_at = fixed
+            session.add(row)
+        session.commit()
+
+    third = _create_snapshot(client, game_id)
+    assert third["parent_id"] == max(first["id"], second["id"])
 
 
 def test_cloud_snapshot_set_and_clear_parent(logged_in_saves):
@@ -368,6 +425,8 @@ def test_cloud_snapshot_parent_cross_game_rejected(logged_in_saves):
     game_b = _make_game(client, "游戏 B", cartridge_id="TREE-4B")["id"]
     snapshot_a = _create_snapshot(client, game_a)
     snapshot_b = _create_snapshot(client, game_b)
+    assert snapshot_a["parent_id"] is None
+    assert snapshot_b["parent_id"] is None
 
     response = client.put(
         f"/api/games/saves/{snapshot_a['id']}/parent",
@@ -416,6 +475,7 @@ def test_cloud_snapshot_parent_user_isolation(logged_in_saves, app):
     )
     assert login.status_code == 200, login.text
     bobby_snapshot = _create_snapshot(client, game_id)
+    assert bobby_snapshot["parent_id"] is None
 
     # 改别人的快照 → 404
     response = client.put(

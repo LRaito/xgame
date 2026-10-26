@@ -226,16 +226,22 @@ export function deleteCloudSaveAPI(id) {
 }
 
 /** 修改云端存档的描述（备注）。 */
-export function updateCloudSaveAPI(id, remark) {
-    return request({ url: `/api/games/saves/${id}`, method: "put", data: { remark } });
+export function updateCloudSaveAPI(id, remark, config = {}) {
+    return request({
+        url: `/api/games/saves/${id}`,
+        method: "put",
+        data: { remark },
+        ...config,
+    });
 }
 
 /** 设置/清除云端存档的父级（parentId=null 表示设为顶层）。 */
-export function setCloudSaveParentAPI(id, parentId) {
+export function setCloudSaveParentAPI(id, parentId, config = {}) {
     return request({
         url: `/api/games/saves/${id}/parent`,
         method: "put",
         data: { parent_id: parentId },
+        ...config,
     });
 }
 

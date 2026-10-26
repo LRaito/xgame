@@ -26,9 +26,10 @@
             @native-size="onNativeSize"
         />
         <app-empty v-else-if="!swfUrl && !loading" description="未找到该 Flash 游戏" />
-        <flash-save-manager
+        <save-manager
             ref="saveManagerRef"
             v-model="saveManagerVisible"
+            platform="flash"
             :game-id="currentGameId"
             @sync="onSyncSave"
             @save-action="onSaveAction"
@@ -54,7 +55,7 @@ import GameShell from "@components/games/GameShell.vue";
 import FlashPlayer from "@components/games/FlashPlayer.vue";
 import FlashResolutionSelect from "@components/games/FlashResolutionSelect.vue";
 import FlashQualitySelect from "@components/games/FlashQualitySelect.vue";
-import FlashSaveManager from "@components/games/FlashSaveManager.vue";
+import SaveManager from "@components/games/SaveManager.vue";
 import StartGate from "@components/games/StartGate.vue";
 import { hasUserGesture } from "@/utils/userActivation";
 import { reportGamePlayed } from "@/utils/recentGames";
@@ -152,7 +153,8 @@ function onSaveAction(payload) {
 // 「同步至云端」：先把最新进度落盘，再收集当前游戏全部本地存档，整体上传成一个云端快照。
 // 返回是否真的传上去了——快捷键那条路要据此决定弹不弹「已同步至云端」；
 // 存档管理弹框那条路忽略返回值，行为不变。
-async function onUploadCloud(remark = "") {
+async function onUploadCloud(payload) {
+    const remark = typeof payload === "string" ? payload : payload?.remark || "";
     const manager = saveManagerRef.value;
     const gameId = Number(game.value?.id) || 0;
     if (!gameId) {

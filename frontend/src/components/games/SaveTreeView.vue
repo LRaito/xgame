@@ -1,18 +1,49 @@
 <template>
     <div ref="rootRef" class="save-tree">
         <aside class="save-tree__sidebar">
-            <p v-if="!rootNodes.length" class="save-tree__empty-side">没有顶层存档</p>
-            <div
-                v-for="node in rootNodes"
-                :key="node.id"
-                class="save-tree__node save-tree__node--side"
-                :class="{ 'save-tree__node--dragging': dragId === node.id }"
-                :draggable="!locked"
-                @dragstart="onDragStart($event, node)"
-                @dragend="onDragEnd"
-                @contextmenu.prevent.stop="openDetail(node)"
-            >
-                {{ nodeLabel(node) }}
+            <div class="save-tree__side-head">
+                <el-input
+                    v-model="keyword"
+                    class="save-tree__search"
+                    size="small"
+                    clearable
+                    placeholder="搜索存档详情"
+                />
+            </div>
+            <div class="save-tree__side-list">
+                <p v-if="!sidebarNodes.length" class="save-tree__empty-side">
+                    {{ keyword.trim() ? "没有匹配的存档" : "还没有云端存档" }}
+                </p>
+                <div
+                    v-for="node in sidebarNodes"
+                    :key="node.id"
+                    class="save-tree__node save-tree__node--side"
+                    :class="{
+                        'save-tree__node--dragging': dragId === node.id,
+                        'save-tree__node--active': selectedId === node.id,
+                    }"
+                    :draggable="!locked && editingRemarkId !== node.id"
+                    @dragstart="onDragStart($event, node)"
+                    @dragend="onDragEnd"
+                    @click.stop="selectNode(node)"
+                    @dblclick.stop="startRemarkEdit(node, 'side')"
+                    @contextmenu.prevent.stop="openDetail(node)"
+                >
+                    <input
+                        v-if="editingRemarkId === node.id"
+                        :ref="(el) => (remarkInputRef = el)"
+                        v-model="remarkDraft"
+                        class="save-tree__side-input"
+                        maxlength="100"
+                        placeholder="填写描述"
+                        @click.stop
+                        @dblclick.stop
+                        @keydown.enter.prevent="onRemarkEnter($event, node)"
+                        @keydown.esc.prevent.stop="cancelRemarkEdit"
+                        @blur="saveRemark(node)"
+                    />
+                    <template v-else>{{ nodeLabel(node) }}</template>
+                </div>
             </div>
         </aside>
 
@@ -35,6 +66,14 @@
                 @dragover.prevent.stop
                 @drop.prevent.stop
             >
+                <app-button
+                    variant="secondary"
+                    tone="dark"
+                    size="sm"
+                    @click="fitToCanvas"
+                >
+                    适应视图
+                </app-button>
                 <app-button
                     variant="secondary"
                     tone="dark"
@@ -74,6 +113,7 @@
                     :class="{
                         'save-tree__node--dragging': dragId === node.id,
                         'save-tree__node--drop': dropTargetId === node.id,
+                        'save-tree__node--active': selectedId === node.id,
                     }"
                     :style="{
                         left: `${node.x}px`,
@@ -87,12 +127,35 @@
                     @dragover.prevent.stop="onDragOverNode($event, node)"
                     @dragleave.stop="onDragLeaveNode(node)"
                     @drop.prevent.stop="onDropNode($event, node)"
+                    @click.stop="selectNode(node)"
+                    @dblclick.stop="onCanvasNodeDblClick(node)"
                     @contextmenu.prevent.stop="openDetail(node)"
                 >
                     {{ nodeLabel(node) }}
                 </div>
             </div>
         </section>
+
+        <div
+            v-if="notice"
+            class="save-tree__notice"
+            :class="`save-tree__notice--${notice.type}`"
+            role="status"
+            aria-live="polite"
+        >
+            <span class="save-tree__notice-text">{{ notice.text }}</span>
+            <app-button
+                text
+                tone="dark"
+                size="sm"
+                icon-only
+                round
+                aria-label="关闭提示"
+                @click="clearNotice"
+            >
+                ✕
+            </app-button>
+        </div>
 
         <!-- 右键详情弹框：必须留在 .save-tree 内（全屏时可见），且不能放进带 transform 的图层 -->
         <div
@@ -116,14 +179,36 @@
                     </app-button>
                 </header>
                 <div class="save-tree__detail-body">
+                    <textarea
+                        v-if="editingRemarkId === detailNode.id"
+                        :ref="(el) => (detailInputRef = el)"
+                        v-model="remarkDraft"
+                        class="save-tree__detail-input"
+                        maxlength="100"
+                        placeholder="填写描述"
+                        @keydown.esc.stop.prevent="cancelRemarkEdit"
+                        @keydown.enter.ctrl.prevent="saveRemark(detailNode)"
+                        @keydown.enter.meta.prevent="saveRemark(detailNode)"
+                        @blur="saveRemark(detailNode)"
+                    ></textarea>
                     <p
+                        v-else
                         class="save-tree__detail-remark"
                         :class="{
                             'save-tree__detail-remark--empty': !detailNode.remark,
                         }"
+                        @dblclick.stop="startRemarkEdit(detailNode, 'detail')"
                     >
                         {{ detailNode.remark || "暂无描述" }}
                     </p>
+                    <div
+                        v-if="editingRemarkId === detailNode.id"
+                        class="save-tree__detail-edit-foot"
+                    >
+                        <span>{{ remarkDraft.length }}/100</span>
+                        <span>Ctrl+Enter 保存，Esc 取消</span>
+                    </div>
+                    <p v-else class="save-tree__detail-hint">双击描述可编辑</p>
                     <dl class="save-tree__detail-meta">
                         <div>
                             <dt>创建时间</dt>
@@ -203,15 +288,16 @@
 
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { ElMessage } from "element-plus";
 
 import {
     cloudSaveDetailAPI,
     cloudSaveFileDownloadPath,
     setCloudSaveParentAPI,
+    updateCloudSaveAPI,
 } from "@/api/games";
 import { downloadViaPath } from "@/utils/download";
 import { formatBytes, formatDateTime } from "@/utils/fileDisplay";
+import { appMessage } from "@/utils/overlay";
 
 const NODE_W = 176;
 const NODE_H = 48;
@@ -219,7 +305,7 @@ const GAP_X = 64;
 const GAP_Y = 16;
 const ROOT_GAP = 48;
 const PAD = 40;
-const MIN_ZOOM = 0.35;
+const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 2.5;
 
 const props = defineProps({
@@ -229,7 +315,13 @@ const props = defineProps({
     busy: { type: Boolean, default: false },
 });
 
-const emit = defineEmits(["sync-local", "delete", "parents-changed", "refresh"]);
+const emit = defineEmits([
+    "sync-local",
+    "delete",
+    "parents-changed",
+    "remark-changed",
+    "refresh",
+]);
 
 const rootRef = ref(null);
 const canvasRef = ref(null);
@@ -245,6 +337,15 @@ const detailFiles = ref([]);
 const detailLoading = ref(false);
 const isFullscreen = ref(false);
 const hasFitted = ref(false);
+const keyword = ref("");
+const selectedId = ref(null);
+const editingRemarkId = ref(null);
+const remarkDraft = ref("");
+const remarkSavingId = ref(null);
+const remarkInputRef = ref(null);
+const detailInputRef = ref(null);
+const notice = ref(null);
+let noticeTimer = null;
 
 const locked = computed(() => props.busy || mutating.value);
 
@@ -289,13 +390,118 @@ const detailNode = computed(
     () => nodes.value.find((node) => node.id === detailId.value) || null,
 );
 
-const structureKey = computed(() =>
-    nodes.value.map((node) => `${node.id}:${node.parent_id ?? ""}`).join("|"),
+const sidebarNodes = computed(() => {
+    const q = keyword.value.trim().toLowerCase();
+    if (!q) {
+        return nodes.value;
+    }
+    return nodes.value.filter((node) =>
+        String(node.remark || "").toLowerCase().includes(q),
+    );
+});
+
+const selectedNode = computed(
+    () => nodes.value.find((node) => node.id === selectedId.value) || null,
+);
+
+const nodesKey = computed(() =>
+    nodes.value
+        .map((node) => node.id)
+        .sort((a, b) => a - b)
+        .join(","),
 );
 
 function nodeLabel(node) {
-    const firstLine = String(node.remark || "").split(/\r\n|\r|\n/, 1)[0].trim();
-    return firstLine || formatDateTime(node.created_at);
+    // 详情为空就留空，不用时间戳兜底（列表与画布保持一致）。
+    return String(node.remark || "").split(/\r\n|\r|\n/, 1)[0].trim();
+}
+
+function blurActiveControl() {
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+        active.blur();
+    }
+}
+
+function selectNode(node) {
+    selectedId.value = node.id;
+    blurActiveControl();
+}
+
+function clearNotice() {
+    notice.value = null;
+    if (noticeTimer) {
+        window.clearTimeout(noticeTimer);
+        noticeTimer = null;
+    }
+}
+
+function showNotice(text, type = "error") {
+    clearNotice();
+    notice.value = { text, type };
+    noticeTimer = window.setTimeout(() => {
+        notice.value = null;
+        noticeTimer = null;
+    }, 4000);
+}
+
+async function startRemarkEdit(node, source = "side") {
+    if (locked.value || remarkSavingId.value != null) {
+        return;
+    }
+    if (editingRemarkId.value === node.id) {
+        return;
+    }
+    selectedId.value = node.id;
+    editingRemarkId.value = node.id;
+    remarkDraft.value = String(node.remark || "").slice(0, 100);
+    await nextTick();
+    const input = source === "detail" ? detailInputRef.value : remarkInputRef.value;
+    input?.focus();
+    input?.setSelectionRange?.(input.value.length, input.value.length);
+}
+
+function cancelRemarkEdit() {
+    editingRemarkId.value = null;
+    remarkDraft.value = "";
+}
+
+function onRemarkEnter(event, node) {
+    if (event.isComposing) {
+        return;
+    }
+    void saveRemark(node);
+}
+
+async function saveRemark(node) {
+    if (editingRemarkId.value !== node.id || remarkSavingId.value != null) {
+        return;
+    }
+    const previous = String(node.remark || "");
+    const remark = remarkDraft.value.trim().slice(0, 100);
+    if (remark === previous) {
+        cancelRemarkEdit();
+        return;
+    }
+    remarkSavingId.value = node.id;
+    node.remark = remark;
+    try {
+        const detail = await updateCloudSaveAPI(node.id, remark, {
+            notShowError: true,
+        });
+        node.remark = detail.remark || "";
+        emit("remark-changed", { id: node.id, remark: node.remark });
+        if (editingRemarkId.value === node.id) {
+            editingRemarkId.value = null;
+            remarkDraft.value = "";
+        }
+        appMessage.success("描述已更新。");
+    } catch (err) {
+        node.remark = previous;
+        showNotice(err?.message || "描述保存失败。");
+    } finally {
+        remarkSavingId.value = null;
+    }
 }
 
 function clamp(value, min, max) {
@@ -419,17 +625,29 @@ watch(
     (items) => {
         nodes.value = (items || []).map((item) => ({ ...item }));
         if (
+            selectedId.value == null ||
+            !nodes.value.some((node) => node.id === selectedId.value)
+        ) {
+            selectedId.value = nodes.value[0]?.id ?? null;
+        }
+        if (
             detailId.value != null &&
             !nodes.value.some((node) => node.id === detailId.value)
         ) {
             closeDetail();
+        }
+        if (
+            editingRemarkId.value != null &&
+            !nodes.value.some((node) => node.id === editingRemarkId.value)
+        ) {
+            cancelRemarkEdit();
         }
     },
     { immediate: true },
 );
 
 watch(
-    structureKey,
+    nodesKey,
     () => {
         nextTick(() => fitToCanvas());
     },
@@ -536,6 +754,7 @@ function onDragStart(event, node) {
         return;
     }
     dragId.value = node.id;
+    selectedId.value = node.id;
     event.dataTransfer.effectAllowed = "move";
     // Firefox 不 setData 就不会真正开始拖拽
     event.dataTransfer.setData("text/plain", String(node.id));
@@ -599,7 +818,7 @@ function onDropNode(event, node) {
         return;
     }
     if (isDescendantOf(node.id, id)) {
-        ElMessage.warning("不能把存档拖到它自己的子级下面。");
+        showNotice("不能把存档拖到它自己的子级下面。", "warning");
         return;
     }
     if (resolvedParents.value.get(id) === node.id) {
@@ -631,14 +850,17 @@ async function applyParent(id, parentId) {
         return;
     }
     node.parent_id = parentId;
+    selectedId.value = id;
     mutating.value = true;
     try {
-        const detail = await setCloudSaveParentAPI(id, parentId);
+        const detail = await setCloudSaveParentAPI(id, parentId, {
+            notShowError: true,
+        });
         node.parent_id = detail.parent_id ?? null;
         emit("parents-changed", { id, parentId: node.parent_id });
-    } catch {
-        // 错误已由请求层 toast，恢复到服务端当前值
+    } catch (err) {
         node.parent_id = previous;
+        showNotice(err?.message || "设置父子关系失败。");
         emit("refresh");
     } finally {
         mutating.value = false;
@@ -653,7 +875,9 @@ function hierarchyOf(node) {
         return "顶层";
     }
     const parent = byId.value.get(parentId);
-    return parent ? `属于「${nodeLabel(parent)}」` : "顶层";
+    return parent
+        ? `属于「${nodeLabel(parent) || "未命名存档"}」`
+        : "顶层";
 }
 
 function childCountOf(node) {
@@ -663,6 +887,8 @@ function childCountOf(node) {
 }
 
 function openDetail(node) {
+    selectedId.value = node.id;
+    blurActiveControl();
     if (detailId.value === node.id) {
         return;
     }
@@ -670,6 +896,16 @@ function openDetail(node) {
     detailFiles.value = [];
     detailLoading.value = true;
     void loadDetail(node.id);
+}
+
+function onCanvasNodeDblClick(node) {
+    if (locked.value || dragId.value != null) {
+        return;
+    }
+    openDetail(node);
+    if (editingRemarkId.value !== node.id) {
+        void startRemarkEdit(node, "detail");
+    }
 }
 
 async function loadDetail(id) {
@@ -690,6 +926,9 @@ async function loadDetail(id) {
 }
 
 function closeDetail() {
+    if (editingRemarkId.value != null && editingRemarkId.value === detailId.value) {
+        cancelRemarkEdit();
+    }
     detailId.value = null;
     detailFiles.value = [];
     detailLoading.value = false;
@@ -742,13 +981,13 @@ async function toggleFullscreen() {
         return;
     }
     if (typeof el.requestFullscreen !== "function") {
-        ElMessage.warning("当前浏览器不支持全屏。");
+        appMessage.warning("当前浏览器不支持全屏。");
         return;
     }
     try {
         await el.requestFullscreen();
     } catch {
-        ElMessage.warning("当前浏览器不支持全屏。");
+        appMessage.warning("当前浏览器不支持全屏。");
     }
 }
 
@@ -774,8 +1013,6 @@ onMounted(() => {
     nextTick(() =>
         requestAnimationFrame(() => {
             fitToCanvas();
-            // 进树形模式就能直接用方向键平移，不必先点一下画布
-            canvasRef.value?.focus({ preventScroll: true });
         }),
     );
 });
@@ -783,13 +1020,44 @@ onMounted(() => {
 onBeforeUnmount(() => {
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     resizeObserver?.disconnect();
+    clearNotice();
     if (document.fullscreenElement === rootRef.value) {
         document.exitFullscreen?.().catch(() => {});
     }
 });
 
-/** 给管理器的 ESC 分层用：先关详情，再退全屏，都没有就交回管理器。 */
+/** 给管理器的 Enter/Delete 快捷键用；详情/编辑/拖动/忙碌时不响应。 */
+function handleSaveHotkey(key) {
+    if (
+        locked.value ||
+        dragId.value != null ||
+        detailId.value != null ||
+        editingRemarkId.value != null ||
+        remarkSavingId.value != null
+    ) {
+        return false;
+    }
+    const node = selectedNode.value;
+    if (!node) {
+        return false;
+    }
+    if (key === "Enter") {
+        emit("sync-local", node);
+        return true;
+    }
+    if (key === "Delete") {
+        emit("delete", node);
+        return true;
+    }
+    return false;
+}
+
+/** 给管理器的 ESC 分层用：先取消编辑，再关详情，再退全屏，都没有就交回管理器。 */
 function handleEscape() {
+    if (editingRemarkId.value != null) {
+        cancelRemarkEdit();
+        return true;
+    }
     if (detailId.value != null) {
         closeDetail();
         return true;
@@ -801,7 +1069,7 @@ function handleEscape() {
     return false;
 }
 
-defineExpose({ handleEscape });
+defineExpose({ handleEscape, handleSaveHotkey });
 </script>
 
 <style scoped>
@@ -810,8 +1078,7 @@ defineExpose({ handleEscape });
     display: flex;
     flex: 1;
     min-height: 0;
-    margin-top: 4px;
-    border-top: 1px solid rgba(148, 163, 184, 0.12);
+    gap: 12px;
     overflow: hidden;
 }
 
@@ -825,14 +1092,94 @@ defineExpose({ handleEscape });
 .save-tree__sidebar {
     flex: 0 0 184px;
     min-height: 0;
-    overflow-y: auto;
-    scrollbar-gutter: stable;
+    overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 12px 10px;
-    border-right: 1px solid rgba(148, 163, 184, 0.16);
-    background: rgba(255, 255, 255, 0.02);
+    padding: 10px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.35);
+}
+
+.save-tree__side-head {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.save-tree__search {
+    width: 100%;
+}
+
+.save-tree__search :deep(.el-input__wrapper) {
+    border-radius: 6px;
+    background: rgba(15, 23, 42, 0.55);
+    box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.28) inset;
+}
+
+.save-tree__search :deep(.el-input__wrapper.is-focus) {
+    box-shadow: 0 0 0 1px #60a5fa inset;
+}
+
+.save-tree__search :deep(.el-input__inner) {
+    color: #f8fafc;
+    font-size: 12px;
+}
+
+.save-tree__search :deep(.el-input__inner::placeholder) {
+    color: #64748b;
+}
+
+.save-tree__search :deep(.el-input__suffix) {
+    color: #94a3b8;
+}
+
+.save-tree__side-list {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+    flex-direction: column;
+    gap: 8px;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+    padding-right: 2px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+.save-tree__side-list::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+.save-tree__side-list::-webkit-scrollbar-track,
+.save-tree__side-list::-webkit-scrollbar-corner {
+    background: transparent;
+}
+
+.save-tree__side-list::-webkit-scrollbar-thumb {
+    border-radius: 3px;
+    background: rgba(148, 163, 184, 0.35);
+}
+
+.save-tree__side-list::-webkit-scrollbar-thumb:hover {
+    background: rgba(148, 163, 184, 0.55);
+}
+
+.save-tree__side-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 30px;
+    padding: 0 8px;
+    border: 1px solid #60a5fa;
+    border-radius: 6px;
+    background: #0f172a;
+    color: #f8fafc;
+    font: inherit;
+    font-size: 13px;
+    outline: none;
 }
 
 .save-tree__empty-side {
@@ -888,6 +1235,48 @@ defineExpose({ handleEscape });
     pointer-events: none;
 }
 
+/* 全屏时树在浏览器 top layer 里，body 下的 ElMessage 看不到；
+   错误提示放在树内部，保证全屏也能看见。 */
+.save-tree__notice {
+    position: absolute;
+    top: 52px;
+    left: 50%;
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: calc(100% - 32px);
+    padding: 8px 10px;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    font-size: 13px;
+    line-height: 1.5;
+    transform: translateX(-50%);
+    box-shadow: 0 8px 24px rgba(2, 6, 23, 0.35);
+}
+
+.save-tree__notice-text {
+    min-width: 0;
+}
+
+.save-tree__notice--error {
+    border-color: rgba(252, 165, 165, 0.4);
+    background: rgba(127, 29, 29, 0.88);
+    color: #fecaca;
+}
+
+.save-tree__notice--warning {
+    border-color: rgba(252, 211, 77, 0.4);
+    background: rgba(120, 53, 15, 0.88);
+    color: #fde68a;
+}
+
+.save-tree__notice--info {
+    border-color: rgba(147, 197, 253, 0.4);
+    background: rgba(30, 58, 138, 0.88);
+    color: #dbeafe;
+}
+
 .save-tree__viewport {
     position: absolute;
     top: 0;
@@ -917,9 +1306,9 @@ defineExpose({ handleEscape });
     align-items: center;
     padding: 0 12px;
     border-radius: 8px;
-    border: 1px solid rgba(148, 163, 184, 0.28);
-    background: linear-gradient(180deg, #1e293b, #172033);
-    color: var(--app-dark-text);
+    border: 1px solid rgba(148, 163, 184, 0.42);
+    background: linear-gradient(180deg, #334155, #26344a);
+    color: #f1f5f9;
     font-size: 13px;
     white-space: nowrap;
     overflow: hidden;
@@ -929,8 +1318,17 @@ defineExpose({ handleEscape });
 }
 
 .save-tree__node:hover {
-    border-color: rgba(148, 163, 184, 0.55);
-    background: linear-gradient(180deg, #243247, #1a2434);
+    border-color: rgba(148, 163, 184, 0.65);
+    background: linear-gradient(180deg, #3d4d66, #2f4059);
+}
+
+.save-tree__node--active,
+.save-tree__node--active:hover {
+    border-color: #93c5fd;
+    background: linear-gradient(180deg, #475f83, #374b68);
+    box-shadow:
+        0 0 0 1px rgba(147, 197, 253, 0.45),
+        0 6px 16px rgba(2, 6, 23, 0.35);
 }
 
 .save-tree__node--side {
@@ -1011,6 +1409,43 @@ defineExpose({ handleEscape });
 
 .save-tree__detail-remark--empty {
     color: #64748b;
+}
+
+.save-tree__detail-remark {
+    cursor: text;
+}
+
+.save-tree__detail-input {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 84px;
+    max-height: 150px;
+    resize: vertical;
+    margin: 0 0 8px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid #60a5fa;
+    background: rgba(15, 23, 42, 0.55);
+    color: #f8fafc;
+    font: inherit;
+    font-size: 13px;
+    line-height: 1.7;
+    outline: none;
+}
+
+.save-tree__detail-edit-foot {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin: -4px 0 12px;
+    color: #94a3b8;
+    font-size: 12px;
+}
+
+.save-tree__detail-hint {
+    margin: -4px 0 12px;
+    color: #64748b;
+    font-size: 12px;
 }
 
 .save-tree__detail-meta {

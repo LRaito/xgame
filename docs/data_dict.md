@@ -90,11 +90,11 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | id | INTEGER | PK 自增 | |
 | user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 存档归属用户 |
 | game_id | INTEGER | NOT NULL, 索引 | 所属游戏（仅索引，**无 FK** 到 `games`） |
-| parent_id | INTEGER | NULL, 索引 | 父快照 id；NULL = 顶层。**无物理外键**（老库靠 ALTER 补列、SQLite 也不校验），归属、同游戏与防环由 service 保证：父级必须同属一个 `(user_id, game_id)`、不能指向自己、不能成环。删除父快照时**直接子级改回 NULL（顶层）**，不接续祖父、不级联删除 |
+| parent_id | INTEGER | NULL, 索引 | 父快照 id；NULL = 顶层。**无物理外键**（老库靠 ALTER 补列、SQLite 也不校验），归属、同游戏与防环由 service 保证：父级必须同属一个 `(user_id, game_id)`、不能指向自己、不能成环。**新建快照自动指向同组最新一条（created_at DESC, id DESC）；第一条为 NULL**。删除父快照时**直接子级改回 NULL（顶层）**，不接续祖父、不级联删除 |
 | remark | VARCHAR(100) | NOT NULL, 默认 `''` | 备注，上限 100 字（service 层校验，超长直接报错） |
 | created_at | DATETIME | NOT NULL | 列表按 `created_at DESC, id DESC` 排序 |
 
-> 快照之间是**同一 `(用户, 游戏)` 内的森林**（允许多个顶层，每个节点最多一个父级、可有多个子级），由 `PUT /api/games/saves/{id}/parent` 设置/清除。树形模式只是前端的自动布局视图，**不存节点坐标**。老库启动时由 `database.py` 的 `_ensure_columns()` 补 `parent_id` 可空列，并由 `_ensure_indexes()` 补 `ix_game_cloud_snapshots_parent_id` 索引。
+> 快照之间是**同一 `(用户, 游戏)` 内的森林**（允许多个顶层，每个节点最多一个父级、可有多个子级），由 `PUT /api/games/saves/{id}/parent` 设置/清除；新建快照自动接到同组最新一条后面，第一条为顶层。树形模式只是前端的自动布局视图，**不存节点坐标**。老库启动时由 `database.py` 的 `_ensure_columns()` 补 `parent_id` 可空列，并由 `_ensure_indexes()` 补 `ix_game_cloud_snapshots_parent_id` 索引。
 
 > 快照随游戏一起消失：`GameService.delete` 会把该游戏所有账号的快照行、存档文件以及 `save/{用户名}/{类型}/{卡带ID}/` 目录一并清掉（游戏一删，快照就再也没有入口能列出来）。
 

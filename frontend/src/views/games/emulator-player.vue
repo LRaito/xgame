@@ -113,9 +113,10 @@
             </div>
         </div>
 
-        <emu-save-manager
+        <save-manager
             ref="saveManagerRef"
             v-model="saveManagerVisible"
+            platform="emulator"
             :game-id="currentGameId"
             :engine-ready="engineReady"
             @capture="onCapture"
@@ -161,7 +162,7 @@ import {
     writeEngineSettings,
 } from "@/utils/emulatorSettings";
 import GameShell from "@components/games/GameShell.vue";
-import EmuSaveManager from "@components/games/EmuSaveManager.vue";
+import SaveManager from "@components/games/SaveManager.vue";
 import EmuWindowSelect from "@components/games/EmuWindowSelect.vue";
 import ScreenshotConfirmDialog from "@components/games/ScreenshotConfirmDialog.vue";
 import StartGate from "@components/games/StartGate.vue";
@@ -926,7 +927,7 @@ function unbindFrameHotkey() {
     hotkeyFrameWindow = null;
 }
 
-// ---------- 存档管理编排（本地/云端，对应 EmuSaveManager 的双 tab） ----------
+// ---------- 存档管理编排（统一 SaveManager 的本地/云端） ----------
 
 async function onCapture() {
     try {
