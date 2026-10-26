@@ -1,26 +1,31 @@
 <template>
     <div ref="rootRef" class="emu-window-select">
         <span class="emu-window-select__text">窗口</span>
-        <button
-            type="button"
+        <app-button
             class="emu-window-select__button"
+            variant="secondary"
+            tone="dark"
+            size="lg"
             :aria-expanded="open ? 'true' : 'false'"
             @click="open = !open"
         >
             {{ currentLabel }}
-        </button>
+        </app-button>
 
         <!-- 面板就地渲染在标题栏里（不 teleport）：鼠标移进面板仍算在标题栏内，
              标题栏不会收起把它一起带走 -->
         <div v-if="open" class="emu-window-select__panel">
-            <button
-                type="button"
+            <app-button
                 class="emu-window-select__fit"
-                :class="{ 'is-active': scale === FIT }"
+                variant="secondary"
+                tone="dark"
+                size="sm"
+                block
+                :pressed="scale === FIT"
                 @click="pick(FIT, mode)"
             >
                 适应窗口
-            </button>
+            </app-button>
             <!-- 两列矩阵：行是倍率，列是显示比例。只有这台机器有两种比例（FC）时才画表头 -->
             <div class="emu-window-select__grid" :class="{ 'emu-window-select__grid--wide': wide }">
                 <template v-if="wide">
@@ -30,23 +35,29 @@
                 </template>
                 <template v-for="row in rows" :key="row.value">
                     <span class="emu-window-select__scale">{{ row.label }}</span>
-                    <button
-                        type="button"
+                    <app-button
                         class="emu-window-select__cell"
-                        :class="{ 'is-active': isActive(row.value, PP) }"
+                        variant="secondary"
+                        tone="dark"
+                        size="sm"
+                        block
+                        :pressed="isActive(row.value, PP)"
                         @click="pick(row.value, PP)"
                     >
                         {{ row.pp }}
-                    </button>
-                    <button
+                    </app-button>
+                    <app-button
                         v-if="wide"
-                        type="button"
                         class="emu-window-select__cell"
-                        :class="{ 'is-active': isActive(row.value, WIDE) }"
+                        variant="secondary"
+                        tone="dark"
+                        size="sm"
+                        block
+                        :pressed="isActive(row.value, WIDE)"
                         @click="pick(row.value, WIDE)"
                     >
                         {{ row.wide }}
-                    </button>
+                    </app-button>
                 </template>
             </div>
         </div>
@@ -195,31 +206,6 @@ onBeforeUnmount(() => {
     white-space: nowrap;
 }
 
-/* 与标题栏的按钮（.game-shell__btn / .emulator-player__action）同一套盒模型：
-   8px 上下内边距 + 14px 字号 + 1.6 行高 = 40px 高，并排时上下沿对齐 */
-.emu-window-select__button {
-    padding: 8px 10px;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 8px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 14px;
-    line-height: 1.6;
-    cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease;
-    white-space: nowrap;
-}
-
-.emu-window-select__button:hover {
-    background: rgba(51, 65, 85, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
-}
-
-.emu-window-select__button:focus-visible {
-    outline: none;
-    border-color: #38bdf8;
-}
-
 /* 面板挂在按钮下方、右对齐：标题栏靠右，右对齐才不会被视口切掉 */
 .emu-window-select__panel {
     position: absolute;
@@ -235,18 +221,7 @@ onBeforeUnmount(() => {
 }
 
 .emu-window-select__fit {
-    display: block;
-    width: 100%;
     margin-bottom: 6px;
-    padding: 8px 10px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 13px;
-    text-align: left;
-    cursor: pointer;
-    white-space: nowrap;
 }
 
 .emu-window-select__grid {
@@ -276,29 +251,4 @@ onBeforeUnmount(() => {
     white-space: nowrap;
 }
 
-.emu-window-select__cell {
-    padding: 7px 10px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 13px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.emu-window-select__fit:hover,
-.emu-window-select__cell:hover {
-    background: rgba(51, 65, 85, 0.95);
-    border-color: rgba(148, 163, 184, 0.4);
-}
-
-/* 当前生效的那一格点亮，一眼看出选的是倍率 + 哪种显示比例 */
-.emu-window-select__fit.is-active,
-.emu-window-select__cell.is-active {
-    background: rgba(37, 99, 235, 0.85);
-    border-color: rgba(96, 165, 250, 0.6);
-    color: #f8fafc;
-}
 </style>

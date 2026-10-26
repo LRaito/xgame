@@ -5,16 +5,20 @@
          图片一律等比缩放到长边到上限为止。
          左键单击任意一张图（含封面）看大图，见下面的看大图层 -->
     <div v-if="visible" class="gallery" @wheel="onWheel">
-        <button
+        <app-button
             v-if="pageCount > 1"
-            type="button"
             class="gallery__nav gallery__nav--prev"
+            variant="secondary"
+            tone="image"
+            size="sm"
+            icon-only
+            round
             aria-label="上一页"
             :disabled="page === 0"
             @click="page -= 1"
         >
             ‹
-        </button>
+        </app-button>
 
         <!-- 所有格子排在一条轨道上，翻页靠整条轨道水平滑动（一页正好一屏） -->
         <div class="gallery__viewport">
@@ -36,16 +40,20 @@
             </div>
         </div>
 
-        <button
+        <app-button
             v-if="pageCount > 1"
-            type="button"
             class="gallery__nav gallery__nav--next"
+            variant="secondary"
+            tone="image"
+            size="sm"
+            icon-only
+            round
             aria-label="下一页"
             :disabled="page === pageCount - 1"
             @click="page += 1"
         >
             ›
-        </button>
+        </app-button>
     </div>
 
     <!-- 看大图：铺满视口的深色遮罩 + 等比放大到视口内的原图。
@@ -64,24 +72,32 @@
 
             <!-- 只有一张图时不摆按钮；按钮上的点击不能冒泡到遮罩（否则一点就退回） -->
             <template v-if="imageCount > 1">
-                <button
-                    type="button"
+                <app-button
                     class="viewer__nav viewer__nav--prev"
+                    variant="secondary"
+                    tone="overlay"
+                    size="lg"
+                    icon-only
+                    round
                     aria-label="上一张"
                     :disabled="!canPrev"
                     @click.stop="stepPreview(-1)"
                 >
                     ‹
-                </button>
-                <button
-                    type="button"
+                </app-button>
+                <app-button
                     class="viewer__nav viewer__nav--next"
+                    variant="secondary"
+                    tone="overlay"
+                    size="lg"
+                    icon-only
+                    round
                     aria-label="下一张"
                     :disabled="!canNext"
                     @click.stop="stepPreview(1)"
                 >
                     ›
-                </button>
+                </app-button>
             </template>
         </div>
     </teleport>
@@ -304,35 +320,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onPreviewKeydown, tr
     text-overflow: ellipsis;
 }
 
-/* 翻页按钮压在画面左右边缘上：图片栏宽度正好是 4 格，两侧没有多余空间可占 */
-.gallery__nav {
+/* 翻页按钮压在画面左右边缘上：图片栏宽度正好是 4 格，两侧没有多余空间可占。
+   外观交给 AppButton 的 image tone */
+.gallery .gallery__nav.el-button {
     position: absolute;
     top: 90px;
     transform: translateY(-50%);
     z-index: 1;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 0 0 2px;
-    border: 0;
-    border-radius: 50%;
-    background: rgba(15, 23, 42, 0.45);
-    color: #fff;
     font-size: 20px;
-    line-height: 1;
-    cursor: pointer;
-    transition: background 0.15s ease, opacity 0.15s ease;
-}
-
-.gallery__nav:hover:not(:disabled) {
-    background: rgba(15, 23, 42, 0.72);
-}
-
-.gallery__nav:disabled {
-    opacity: 0.25;
-    cursor: default;
 }
 
 .gallery__nav--prev {
@@ -369,33 +365,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onPreviewKeydown, tr
 
 /* 翻页按钮压在遮罩左右边缘（图片之上）：遮罩是深的，所以用半透明白，
    比图片栏那对深色按钮更看得见。到头的那个置灰 */
-.viewer__nav {
+.viewer .viewer__nav.el-button {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    width: 44px;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 0 0 4px;
-    border: 0;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.16);
-    color: #fff;
     font-size: 30px;
-    line-height: 1;
-    cursor: pointer;
-    transition: background 0.15s ease, opacity 0.15s ease;
-}
-
-.viewer__nav:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.3);
-}
-
-.viewer__nav:disabled {
-    opacity: 0.25;
-    cursor: default;
 }
 
 .viewer__nav--prev {

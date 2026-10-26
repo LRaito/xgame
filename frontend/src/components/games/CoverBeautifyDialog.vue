@@ -11,27 +11,24 @@
         :model-value="modelValue"
         title="美化封面"
         width="720px"
+        confirm-text="确认"
+        :confirm-disabled="!blob"
+        :confirm-loading="confirmLoading"
         @update:model-value="emit('update:modelValue', $event)"
+        @confirm="onConfirm"
     >
         <template #header>
             <!-- 每个样式都在这里露个名字（flash→DISK、gba→GBA 这类只有一个样式的类型
                  也出，只是那一项点不动）：一排方框单选就是这盘封面会变成什么壳 -->
-            <el-radio-group
+            <app-segmented
                 v-if="styles.length"
                 v-model="styleId"
                 class="cover-beautify__styles"
-                size="small"
+                :options="styleOptions"
+                size="sm"
+                aria-label="封面样式"
                 @change="compose"
-            >
-                <el-radio-button
-                    v-for="item in styles"
-                    :key="item.id"
-                    :value="item.id"
-                    :disabled="styles.length < 2"
-                >
-                    {{ item.label }}
-                </el-radio-button>
-            </el-radio-group>
+            />
         </template>
 
         <div class="cover-beautify">
@@ -68,18 +65,6 @@
                 确认后将覆盖该游戏当前的封面，原封面文件会被删除。
             </p>
         </div>
-
-        <template #footer>
-            <app-button @click="emit('update:modelValue', false)">取消</app-button>
-            <app-button
-                type="primary"
-                :disabled="!blob"
-                :loading="confirmLoading"
-                @click="onConfirm"
-            >
-                确认
-            </app-button>
-        </template>
     </app-dialog>
 </template>
 
@@ -110,6 +95,14 @@ const blob = ref(null);
 
 /** 这个游戏类型可用的样式（空数组 = 不支持，正常走不到这儿） */
 const styles = computed(() => beautifyStylesFor(props.game?.game_type));
+/** 只有一个样式时也显示出来，但不可点（它表示「就是这种壳」） */
+const styleOptions = computed(() =>
+    styles.value.map((item) => ({
+        label: item.label,
+        value: item.id,
+        disabled: styles.value.length < 2,
+    })),
+);
 /** 当前选中的样式 id（打开时重置成列表第一个，也就是默认样式） */
 const styleId = ref("");
 const style = computed(
@@ -229,22 +222,10 @@ onBeforeUnmount(reset);
 </script>
 
 <style scoped>
-/* 标题右边那排方框单选：跟着标题的基线走，别把标题挤下去 */
+/* 标题右边那排样式分段按钮：跟着标题的基线走，别把标题挤下去 */
 .cover-beautify__styles {
-    display: inline-flex;
     margin-left: 16px;
     vertical-align: middle;
-    /* 只有一种样式的类型（flash / gba）那一项是 disabled，但它表示的是「这盘封面
-       就是这种壳」而不是「一个用不了的控件」——Element Plus 默认会给 disabled 的
-       选中项铺一层 --el-border-color-extra-light 的浅灰，这里换回正常选中态的蓝，
-       再把光标改成箭头（见下面那条），看着就是个已经选好的样式名。 */
-    --el-radio-button-disabled-checked-fill: var(--el-color-primary);
-}
-
-.cover-beautify__styles :deep(.el-radio-button.is-disabled .el-radio-button__inner) {
-    color: var(--el-radio-button-checked-text-color, #fff);
-    border-color: var(--el-color-primary);
-    cursor: default;
 }
 
 /* 建议尺寸：一行说明，压在两个预览区上面 */

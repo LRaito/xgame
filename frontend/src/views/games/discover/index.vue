@@ -1,23 +1,13 @@
 <template>
     <div class="game-discover">
-        <!-- 单选栏：页面上不再有「游戏检索」标题，这两个按钮本身就是页头。
-             **刻意不用 el-radio-group / el-segmented**：它们是原生单选控件，焦点落在里面时
-             按左右键浏览器会直接换选中项（同名 radio 的默认行为），而这页的左右键必须留给
-             当前标签里的分页条——**标签只能点**，所以这里就是一对普通按钮。
-             也不用任何「切换效果」，要的是一对更正式、更沉稳的大按钮。 -->
-        <div class="game-discover__tabs">
-            <button
-                v-for="tab in TABS"
-                :key="tab.value"
-                type="button"
-                class="game-discover__tab"
-                :class="{ 'is-active': activeTab === tab.value }"
-                :aria-pressed="activeTab === tab.value"
-                @click="activeTab = tab.value"
-            >
-                {{ tab.label }}
-            </button>
-        </div>
+        <!-- 页头标签：普通按钮 + aria-pressed，左右键留给当前标签里的分页条 -->
+        <app-segmented
+            v-model="activeTab"
+            class="game-discover__tabs"
+            :options="TABS"
+            size="lg"
+            aria-label="游戏检索或榜单"
+        />
 
         <!-- 游戏检索 -->
         <section v-show="activeTab === 'search'" class="game-discover__panel">
@@ -127,19 +117,19 @@
                 <!-- 已入库比例，同时是「只看已入库」的开关：单击按下，榜单就只留命中库存的行，再点一下恢复。
                      数字由前端按已整份取回的 rankingItems 现算（榜单不分页），不再多打一次接口。
                      加载中先藏起来：rankingItems 在请求成功前不会清空，否则切机种会闪一下上一个机种的数字 -->
-                <button
+                <app-button
                     v-if="rankingTotal && !rankingLoading"
-                    type="button"
                     class="game-discover__stock"
-                    :class="{ 'is-active': rankingInLibraryOnly }"
-                    :aria-pressed="rankingInLibraryOnly"
+                    variant="secondary"
+                    size="sm"
+                    :pressed="rankingInLibraryOnly"
                     @click="toggleInLibraryOnly"
                 >
                     <span class="game-discover__stock-label">已入库</span>
                     <span class="game-discover__stock-value">
                         {{ rankingLinkedCount }} / {{ rankingTotal }}
                     </span>
-                </button>
+                </app-button>
             </div>
 
             <div v-loading="rankingLoading" class="game-discover__body">
@@ -172,15 +162,12 @@
                                     —
                                 </span>
                                 <span v-else class="game-discover__ids">
-                                    <button
+                                    <copy-button
                                         v-for="cartridgeId in item.cartridge_ids"
                                         :key="cartridgeId"
-                                        type="button"
-                                        class="game-discover__id"
-                                        @click="copyCartridgeId(cartridgeId)"
-                                    >
-                                        {{ cartridgeId }}
-                                    </button>
+                                        :text="cartridgeId"
+                                        variant="pill"
+                                    />
                                 </span>
                             </td>
                         </tr>
@@ -205,14 +192,12 @@
 <script setup>
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessage } from "element-plus";
 import {
     getGameRankingAPI,
     listRankingConsolesAPI,
     listSearchConsolesAPI,
     searchGamesAPI,
 } from "@/api/games";
-import { writeClipboard } from "@/utils/clipboard";
 
 const TABS = [
     { label: "游戏检索", value: "search" },
@@ -509,14 +494,6 @@ async function loadRanking() {
     }
 }
 
-async function copyCartridgeId(cartridgeId) {
-    if (await writeClipboard(cartridgeId)) {
-        ElMessage.success("已复制卡带ID。");
-    } else {
-        ElMessage.warning("浏览器不允许自动复制，请手动选中后复制。");
-    }
-}
-
 // 直接访问 ?tab=ranking 或前进/后退回到榜单时，同样要按需加载
 watch(
     activeTab,
@@ -541,52 +518,9 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-/* 页头的两个大单选（游戏检索 / 游戏榜单）。高 43px（行盒 15px + 上下各 13px 内边距 +
-   上下各 1px 边框，与原来那对 el-radio-button 逐像素一致）、字 15px、左右各 48px 内边距，
-   选中态用实心主色，未选中是白底描边——一眼看清现在在哪一块，也没有任何滑动动画。 */
+/* 页头标签共用 AppSegmented 的尺寸与选中态，这里只留与下方工具条的间距 */
 .game-discover__tabs {
-    display: flex;
     margin-bottom: 20px;
-}
-
-.game-discover__tab {
-    /* 相邻两个按钮共用中间那条边线：后一个的左边界压在前一个的右边界上，
-       看着仍是一整条分段控件 */
-    margin-left: -1px;
-    padding: 13px 48px;
-    border: 1px solid var(--border);
-    background: var(--surface);
-    color: var(--text-muted);
-    font-family: inherit;
-    font-size: 15px;
-    font-weight: 500;
-    line-height: 1;
-    letter-spacing: 1px;
-    cursor: pointer;
-    user-select: none;
-    transition: none;
-}
-
-.game-discover__tab:first-child {
-    margin-left: 0;
-    border-radius: 4px 0 0 4px;
-}
-
-.game-discover__tab:last-child {
-    border-radius: 0 4px 4px 0;
-}
-
-.game-discover__tab:hover {
-    color: var(--brand-accent);
-}
-
-/* 选中的那个要压在相邻按钮之上，否则它那条主色边线会被后一个按钮的灰边盖掉 */
-.game-discover__tab.is-active {
-    position: relative;
-    z-index: 1;
-    border-color: var(--brand-accent);
-    background: var(--brand-accent);
-    color: #fff;
 }
 
 .game-discover__toolbar {
@@ -603,34 +537,10 @@ onMounted(async () => {
     width: 240px;
 }
 
-/* 「已入库比例」按钮：跟左边下拉框等高的一条描边小牌，走官方统计的观感——灰标签 + 深色等宽数字、
-   细边框、不加底色与阴影，不跟下拉抢视线。数字用 tabular-nums：换机种时 25 / 100 → 3 / 100
-   不会左右抖。按下（只看已入库）时点亮成实心主色，与页头那对标签的选中态同一套写法 */
-.game-discover__stock {
-    display: inline-flex;
+/* 「已入库比例」是 AppButton 的开关态：只保留文字排版 */
+.game-discover__toolbar .game-discover__stock.el-button {
     align-items: baseline;
     gap: 8px;
-    padding: 5px 12px;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    background: var(--surface);
-    color: var(--text-muted);
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 18px;
-    white-space: nowrap;
-    cursor: pointer;
-    transition: none;
-}
-
-.game-discover__stock:hover {
-    border-color: var(--brand-accent);
-}
-
-.game-discover__stock.is-active {
-    border-color: var(--brand-accent);
-    background: var(--brand-accent);
-    color: #fff;
 }
 
 .game-discover__stock-label {
@@ -638,15 +548,11 @@ onMounted(async () => {
 }
 
 .game-discover__stock-value {
-    color: var(--brand-dark);
+    margin-left: 8px;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-weight: 600;
     font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
-}
-
-.game-discover__stock.is-active .game-discover__stock-value {
-    color: #fff;
 }
 
 /* 命中平台库存的榜单行：游戏名是真 <a>（router-link 渲染），走全局的主色；
@@ -681,7 +587,7 @@ onMounted(async () => {
 
 /* **行高 44px（行盒 20px + 上下各 12px 内边距），榜单那张表按这个数对齐**。
    line-height 显式写死，两张表才不会因为字体默认值不同而差几个像素；
-   榜单那边唯一的变量是卡带 ID 药丸，它的高度压在 20px 以内（见 .game-discover__id） */
+   榜单那边唯一的变量是卡带 ID 药丸，它的高度压在 20px（见 CopyButton 的 pill 样式） */
 .game-discover__table th,
 .game-discover__table td {
     padding: 12px 16px;
@@ -740,30 +646,10 @@ onMounted(async () => {
     color: var(--text-muted);
 }
 
-/* 0~2 个卡带 ID 在同一格里并排；每个都是可点的按钮，点了复制；没有就显示 — */
+/* 0~2 个卡带 ID 在同一格里并排；每个都是 CopyButton 的药丸样式；没有就显示 — */
 .game-discover__ids {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-}
-
-/* 药丸整体高 20px（行盒 14 + 上下各 2 + 上下边框各 1）——**榜单的行高是由它决定的**，
-   撑高了整行就比检索区那张表高（检索区的格子只有文字，行盒就是 20px） */
-.game-discover__id {
-    padding: 2px 8px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--surface);
-    color: inherit;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: 12px;
-    line-height: 14px;
-    cursor: pointer;
-    transition: border-color 0.15s ease, color 0.15s ease;
-}
-
-.game-discover__id:hover {
-    border-color: var(--brand-accent);
-    color: var(--brand-accent);
 }
 </style>

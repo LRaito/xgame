@@ -22,10 +22,12 @@
             </div>
             <div class="game-shell__actions">
                 <slot name="actions" />
-                <button type="button" class="game-shell__btn" @click="toggleFullscreen">
+                <app-button variant="secondary" tone="dark" size="lg" @click="toggleFullscreen">
                     {{ isFullscreen ? "退出全屏" : "全屏" }}
-                </button>
-                <button type="button" class="game-shell__btn" @click="goBack">返回游戏中心</button>
+                </app-button>
+                <app-button variant="secondary" tone="dark" size="lg" @click="goBack">
+                    返回游戏中心
+                </app-button>
             </div>
         </header>
         <div class="game-shell__body">
@@ -225,26 +227,6 @@ onBeforeUnmount(() => {
     align-items: center;
     gap: 10px;
     flex-shrink: 0;
-}
-
-.game-shell__btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 14px;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 10px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
-}
-
-.game-shell__btn:hover {
-    background: rgba(51, 65, 85, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
 }
 
 .game-shell__body {

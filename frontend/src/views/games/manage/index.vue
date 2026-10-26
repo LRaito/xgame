@@ -25,8 +25,8 @@
                 @clear="applyFilter"
             />
             <div class="game-manage__actions">
-                <app-button @click="openImport">搬运游戏</app-button>
-                <app-button type="primary" @click="openCreate">添加游戏</app-button>
+                <app-button variant="secondary" @click="openImport">搬运游戏</app-button>
+                <app-button variant="primary" @click="openCreate">添加游戏</app-button>
             </div>
         </div>
 
@@ -82,9 +82,15 @@
                         <td class="game-manage__nowrap">{{ formatDateTime(item.updated_at) }}</td>
                         <td>
                             <div class="game-manage__row-actions">
-                                <app-button @click="openDetail(item.id)">详情</app-button>
-                                <app-button @click="openEdit(item.id)">编辑</app-button>
-                                <app-button type="danger" @click="onDelete(item)">删除</app-button>
+                                <app-button variant="secondary" size="sm" @click="openDetail(item.id)">
+                                    详情
+                                </app-button>
+                                <app-button variant="secondary" size="sm" @click="openEdit(item.id)">
+                                    编辑
+                                </app-button>
+                                <app-button variant="danger" plain size="sm" @click="onDelete(item)">
+                                    删除
+                                </app-button>
                             </div>
                         </td>
                     </tr>
@@ -123,7 +129,7 @@
                                     <span class="game-manage__detail-key">
                                         {{ editingItem?.cartridge_id }}
                                     </span>
-                                    <app-button @click="startEditCartridgeId">
+                                    <app-button variant="secondary" size="sm" @click="startEditCartridgeId">
                                         修改 ID
                                     </app-button>
                                 </template>
@@ -139,11 +145,17 @@
                                         @keydown.enter.prevent="onConfirmCartridgeId"
                                         @keydown.esc.stop="cancelEditCartridgeId"
                                     />
-                                    <app-button :disabled="cartridgeSaving" @click="cancelEditCartridgeId">
+                                    <app-button
+                                        variant="secondary"
+                                        size="sm"
+                                        :disabled="cartridgeSaving"
+                                        @click="cancelEditCartridgeId"
+                                    >
                                         取消
                                     </app-button>
                                     <app-button
-                                        type="primary"
+                                        variant="primary"
+                                        size="sm"
                                         :loading="cartridgeSaving"
                                         @click="onConfirmCartridgeId"
                                     >
@@ -217,8 +229,8 @@
                                     :accept="gameAccept"
                                     @change="onGameFileChange"
                                 />
-                                <app-button @click="pickBodyFile">本地上传</app-button>
-                                <app-button @click="openRemoteBody">网络上传</app-button>
+                                <app-button variant="secondary" @click="pickBodyFile">本地上传</app-button>
+                                <app-button variant="secondary" @click="openRemoteBody">网络上传</app-button>
                             </div>
                             <p v-if="form.gameFile" class="game-manage__file-hint">
                                 已选：{{ form.gameFile.name }}（{{ formatSize(form.gameFile.size) }}）
@@ -226,9 +238,9 @@
                             <!-- 网络来源与本地文件二选一：选了直链就把本地文件清掉（反之亦然） -->
                             <p v-else-if="form.bodyUrl" class="game-manage__file-hint">
                                 待上传：{{ form.bodyUrl }}（{{ typeLabel(form.bodyGameType) }}）
-                                <button type="button" class="game-manage__clear" @click="clearRemoteBody">
+                                <app-button variant="link" size="sm" @click="clearRemoteBody">
                                     清除
-                                </button>
+                                </app-button>
                             </p>
                             <p v-else-if="formMode === 'edit' && editingItem?.game_path" class="game-manage__file-hint muted">
                                 当前：{{ editingItem.game_path }}
@@ -243,12 +255,13 @@
                                     accept="image/*"
                                     @change="onCoverFileChange"
                                 />
-                                <app-button @click="pickCoverFile">本地上传</app-button>
-                                <app-button @click="openRemoteCover">网络上传</app-button>
+                                <app-button variant="secondary" @click="pickCoverFile">本地上传</app-button>
+                                <app-button variant="secondary" @click="openRemoteCover">网络上传</app-button>
                                 <!-- 美化封面：把当前封面合成成光盘 / 卡带的外观后存回去。
                                      只在支持美化的类型（flash / gb / gba）出现，且要已有封面 -->
                                 <app-button
                                     v-if="canShowBeautify"
+                                    variant="secondary"
                                     :disabled="!canBeautify"
                                     @click="beautifyVisible = true"
                                 >
@@ -260,9 +273,9 @@
                             </p>
                             <p v-else-if="form.coverUrl" class="game-manage__file-hint">
                                 待上传：{{ form.coverUrl }}
-                                <button type="button" class="game-manage__clear" @click="form.coverUrl = ''">
+                                <app-button variant="link" size="sm" @click="form.coverUrl = ''">
                                     清除
-                                </button>
+                                </app-button>
                             </p>
                             <p v-else-if="formMode === 'edit' && editingItem?.cover_path" class="game-manage__file-hint muted">
                                 当前：{{ editingItem.cover_path }}
@@ -281,7 +294,9 @@
                                     :game-id="editingId"
                                     :upload="uploadGalleryAPI"
                                 />
-                                <app-button @click="galleryManagerVisible = true">管理</app-button>
+                                <app-button variant="secondary" @click="galleryManagerVisible = true">
+                                    管理
+                                </app-button>
                             </div>
                         </el-form-item>
                         <!-- 攻略：只在编辑时出现（新建还没有卡带目录可落）。上传 ZIP 或 PDF，保存时才发出去 -->
@@ -294,10 +309,11 @@
                                     accept=".zip,.pdf,application/zip,application/pdf"
                                     @change="onGuideFileChange"
                                 />
-                                <app-button @click="pickGuide">上传攻略</app-button>
+                                <app-button variant="secondary" @click="pickGuide">上传攻略</app-button>
                                 <app-button
                                     v-if="editingItem?.has_guide"
-                                    type="danger"
+                                    variant="danger"
+                                    plain
                                     :loading="guideDeleting"
                                     :disabled="saving || guideDeleting"
                                     @click="onDeleteGuide"
@@ -307,9 +323,9 @@
                             </div>
                             <p v-if="guideFile" class="game-manage__file-hint">
                                 已选 {{ guideFile.name }}（重新上传会整体替换）
-                                <button type="button" class="game-manage__clear" @click="clearGuide">
+                                <app-button variant="link" size="sm" @click="clearGuide">
                                     清除
-                                </button>
+                                </app-button>
                             </p>
                             <p v-else-if="editingItem?.has_guide" class="game-manage__file-hint muted">
                                 当前：已有攻略（{{ editingItem.guide_kind === "pdf" ? "PDF" : "ZIP" }}，重新上传会整体替换）
@@ -399,7 +415,12 @@
             @confirm="onBeautifyConfirm"
         />
 
-        <app-dialog v-model="importVisible" title="搬运游戏" width="560px">
+        <app-dialog
+            v-model="importVisible"
+            title="搬运游戏"
+            width="560px"
+            footer-mode="close-only"
+        >
             <div class="game-import">
                 <div class="game-import__field">
                     <label class="game-import__label" for="game-import-url">游戏页地址</label>
@@ -411,7 +432,9 @@
                             :disabled="importing"
                             @keyup.enter="onImport"
                         />
-                        <app-button type="primary" :loading="importing" @click="onImport">搬运</app-button>
+                        <app-button variant="primary" :loading="importing" @click="onImport">
+                            搬运
+                        </app-button>
                     </div>
                     <div class="game-import__example">
                         <span class="game-import__example-label">示例</span>
@@ -467,16 +490,14 @@
                     </div>
                 </div>
             </div>
-            <template #footer>
-                <app-button :disabled="importing" @click="importVisible = false">关闭</app-button>
-            </template>
         </app-dialog>
     </div>
 </template>
 
 <script setup>
 import { computed, h, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus";
+import { dangerConfirm, dangerPrompt } from "@/utils/confirm";
 import AppDialog from "@components/common/AppDialog.vue";
 import CopyButton from "@components/common/CopyButton.vue";
 import CoverBeautifyDialog from "@components/games/CoverBeautifyDialog.vue";
@@ -1113,19 +1134,12 @@ async function onDeleteGuide() {
     }
     const targetId = editingId.value;
     const staged = Boolean(guideFile.value);
-    try {
-        await ElMessageBox.confirm(
-            `确定删除「${item.name}」的攻略？删除后无法恢复。` +
-                (staged ? "已选但尚未保存的新攻略也会一起丢弃。" : ""),
-            "删除攻略",
-            {
-                confirmButtonText: "删除",
-                cancelButtonText: "取消",
-                type: "warning",
-                confirmButtonClass: "el-button--danger",
-            },
-        );
-    } catch {
+    const confirmed = await dangerConfirm(
+        `确定删除「${item.name}」的攻略？删除后无法恢复。` +
+            (staged ? "已选但尚未保存的新攻略也会一起丢弃。" : ""),
+        { title: "删除攻略" },
+    );
+    if (!confirmed) {
         return;
     }
     guideDeleting.value = true;
@@ -1268,18 +1282,14 @@ function buildDeleteMessage(item) {
 // 删游戏会连磁盘文件与所有账号在该游戏上的云端存档一起清掉，且不可撤销，
 // 所以要求手打一次卡带ID——它建后不可改，是最不会认错游戏的那个标识。
 async function onDelete(item) {
-    try {
-        await ElMessageBox.prompt(buildDeleteMessage(item), "删除确认", {
-            type: "warning",
-            confirmButtonText: "删除",
-            cancelButtonText: "取消",
-            confirmButtonClass: "el-button--danger",
-            inputPlaceholder: `输入卡带 ID「${item.cartridge_id}」以确认`,
-            inputValidator: (value) =>
-                String(value || "").trim().toUpperCase() === item.cartridge_id ||
-                `请输入卡带 ID「${item.cartridge_id}」以确认`,
-        });
-    } catch {
+    const confirmed = await dangerPrompt(buildDeleteMessage(item), {
+        title: "删除确认",
+        inputPlaceholder: `输入卡带 ID「${item.cartridge_id}」以确认`,
+        inputValidator: (value) =>
+            String(value || "").trim().toUpperCase() === item.cartridge_id ||
+            `请输入卡带 ID「${item.cartridge_id}」以确认`,
+    });
+    if (!confirmed) {
         return;
     }
     try {
@@ -1580,20 +1590,6 @@ onBeforeUnmount(() => {
 }
 
 /* 「待上传」那行里的清除：做成行内文字按钮，不抢视线 */
-.game-manage__clear {
-    margin-left: 6px;
-    padding: 0;
-    border: 0;
-    background: none;
-    font-size: 12px;
-    color: #2563eb;
-    cursor: pointer;
-}
-
-.game-manage__clear:hover {
-    text-decoration: underline;
-}
-
 .game-manage__remote-select {
     width: 100%;
 }

@@ -64,7 +64,7 @@ make all                    # 等价 docker compose build && up -d
 
 - **应用工厂。** `backend/__init__.py` 的 `create_app()` 是唯一入口；生产 ASGI 入口 `backend/asgi.py`。配置来自环境变量（Pydantic Settings，`backend/config.py`）。
 - **一个功能一块。** 每块含 `router.py`（只管 HTTP，只返回 JSON）+ `service.py`（领域逻辑）。`service.py` 是以后拆微服务的边界：**禁止在里面使用 FastAPI `Request` / `session`**；存储后端等依赖由构造函数传入。跨模块的流式下载响应收敛在 `backend/storage/access.py`。
-- **前端分层。** 页面 `views/` → `api/*`（导出 `xxxAPI`）→ `src/utils/request.js`（唯一 axios 实例）→ FastAPI。新增接口只改 api 层和后端 router，不碰 `request.js`。跨模块 UI 组件放 `src/components/common/`（AppDialog、AppButton、AppFilterBar、AppEmpty、CopyButton），游戏专用组件放 `src/components/games/`。
+- **前端分层。** 页面 `views/` → `api/*`（导出 `xxxAPI`）→ `src/utils/request.js`（唯一 axios 实例）→ FastAPI。新增接口只改 api 层和后端 router，不碰 `request.js`。跨模块 UI 组件放 `src/components/common/`（AppDialog、AppButton、AppSegmented、AppPagination、AppEmpty、CopyButton），游戏专用组件放 `src/components/games/`。**按钮统一走 `AppButton`（variant × size × tone），分段/标签统一走 `AppSegmented`**，token 在 `styles/index.css`，页面里不再手写原生 `<button>` 或按钮 CSS。
 - **导航与浮层。** 首页即游戏中心（`/` 重定向到 `/games`，无导航中心页）；侧栏菜单项与顺序由 `router/index.js` 的子路由声明顺序 + `meta.title` 生成（游戏中心、游戏管理、游戏发现）。左侧侧栏与游戏播放页的 `GameShell` 标题栏都是**浮层**：常驻收起、鼠标靠近屏幕边缘时滑出，展开时盖在页面之上，不占位、不引起内容缩放。
 - **登录态。** 开放注册（账号 + 密码，`POST /api/register`），登录失败锁定；无游客模式，除注册/登录接口与 H5 资源外全部接口与页面都要登录（H5 是沙箱不透明源的浏览器约束，拿不到 cookie；**攻略资源是新标签页顶层打开的普通静态页，照常带 cookie，要登录**）。session cookie（HttpOnly、SameSite=Lax），axios `withCredentials`；写操作带 `X-CSRFToken`。路由守卫在 `frontend/src/permission.js`。**不把 token 写进 localStorage**。
 - **响应信封。** 成功 `{ "ok": true, "data": ... }`；失败 `{ "ok": false, "message": "中文" }`。

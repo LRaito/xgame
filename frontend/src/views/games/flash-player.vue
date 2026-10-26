@@ -3,9 +3,15 @@
         <template #actions>
             <flash-quality-select v-model="quality" />
             <flash-resolution-select v-model="resolution" :native-size="nativeSize" />
-            <button type="button" class="save-manager-entry" @click="saveManagerVisible = true">
+            <app-button
+                class="save-manager-entry"
+                variant="secondary"
+                tone="dark"
+                size="lg"
+                @click="saveManagerVisible = true"
+            >
                 存档管理
-            </button>
+            </app-button>
         </template>
         <start-gate
             v-if="needsGesture"
@@ -34,7 +40,8 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus";
+import { confirmAction } from "@/utils/confirm";
 import { getPlayableGameAPI, uploadCloudSaveAPI } from "@/api/games";
 import { ensureGameAssetSw, gameSwfUrl } from "@/utils/gameAssetCache";
 import {
@@ -225,13 +232,11 @@ async function syncCloudNow() {
     // 先置位再弹框：确认框开着时再按 `·` 不会再弹一个
     syncingCloud = true;
     try {
-        try {
-            await ElMessageBox.confirm(
-                "同步会先让游戏把当前进度落盘，游戏将重新启动。确定现在同步吗？",
-                "同步至云端",
-                { confirmButtonText: "同步", cancelButtonText: "取消", type: "warning" },
-            );
-        } catch {
+        const confirmed = await confirmAction(
+            "同步会先让游戏把当前进度落盘，游戏将重新启动。确定现在同步吗？",
+            { title: "同步至云端", confirmText: "同步" },
+        );
+        if (!confirmed) {
             // 取消 / 关闭：不重启也不提示
             return;
         }
@@ -338,25 +343,8 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-/* 标题栏里的「存档管理」入口，与 GameShell 自带的按钮同款深色样式 */
+/* 标题栏里的「存档管理」入口只保留不收缩；外观交给 AppButton 的 dark 变体 */
 .save-manager-entry {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 14px;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 10px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
     flex-shrink: 0;
-}
-
-.save-manager-entry:hover {
-    background: rgba(51, 65, 85, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
 }
 </style>

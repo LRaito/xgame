@@ -1,6 +1,13 @@
 <template>
     <div class="start-gate">
-        <button type="button" class="start-gate__btn" @click="$emit('start')">开始游戏</button>
+        <app-button
+            class="start-gate__btn"
+            variant="primary"
+            size="lg"
+            @click="$emit('start')"
+        >
+            开始游戏
+        </app-button>
     </div>
 </template>
 
@@ -18,31 +25,34 @@ defineEmits(["start"]);
     box-sizing: border-box;
 }
 
-.start-gate__btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+/* 开始游戏是全站唯一的渐变 CTA：结构走 AppButton，视觉保留渐变与上浮 */
+.start-gate .start-gate__btn.el-button {
+    --el-button-bg-color: transparent;
+    --el-button-hover-bg-color: transparent;
+    --el-button-active-bg-color: transparent;
+    height: auto;
+    min-height: 52px;
     padding: 14px 38px;
     border: 0;
-    border-radius: 14px;
-    background: linear-gradient(135deg, #3b82f6, #2563eb);
+    border-radius: var(--app-radius-cta);
+    background: var(--app-cta-gradient);
     color: #fff;
     font-family: inherit;
     font-size: 16px;
     font-weight: 600;
     letter-spacing: 0.02em;
-    cursor: pointer;
-    box-shadow: 0 12px 28px rgba(37, 99, 235, 0.35);
+    box-shadow: var(--app-cta-shadow);
     transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
 }
 
-.start-gate__btn:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 16px 34px rgba(37, 99, 235, 0.45);
+.start-gate .start-gate__btn.el-button:hover {
+    background: var(--app-cta-gradient);
+    box-shadow: var(--app-cta-shadow-hover);
     filter: brightness(1.05);
+    transform: translateY(-1px);
 }
 
-.start-gate__btn:active {
+.start-gate .start-gate__btn.el-button:active {
     transform: translateY(0);
 }
 </style>

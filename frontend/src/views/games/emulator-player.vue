@@ -7,37 +7,42 @@
             <!-- 持续加速：按一次一直加速、再按恢复。开关的就是引擎自己的「Fast Forward」设置项，
                  所以与设置菜单里那一项同步、也会随「保存配置」进账号；关着时用户自己绑的
                  快进快捷键行为不变 -->
-            <button
+            <app-button
                 v-if="game"
-                type="button"
                 class="emulator-player__action"
-                :class="{ 'emulator-player__action--on': fastForwardOn }"
-                :aria-pressed="fastForwardOn"
+                variant="secondary"
+                tone="dark"
+                size="lg"
+                :pressed="fastForwardOn"
                 :disabled="!engineReady"
                 @click="toggleFastForward"
             >
                 加速模式
-            </button>
+            </app-button>
             <!-- 截当前画面（Ctrl+Shift+S 同效）：先弹确认框预览+填描述，确认后存入图库 -->
-            <button
+            <app-button
                 v-if="game"
-                type="button"
                 class="emulator-player__action"
+                variant="secondary"
+                tone="dark"
+                size="lg"
                 :disabled="!engineReady || shooting"
                 @click="onScreenshot"
             >
                 {{ shooting ? "截图中…" : "截图" }}
-            </button>
+            </app-button>
             <!-- 把当前键位/画面/音量等模拟器配置整块存到账号 -->
-            <button
+            <app-button
                 v-if="game"
-                type="button"
                 class="emulator-player__action"
+                variant="secondary"
+                tone="dark"
+                size="lg"
                 :disabled="savingSettings"
                 @click="saveEngineSettings"
             >
                 {{ savingSettings ? "保存中…" : "保存配置" }}
-            </button>
+            </app-button>
             <!-- 第一列（像素完美）恒用机种固有的帧缓冲；4:3 那一列自带另一套（见 WIDE_MODE） -->
             <emu-window-select
                 v-if="baseNativeSize"
@@ -47,24 +52,27 @@
                 :wide="wideMode"
             />
             <!-- 有洞对齐图的平台（GBA、FC、GBC）：把机壳图盖在画面上，中间那个洞正好露出游戏画面 -->
-            <button
+            <app-button
                 v-if="supportsShell"
-                type="button"
                 class="emulator-player__action"
-                :class="{ 'emulator-player__action--on': shellOn }"
-                :aria-pressed="shellOn"
+                variant="secondary"
+                tone="dark"
+                size="lg"
+                :pressed="shellOn"
                 @click="toggleShell"
             >
                 显示机壳
-            </button>
-            <button
+            </app-button>
+            <app-button
                 v-if="game"
-                type="button"
                 class="emulator-player__action"
+                variant="secondary"
+                tone="dark"
+                size="lg"
                 @click="saveManagerVisible = true"
             >
                 存档管理
-            </button>
+            </app-button>
         </template>
         <start-gate
             v-if="needsGesture"
@@ -1263,42 +1271,8 @@ onBeforeUnmount(() => {
     white-space: nowrap;
 }
 
-/* 标题栏按钮（保存配置 / 存档管理），与 GameShell 自带按钮同款深色样式 */
+/* 标题栏按钮只保留不收缩；外观交给 AppButton 的 dark 变体 */
 .emulator-player__action {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 14px;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 10px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
     flex-shrink: 0;
-}
-
-.emulator-player__action:hover:not(:disabled) {
-    background: rgba(51, 65, 85, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
-}
-
-.emulator-player__action:disabled {
-    opacity: 0.6;
-    cursor: default;
-}
-
-/* 开着时的状态（「加速模式」「显示机壳」共用）：按钮点亮，一眼能看出当前是开着的 */
-.emulator-player__action--on {
-    background: rgba(37, 99, 235, 0.85);
-    border-color: rgba(96, 165, 250, 0.6);
-    color: #f8fafc;
-}
-
-.emulator-player__action--on:hover:not(:disabled) {
-    background: rgba(37, 99, 235, 0.95);
-    border-color: rgba(147, 197, 253, 0.8);
 }
 </style>

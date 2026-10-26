@@ -4,9 +4,8 @@
         title="游戏详情"
         width="min(810px, 96vw)"
         align-center
-        confirm-text="关闭"
+        footer-mode="close-only"
         @update:model-value="emit('update:modelValue', $event)"
-        @confirm="emit('update:modelValue', false)"
     >
         <div v-if="detail" class="game-detail">
             <!-- 图片栏：封面（共享）恒占第一格，其后是图集与本人的截图，可左右翻页 -->
@@ -43,9 +42,12 @@
                         <image-upload-button
                             :game-id="props.gameId"
                             :upload="uploadScreenshotAPI"
+                            size="sm"
                             @uploaded="reloadScreenshots"
                         />
-                        <app-button @click="screenshotManagerVisible = true">管理</app-button>
+                        <app-button variant="secondary" size="sm" @click="screenshotManagerVisible = true">
+                            管理
+                        </app-button>
                     </dd>
                 </div>
                 <div>
@@ -76,7 +78,12 @@
                 <div>
                     <dt>本体</dt>
                     <dd>
-                        <app-button v-if="detail.game_path" @click="downloadGame">
+                        <app-button
+                            v-if="detail.game_path"
+                            variant="secondary"
+                            size="sm"
+                            @click="downloadGame"
+                        >
                             下载
                         </app-button>
                         <span v-else>—</span>
@@ -85,7 +92,12 @@
                 <div>
                     <dt>封面</dt>
                     <dd>
-                        <app-button v-if="detail.cover_path" @click="downloadCover">
+                        <app-button
+                            v-if="detail.cover_path"
+                            variant="secondary"
+                            size="sm"
+                            @click="downloadCover"
+                        >
                             下载
                         </app-button>
                         <span v-else>—</span>

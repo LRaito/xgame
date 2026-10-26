@@ -10,7 +10,7 @@
     background: #f1f5f9;
     --brand-dark: #0f172a;
     --brand-accent: #2563eb;
-    --brand-accent-soft: #eff6ff;
+    --brand-accent-soft: #e9effd;
     --surface: #ffffff;
     --border: #e2e8f0;
     --text-muted: #64748b;
@@ -18,6 +18,132 @@
     --shadow-md: 0 4px 16px rgba(15, 23, 42, 0.06);
     --radius-lg: 14px;
     --radius-md: 10px;
+
+    /* ---------- 按钮与控件设计 token（全站统一） ---------- */
+    --app-color-primary: #2563eb;
+    --app-color-primary-rgb: 37, 99, 235;
+    --app-color-primary-hover: #1d4ed8;
+    --app-color-primary-active: #1e40af;
+    --app-color-primary-soft: #e9effd;
+    --app-color-primary-light-3: #6692f1;
+    --app-color-primary-light-5: #92b1f5;
+    --app-color-primary-light-7: #bed0f9;
+    --app-color-primary-light-8: #d3e0fb;
+    --app-color-primary-light-9: #e9effd;
+    --app-color-primary-dark-2: #1e4fbc;
+
+    --app-color-danger: #dc2626;
+    --app-color-danger-hover: #b91c1c;
+    --app-color-danger-active: #991b1b;
+    --app-color-danger-soft: #fce9e9;
+    --app-color-danger-light-5: #ee9393;
+    --app-color-success: #16a34a;
+    --app-color-warning: #d97706;
+
+    --app-text: #1e293b;
+    --app-text-muted: #64748b;
+    --app-surface-subtle: #f8fafc;
+    --app-border: #e2e8f0;
+
+    /* 深色区域：播放器标题栏、存档管理、侧栏、更新横幅 */
+    --app-dark-surface: rgba(30, 41, 59, 0.8);
+    --app-dark-surface-hover: rgba(51, 65, 85, 0.9);
+    --app-dark-border: rgba(148, 163, 184, 0.3);
+    --app-dark-border-hover: rgba(148, 163, 184, 0.5);
+    --app-dark-text: #e2e8f0;
+    --app-dark-primary: rgba(37, 99, 235, 0.85);
+    --app-dark-primary-hover: rgba(37, 99, 235, 1);
+    --app-dark-primary-border: rgba(96, 165, 250, 0.5);
+    --app-dark-danger-text: #fca5a5;
+    --app-dark-danger-border: rgba(248, 113, 113, 0.35);
+    --app-dark-danger-hover-bg: rgba(127, 29, 29, 0.4);
+
+    /* 压在图片 / 遮罩上的翻页按钮 */
+    --app-image-surface: rgba(15, 23, 42, 0.45);
+    --app-image-surface-hover: rgba(15, 23, 42, 0.72);
+    --app-overlay-surface: rgba(255, 255, 255, 0.16);
+    --app-overlay-surface-hover: rgba(255, 255, 255, 0.3);
+
+    /* 四档尺寸：xs 药丸 / sm 行内 / md 工具栏与弹框 / lg 播放器 */
+    --app-control-h-xs: 22px;
+    --app-control-h-sm: 28px;
+    --app-control-h-md: 36px;
+    --app-control-h-lg: 40px;
+    --app-control-px-xs: 8px;
+    --app-control-px-sm: 10px;
+    --app-control-px-md: 14px;
+    --app-control-px-lg: 20px;
+    --app-font-size-xs: 12px;
+    --app-font-size-sm: 13px;
+    --app-font-size-md: 14px;
+    --app-font-size-lg: 15px;
+    --app-radius-control-sm: 6px;
+    --app-radius-control: 8px;
+    --app-radius-pill: 999px;
+    --app-radius-cta: 14px;
+
+    --app-disabled-opacity: 0.5;
+    --app-focus-axis: 2px;
+    --app-focus-offset: 2px;
+    --app-focus-ring-light: rgba(37, 99, 235, 0.5);
+    --app-focus-ring-dark: #93c5fd;
+
+    --app-cta-gradient: linear-gradient(135deg, #3b82f6, #2563eb);
+    --app-cta-shadow: 0 12px 28px rgba(37, 99, 235, 0.35);
+    --app-cta-shadow-hover: 0 16px 34px rgba(37, 99, 235, 0.45);
+
+    --app-space-2: 8px;
+    --app-space-3: 12px;
+}
+
+/* Element Plus 主题对齐：品牌蓝与危险色，以及派生色（EP 不会从主色自动计算） */
+:root {
+    --el-color-primary: var(--app-color-primary);
+    --el-color-primary-rgb: 37, 99, 235;
+    --el-color-primary-light-3: #6692f1;
+    --el-color-primary-light-5: #92b1f5;
+    --el-color-primary-light-7: #bed0f9;
+    --el-color-primary-light-8: #d3e0fb;
+    --el-color-primary-light-9: #e9effd;
+    --el-color-primary-dark-2: #1e4fbc;
+
+    --el-color-danger: var(--app-color-danger);
+    --el-color-danger-rgb: 220, 38, 38;
+    --el-color-danger-light-3: #e76767;
+    --el-color-danger-light-5: #ee9393;
+    --el-color-danger-light-7: #f5bebe;
+    --el-color-danger-light-8: #f8d4d4;
+    --el-color-danger-light-9: #fce9e9;
+    --el-color-danger-dark-2: #b01e1e;
+
+    --el-border-radius-base: var(--app-radius-control);
+    --el-border-radius-small: var(--app-radius-control-sm);
+    --el-font-size-base: 14px;
+    --el-component-size: var(--app-control-h-md);
+    --el-component-size-small: var(--app-control-h-sm);
+    --el-component-size-large: var(--app-control-h-lg);
+    --el-pagination-hover-color: var(--app-color-primary);
+}
+
+/* EP 按钮高度是硬编码 32px，不读 --el-component-size；这里给默认尺寸兜底。
+   用 :where() 把 specificity 压到最低，让 AppButton 的 size/tone 类能覆盖它。 */
+.el-button:where(:not(.is-link):not(.is-text)) {
+    height: var(--app-control-h-md);
+    padding: 0 var(--app-control-px-md);
+    font-size: var(--app-font-size-md);
+}
+
+.el-button--small:where(:not(.is-link):not(.is-text)) {
+    height: var(--app-control-h-sm);
+    padding: 0 var(--app-control-px-sm);
+    font-size: var(--app-font-size-sm);
+    border-radius: var(--app-radius-control-sm);
+}
+
+.el-button--large:where(:not(.is-link):not(.is-text)) {
+    height: var(--app-control-h-lg);
+    padding: 0 var(--app-control-px-lg);
+    font-size: var(--app-font-size-lg);
 }
 
 /* 游戏播放页（GameShell 挂载期间）：整页铺满视口、滚动交给内部容器，页面本身不滚动。

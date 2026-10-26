@@ -23,7 +23,7 @@
                 </router-link>
             </nav>
             <div class="sider-footer">
-                <app-button class="sider-logout" plain @click="onLogout">
+                <app-button variant="secondary" tone="dark" block @click="onLogout">
                     退出登录
                 </app-button>
             </div>
@@ -226,19 +226,6 @@ async function onLogout() {
     display: flex;
     align-items: center;
     justify-content: center;
-}
-
-.sider-logout {
-    width: 100%;
-    border-color: rgba(255, 255, 255, 0.22) !important;
-    color: #e2e8f0 !important;
-    background: rgba(255, 255, 255, 0.06) !important;
-}
-
-.sider-logout:hover {
-    color: #fff !important;
-    border-color: rgba(255, 255, 255, 0.34) !important;
-    background: rgba(255, 255, 255, 0.12) !important;
 }
 
 .content {

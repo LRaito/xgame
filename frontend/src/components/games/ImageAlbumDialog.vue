@@ -4,38 +4,36 @@
         :title="title"
         width="720px"
         align-center
+        footer-mode="close-only"
         @update:model-value="emit('update:modelValue', $event)"
     >
         <div class="album">
             <div class="album__bar">
-                <button
-                    type="button"
-                    class="album__btn album__btn--primary"
+                <app-button
+                    variant="primary"
                     :disabled="busy"
                     @click="onPickFile"
                 >
                     {{ uploadText }}
-                </button>
+                </app-button>
                 <!-- 右上角固定的删除入口：点一下进删除模式，选好再点一下才是真删 -->
                 <div class="album__tools">
                     <span v-if="selectionMode" class="album__selected">已选 {{ selectedIds.size }} 张</span>
-                    <button
+                    <app-button
                         v-if="selectionMode"
-                        type="button"
-                        class="album__btn"
+                        variant="secondary"
                         :disabled="busy"
                         @click="exitSelection"
                     >
                         取消
-                    </button>
-                    <button
-                        type="button"
-                        class="album__btn album__btn--danger"
+                    </app-button>
+                    <app-button
+                        variant="danger"
                         :disabled="busy || (selectionMode && !selectedIds.size)"
                         @click="onDeleteClick"
                     >
                         {{ selectionMode ? `删除 ${selectedIds.size} 张` : "删除" }}
-                    </button>
+                    </app-button>
                 </div>
             </div>
 
@@ -108,10 +106,6 @@
             class="album__file"
             @change="onFileChange"
         />
-
-        <template #footer>
-            <app-button @click="emit('update:modelValue', false)">关闭</app-button>
-        </template>
     </app-dialog>
 </template>
 
@@ -530,52 +524,4 @@ watch(
     display: none;
 }
 
-.album__btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 6px 12px;
-    border: 1px solid #dcdfe6;
-    border-radius: 6px;
-    background: #fff;
-    color: #303133;
-    font-size: 13px;
-    cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
-    white-space: nowrap;
-}
-
-.album__btn:hover:not(:disabled) {
-    border-color: var(--el-color-primary);
-    color: var(--el-color-primary);
-}
-
-.album__btn:disabled {
-    opacity: 0.55;
-    cursor: default;
-}
-
-.album__btn--primary {
-    border-color: var(--el-color-primary);
-    background: var(--el-color-primary);
-    color: #fff;
-}
-
-.album__btn--primary:hover:not(:disabled) {
-    background: var(--el-color-primary-light-3);
-    border-color: var(--el-color-primary-light-3);
-    color: #fff;
-}
-
-.album__btn--danger {
-    border-color: var(--el-color-danger);
-    background: var(--el-color-danger);
-    color: #fff;
-}
-
-.album__btn--danger:hover:not(:disabled) {
-    background: var(--el-color-danger-light-3);
-    border-color: var(--el-color-danger-light-3);
-    color: #fff;
-}
 </style>

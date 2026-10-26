@@ -1,62 +1,64 @@
 <template>
     <div v-if="modelValue" class="save-manager" @click.self="onClose">
         <section class="save-manager__card">
-            <button type="button" class="save-manager__close" @click="onClose">
+            <app-button
+                class="save-manager__close"
+                variant="ghost"
+                tone="dark"
+                size="sm"
+                icon-only
+                round
+                aria-label="关闭"
+                @click="onClose"
+            >
                 ✕
-            </button>
+            </app-button>
 
-            <nav class="save-manager__tabs">
-                <button
-                    type="button"
-                    class="save-manager__tab"
-                    :class="{ 'is-active': activeTab === 'local' }"
-                    :aria-pressed="activeTab === 'local'"
-                    @click="switchTab('local')"
-                >
-                    本地存档
-                </button>
-                <button
-                    type="button"
-                    class="save-manager__tab"
-                    :class="{ 'is-active': activeTab === 'cloud' }"
-                    :aria-pressed="activeTab === 'cloud'"
-                    @click="switchTab('cloud')"
-                >
-                    云端存档
-                </button>
-            </nav>
+            <app-segmented
+                v-model="activeTab"
+                class="save-manager__tabs"
+                tone="dark"
+                :options="TAB_OPTIONS"
+                aria-label="本地或云端存档"
+                @change="switchTab"
+            />
 
             <div class="save-manager__body">
                 <!-- 本地存档 -->
                 <template v-if="activeTab === 'local'">
                     <div class="save-manager__toolbar">
-                        <button
-                            type="button"
-                            class="save-manager__btn save-manager__btn--primary"
+                        <app-button
+                            variant="primary"
+                            tone="dark"
                             :disabled="working"
                             @click="onSync"
                         >
                             {{ syncing ? "正在同步…" : "重启游戏以同步最新存档" }}
-                        </button>
-                        <button
-                            type="button"
-                            class="save-manager__btn save-manager__btn--primary"
+                        </app-button>
+                        <app-button
+                            variant="primary"
+                            tone="dark"
                             :disabled="cloudBusy"
                             @click="onUploadCloud"
                         >
                             {{ cloudBusy ? "正在同步…" : "同步至云端" }}
-                        </button>
-                        <button
-                            type="button"
-                            class="save-manager__btn"
+                        </app-button>
+                        <app-button
+                            variant="secondary"
+                            tone="dark"
                             :disabled="working"
                             @click="onUpload"
                         >
                             从本地上传
-                        </button>
-                        <button type="button" class="save-manager__btn" :disabled="working" @click="refresh">
+                        </app-button>
+                        <app-button
+                            variant="secondary"
+                            tone="dark"
+                            :disabled="working"
+                            @click="refresh"
+                        >
                             刷新
-                        </button>
+                        </app-button>
                     </div>
                     <p v-if="!saves.length" class="save-manager__empty">
                         还没有本地存档。先在游戏里保存一次吧。
@@ -70,22 +72,25 @@
                                 </span>
                             </div>
                             <div class="save-manager__item-actions">
-                                <button
-                                    type="button"
-                                    class="save-manager__btn save-manager__btn--small"
+                                <app-button
+                                    variant="secondary"
+                                    tone="dark"
+                                    size="sm"
                                     :disabled="working"
                                     @click="onDownload(save)"
                                 >
                                     下载
-                                </button>
-                                <button
-                                    type="button"
-                                    class="save-manager__btn save-manager__btn--small save-manager__btn--danger"
+                                </app-button>
+                                <app-button
+                                    variant="danger"
+                                    plain
+                                    tone="dark"
+                                    size="sm"
                                     :disabled="working"
                                     @click="onDelete(save)"
                                 >
                                     删除
-                                </button>
+                                </app-button>
                             </div>
                         </li>
                     </ul>
@@ -94,31 +99,14 @@
                 <!-- 云端存档 -->
                 <template v-else>
                     <div class="save-manager__toolbar">
-                        <div
+                        <app-segmented
+                            v-model="cloudViewMode"
                             class="save-manager__view-mode"
-                            role="group"
+                            tone="dark"
+                            size="sm"
+                            :options="VIEW_OPTIONS"
                             aria-label="云端存档展示方式"
-                        >
-                            <button
-                                type="button"
-                                class="save-manager__mode-btn"
-                                :class="{ 'is-active': cloudViewMode === 'list' }"
-                                :aria-pressed="cloudViewMode === 'list'"
-                                @click="cloudViewMode = 'list'"
-                            >
-                                列表模式
-                            </button>
-                            <button
-                                type="button"
-                                class="save-manager__mode-btn"
-                                :class="{ 'is-active': cloudViewMode === 'tree' }"
-                                :aria-pressed="cloudViewMode === 'tree'"
-                                title="树形模式暂未实现"
-                                @click="cloudViewMode = 'tree'"
-                            >
-                                树形模式
-                            </button>
-                        </div>
+                        />
                     </div>
                     <p v-if="!cloudSaves.length" class="save-manager__empty">
                         还没有云端存档。切到「本地存档」点「同步至云端」把当前本地存档整体备份一份。
@@ -139,30 +127,34 @@
                                 </span>
                             </div>
                             <div class="save-manager__item-actions">
-                                <button
-                                    type="button"
-                                    class="save-manager__btn save-manager__btn--small save-manager__btn--primary"
+                                <app-button
+                                    variant="primary"
+                                    tone="dark"
+                                    size="sm"
                                     :disabled="cloudBusy"
                                     @click="onSyncToLocal(snapshot)"
                                 >
                                     同步至本地
-                                </button>
-                                <button
-                                    type="button"
-                                    class="save-manager__btn save-manager__btn--small"
+                                </app-button>
+                                <app-button
+                                    variant="secondary"
+                                    tone="dark"
+                                    size="sm"
                                     :disabled="cloudBusy"
                                     @click="onToggleDetail(snapshot)"
                                 >
                                     {{ expandedId === snapshot.id ? "收起" : "详情" }}
-                                </button>
-                                <button
-                                    type="button"
-                                    class="save-manager__btn save-manager__btn--small save-manager__btn--danger"
+                                </app-button>
+                                <app-button
+                                    variant="danger"
+                                    plain
+                                    tone="dark"
+                                    size="sm"
                                     :disabled="cloudBusy"
                                     @click="onDeleteSnapshot(snapshot)"
                                 >
                                     删除
-                                </button>
+                                </app-button>
                             </div>
                             <ul v-if="expandedId === snapshot.id" class="save-manager__files">
                                 <li v-if="detailLoading" class="save-manager__files-loading">加载中…</li>
@@ -195,22 +187,24 @@
                                             </span>
                                             <span v-else class="save-manager__desc-hint">单击描述框即可编辑</span>
                                             <div v-if="editingId === snapshot.id" class="save-manager__desc-actions">
-                                                <button
-                                                    type="button"
-                                                    class="save-manager__btn save-manager__btn--small"
+                                                <app-button
+                                                    variant="secondary"
+                                                    tone="dark"
+                                                    size="sm"
                                                     :disabled="cloudBusy"
                                                     @click="onCancelEditDesc"
                                                 >
                                                     取消
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    class="save-manager__btn save-manager__btn--small save-manager__btn--primary"
+                                                </app-button>
+                                                <app-button
+                                                    variant="primary"
+                                                    tone="dark"
+                                                    size="sm"
                                                     :disabled="cloudBusy"
                                                     @click="onSaveDesc(snapshot)"
                                                 >
                                                     保存
-                                                </button>
+                                                </app-button>
                                             </div>
                                         </div>
                                     </li>
@@ -224,14 +218,15 @@
                                     >
                                         <span class="save-manager__item-name">{{ file.name }}.sol</span>
                                         <span class="save-manager__item-key">{{ formatBytes(file.size) }}</span>
-                                        <button
-                                            type="button"
-                                            class="save-manager__btn save-manager__btn--small"
+                                        <app-button
+                                            variant="secondary"
+                                            tone="dark"
+                                            size="sm"
                                             :disabled="cloudBusy"
                                             @click="onDownloadCloudFile(snapshot, file)"
                                         >
                                             下载
-                                        </button>
+                                        </app-button>
                                     </li>
                                 </template>
                             </ul>
@@ -253,9 +248,18 @@
             <div class="save-manager__prompt-card">
                 <header class="save-manager__prompt-head">
                     <h3 class="save-manager__prompt-title">同步至云端</h3>
-                    <button type="button" class="save-manager__close" @click="cancelUploadPrompt">
+                    <app-button
+                        class="save-manager__close"
+                        variant="ghost"
+                        tone="dark"
+                        size="sm"
+                        icon-only
+                        round
+                        aria-label="关闭"
+                        @click="cancelUploadPrompt"
+                    >
                         ✕
-                    </button>
+                    </app-button>
                 </header>
                 <p class="save-manager__prompt-desc">
                     把当前游戏此刻的本地存档整体备份到云端
@@ -271,14 +275,12 @@
                     <span class="save-manager__desc-count">{{ uploadDesc.length }}/100</span>
                 </div>
                 <div class="save-manager__prompt-actions">
-                    <button type="button" class="save-manager__btn" @click="cancelUploadPrompt">取消</button>
-                    <button
-                        type="button"
-                        class="save-manager__btn save-manager__btn--primary"
-                        @click="confirmUploadCloud"
-                    >
+                    <app-button variant="secondary" tone="dark" @click="cancelUploadPrompt">
+                        取消
+                    </app-button>
+                    <app-button variant="primary" tone="dark" @click="confirmUploadCloud">
                         同步
-                    </button>
+                    </app-button>
                 </div>
             </div>
         </div>
@@ -287,7 +289,8 @@
 
 <script setup>
 import { nextTick, onBeforeUnmount, ref, watch } from "vue";
-import { ElMessage, ElMessageBox } from "element-plus";
+import { ElMessage } from "element-plus";
+import { confirmAction, dangerConfirm } from "@/utils/confirm";
 import { downloadLocalSave, isB64SOL } from "@/utils/ruffle";
 import { buildKeyFromReference, buildKeyFromSwfOrigin, collectLocalSaves } from "@/utils/gameSaves";
 import { formatBytes, formatDateTime } from "@/utils/fileDisplay";
@@ -307,6 +310,15 @@ const props = defineProps({
 });
 
 const emit = defineEmits(["update:modelValue", "sync", "save-action", "upload-cloud"]);
+
+const TAB_OPTIONS = [
+    { label: "本地存档", value: "local" },
+    { label: "云端存档", value: "cloud" },
+];
+const VIEW_OPTIONS = [
+    { label: "列表模式", value: "list" },
+    { label: "树形模式", value: "tree" },
+];
 
 const activeTab = ref("local");
 const saves = ref([]);
@@ -421,17 +433,11 @@ async function onSyncToLocal(snapshot) {
     if (cloudBusy.value) {
         return;
     }
-    try {
-        await ElMessageBox.confirm(
-            "将用该云端存档覆盖本地对应存档并重启游戏，确定吗？",
-            "同步至本地",
-            {
-                confirmButtonText: "同步",
-                cancelButtonText: "取消",
-                type: "warning",
-            },
-        );
-    } catch {
+    const confirmed = await confirmAction(
+        "将用该云端存档覆盖本地对应存档并重启游戏，确定吗？",
+        { title: "同步至本地", confirmText: "同步", danger: true },
+    );
+    if (!confirmed) {
         return;
     }
     cloudBusy.value = true;
@@ -456,17 +462,10 @@ async function onSyncToLocal(snapshot) {
 }
 
 async function onDeleteSnapshot(snapshot) {
-    try {
-        await ElMessageBox.confirm(
-            `删除这份云端存档？删除后无法恢复。`,
-            "删除云端存档",
-            {
-                confirmButtonText: "删除",
-                cancelButtonText: "取消",
-                type: "warning",
-            },
-        );
-    } catch {
+    const confirmed = await dangerConfirm("删除这份云端存档？删除后无法恢复。", {
+        title: "删除云端存档",
+    });
+    if (!confirmed) {
         return;
     }
     cloudBusy.value = true;
@@ -586,34 +585,22 @@ async function onFileChange(event) {
         let key;
         if (existing) {
             // 同名存档：询问是否覆盖
-            try {
-                await ElMessageBox.confirm(
-                    `本地已有同名存档「${name}.sol」，覆盖后当前游戏会重启以读取新存档。确定覆盖吗？`,
-                    "覆盖存档",
-                    {
-                        confirmButtonText: "覆盖",
-                        cancelButtonText: "取消",
-                        type: "warning",
-                    },
-                );
-            } catch {
+            const confirmed = await confirmAction(
+                `本地已有同名存档「${name}.sol」，覆盖后当前游戏会重启以读取新存档。确定覆盖吗？`,
+                { title: "覆盖存档", confirmText: "覆盖", danger: true },
+            );
+            if (!confirmed) {
                 return;
             }
             key = existing.key;
         } else {
             // 新存档：以既有存档的 key 为基座派生同名槽位；
             // 一条本地档都没有时，直接按「站点 origin + 本游戏 SWF 路径 + 存档名」构造。
-            try {
-                await ElMessageBox.confirm(
-                    `将把「${name}.sol」导入为本地新存档，导入后当前游戏会重启以读取。确定吗？`,
-                    "导入存档",
-                    {
-                        confirmButtonText: "导入",
-                        cancelButtonText: "取消",
-                        type: "info",
-                    },
-                );
-            } catch {
+            const confirmed = await confirmAction(
+                `将把「${name}.sol」导入为本地新存档，导入后当前游戏会重启以读取。确定吗？`,
+                { title: "导入存档", confirmText: "导入", type: "info" },
+            );
+            if (!confirmed) {
                 return;
             }
             key = saves.value.length
@@ -640,13 +627,11 @@ function normalizeSolName(filename) {
 }
 
 async function onDelete(save) {
-    try {
-        await ElMessageBox.confirm(`删除存档「${save.name}.sol」？删除后无法恢复。`, "删除存档", {
-            confirmButtonText: "删除",
-            cancelButtonText: "取消",
-            type: "warning",
-        });
-    } catch {
+    const confirmed = await dangerConfirm(
+        `删除存档「${save.name}.sol」？删除后无法恢复。`,
+        { title: "删除存档" },
+    );
+    if (!confirmed) {
         return;
     }
     working.value = true;
@@ -739,71 +724,17 @@ defineExpose({
 }
 
 /* 弹框没有标题栏了，关闭按钮贴右上角浮在内容之上 */
-.save-manager__close {
+.save-manager .save-manager__close.el-button {
     position: absolute;
     top: 10px;
     right: 12px;
     z-index: 2;
-    border: 0;
-    background: transparent;
-    color: #94a3b8;
-    font-size: 16px;
-    line-height: 1;
-    cursor: pointer;
-    padding: 6px;
-    border-radius: 8px;
+    font-size: 15px;
 }
 
-.save-manager__close:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
-}
-
-/* 单选栏：两个按钮共用中间那条边线，看着是一整条分段控件（样式参考游戏发现页的
-   游戏检索/游戏榜单，按弹框尺寸与深色底调整）。 */
+/* 分段标签的位置由容器内边距决定，外观交给 AppSegmented */
 .save-manager__tabs {
-    display: flex;
     padding: 18px 56px 0 20px;
-}
-
-.save-manager__tab {
-    /* 后一个的左边界压在前一个的右边界上 */
-    margin-left: -1px;
-    padding: 10px 30px;
-    border: 1px solid rgba(148, 163, 184, 0.24);
-    background: rgba(30, 41, 59, 0.6);
-    color: #cbd5e1;
-    font-family: inherit;
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 1;
-    letter-spacing: 1px;
-    cursor: pointer;
-    user-select: none;
-    transition: none;
-}
-
-.save-manager__tab:first-child {
-    margin-left: 0;
-    border-radius: 8px 0 0 8px;
-}
-
-.save-manager__tab:last-child {
-    border-radius: 0 8px 8px 0;
-}
-
-.save-manager__tab:hover {
-    color: #fff;
-    border-color: rgba(148, 163, 184, 0.4);
-}
-
-/* 选中的那个要压在相邻按钮之上，否则它那条主色边线会被后一个按钮的灰边盖掉 */
-.save-manager__tab.is-active {
-    position: relative;
-    z-index: 1;
-    border-color: rgba(96, 165, 250, 0.5);
-    background: rgba(37, 99, 235, 0.85);
-    color: #fff;
 }
 
 .save-manager__cloud-disabled {
@@ -822,48 +753,6 @@ defineExpose({
     gap: 10px;
     /* 与上方「本地/云端存档」标签、下方存档列表的左边缘对齐（body 已有 20px 内边距） */
     padding: 14px 0;
-}
-
-/* 云端存档的展示方式：分段按钮，单击切换；树形模式暂未实现 */
-.save-manager__view-mode {
-    display: inline-flex;
-}
-
-.save-manager__mode-btn {
-    /* 后一个的左边界压在前一个的右边界上 */
-    margin-left: -1px;
-    padding: 6px 12px;
-    border: 1px solid rgba(148, 163, 184, 0.24);
-    background: rgba(30, 41, 59, 0.6);
-    color: #cbd5e1;
-    font-family: inherit;
-    font-size: 13px;
-    line-height: 1;
-    cursor: pointer;
-    user-select: none;
-}
-
-.save-manager__mode-btn:first-child {
-    margin-left: 0;
-    border-radius: 8px 0 0 8px;
-}
-
-.save-manager__mode-btn:last-child {
-    border-radius: 0 8px 8px 0;
-}
-
-.save-manager__mode-btn:hover {
-    color: #fff;
-    border-color: rgba(148, 163, 184, 0.4);
-}
-
-/* 选中的那个压在相邻按钮之上，避免主色边线被后一个按钮的灰边盖掉 */
-.save-manager__mode-btn.is-active {
-    position: relative;
-    z-index: 1;
-    border-color: rgba(96, 165, 250, 0.5);
-    background: rgba(37, 99, 235, 0.85);
-    color: #fff;
 }
 
 .save-manager__body {
@@ -1165,55 +1054,4 @@ defineExpose({
     padding-top: 12px;
 }
 
-/* 深色风格按钮，与游戏外壳标题栏按钮同款 */
-.save-manager__btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 14px;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 10px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
-    white-space: nowrap;
-}
-
-.save-manager__btn:hover:not(:disabled) {
-    background: rgba(51, 65, 85, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
-}
-
-.save-manager__btn:disabled {
-    opacity: 0.55;
-    cursor: default;
-}
-
-.save-manager__btn--primary {
-    background: rgba(37, 99, 235, 0.85);
-    border-color: rgba(96, 165, 250, 0.5);
-    color: #fff;
-}
-
-.save-manager__btn--primary:hover:not(:disabled) {
-    background: rgba(37, 99, 235, 1);
-}
-
-.save-manager__btn--danger {
-    color: #fca5a5;
-    border-color: rgba(248, 113, 113, 0.35);
-}
-
-.save-manager__btn--danger:hover:not(:disabled) {
-    background: rgba(127, 29, 29, 0.4);
-    border-color: rgba(248, 113, 113, 0.55);
-    color: #fecaca;
-}
-
-.save-manager__btn--small {
-    padding: 6px 10px;
-    font-size: 13px;
-}
 </style>

@@ -1,10 +1,10 @@
 <template>
     <div v-if="updateReady" class="update-banner" role="status" aria-live="polite">
         <span class="update-banner__text">发现新版本，刷新页面后生效。</span>
-        <app-button type="primary" @click="reloadPage">立即刷新</app-button>
-        <button type="button" class="update-banner__later" @click="dismissVersion">
+        <app-button variant="primary" tone="dark" @click="reloadPage">立即刷新</app-button>
+        <app-button variant="ghost" tone="dark" size="sm" @click="dismissVersion">
             稍后
-        </button>
+        </app-button>
     </div>
 </template>
 
@@ -31,16 +31,4 @@ import { updateReady, dismissVersion, reloadPage } from "@/utils/versionCheck";
     box-shadow: 0 8px 24px rgba(15, 23, 42, 0.28);
 }
 
-.update-banner__later {
-    padding: 0;
-    border: none;
-    background: transparent;
-    color: #cbd5e1;
-    font-size: 13px;
-    cursor: pointer;
-}
-
-.update-banner__later:hover {
-    color: #fff;
-}
 </style>

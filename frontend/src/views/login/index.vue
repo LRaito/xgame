@@ -47,7 +47,9 @@
                 <p v-if="errorMessage" class="login-error" role="alert">{{ errorMessage }}</p>
                 <app-button
                     class="login-submit"
-                    type="primary"
+                    variant="primary"
+                    size="lg"
+                    block
                     :loading="loading"
                     native-type="submit"
                 >
@@ -57,7 +59,7 @@
 
             <p class="login-switch">
                 <span>{{ isRegister ? "已经有账号了？" : "还没有账号？" }}</span>
-                <app-button link type="primary" @click="toggleMode">
+                <app-button variant="link" @click="toggleMode">
                     {{ isRegister ? "去登录" : "注册一个" }}
                 </app-button>
             </p>
@@ -195,12 +197,7 @@ async function onSubmit() {
 }
 
 .login-submit {
-    width: 100%;
     margin-top: 8px;
-    height: 44px;
-    border-radius: 10px;
-    font-size: 15px;
-    font-weight: 500;
 }
 
 .login-error {
