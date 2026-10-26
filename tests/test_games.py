@@ -269,12 +269,11 @@ def test_game_crud_flow(game_service, storage_root):
     assert _files(storage_root) == set()
 
 
-def test_replace_deletes_old_storage_objects(app, game_service, storage_root):
+def test_replace_deletes_old_storage_objects(game_service, storage_root):
     first = game_service.create(
         "旧名", "描述", _upload("a.swf", b"old-swf"), cartridge_id="OLD-1"
     )
     assert first.game_path == "game/flash/OLD-1/game.swf"
-    _unlock_body(app, first.id)
 
     # 本体路径固定为 game.swf；再次上传覆盖同一文件，不再产生旧路径
     game_service.update(first.id, name="新名")
@@ -560,55 +559,55 @@ def test_emulator_types_upload_and_play(logged_in_games, game_type, extension):
     assert play.headers.get("content-type") == "application/octet-stream"
 
 
-def test_replacing_body_switches_game_type(logged_in_games, storage_root):
-    """换本体即换类型：上传另一平台的本体后类型随扩展名切换，旧目录被清掉。"""
+def test_replacing_body_cross_type_rejected(logged_in_games, storage_root):
+    """换本体只接受同一游戏类型：跨类型直接 400，旧本体与库值都不动。"""
     nes = _create_game(logged_in_games, "N", "a.nes", b"nes-body").json()["data"]
     cid = nes["cartridge_id"]
-    assert nes["game_type"] == "nes"
-    assert _exists(storage_root, f"game/nes/{cid}/game.nes")
-    _unlock_body(logged_in_games.app, nes["id"])
+    before = logged_in_games.get(f"/api/games/manage/{nes['id']}").json()["data"]
+    before_files = _files(storage_root)
 
-    uploaded = logged_in_games.post(
+    rejected = logged_in_games.post(
         f"/api/games/manage/{nes['id']}/assets",
         data={"kind": "game"},
         files={"file": ("a.gba", b"gba-body", "application/octet-stream")},
     )
-    assert uploaded.status_code == 201
-    body = uploaded.json()["data"]
-    assert body["game_type"] == "gba"
-    assert body["game_path"] == f"game/gba/{cid}/game.gba"
-    assert body["path"] == f"/games/play/{nes['id']}"
-    assert not (storage_root / "game" / "nes" / cid).exists()
+    assert rejected.status_code == 400
+    message = rejected.json()["message"]
+    assert "任天堂 FC" in message
+    assert "任天堂 GBA" in message
+    assert _files(storage_root) == before_files
 
-    # 详情接口同样返回切换后的类型
-    detail = logged_in_games.get(f"/api/games/manage/{nes['id']}").json()["data"]
-    assert detail["game_type"] == "gba"
+    after = logged_in_games.get(f"/api/games/manage/{nes['id']}").json()["data"]
+    for key in ("game_type", "game_path", "size", "crc32", "updated_at"):
+        assert after[key] == before[key]
+    assert after["game_path"] == f"game/nes/{cid}/game.nes"
+    play = logged_in_games.get(f"/api/games/{nes['id']}/play")
+    assert play.status_code == 200
+    assert play.content == b"nes-body"
 
 
-def test_type_switch_keeps_cover(logged_in_games, storage_root):
-    """换类型挪目录：封面跟着从旧类型目录搬到新类型目录，不会随旧目录一起被删。"""
+def test_replacing_body_keeps_cover(logged_in_games, storage_root):
+    """同类型换本体：封面留在原目录，内容不变。"""
     nes = _create_game(
         logged_in_games,
-        "带封面换类型",
+        "带封面换本体",
         "a.nes",
         b"nes-body",
         cover=("c.png", b"png-body", "image/png"),
     ).json()["data"]
     cid = nes["cartridge_id"]
     assert _exists(storage_root, f"game/nes/{cid}/cover.png")
-    _unlock_body(logged_in_games.app, nes["id"])
 
-    switched = logged_in_games.post(
+    replaced = logged_in_games.post(
         f"/api/games/manage/{nes['id']}/assets",
         data={"kind": "game"},
-        files={"file": ("a.gba", b"gba-body", "application/octet-stream")},
+        files={"file": ("b.nes", b"new-nes-body", "application/octet-stream")},
     )
-    assert switched.status_code == 201, switched.text
-    body = switched.json()["data"]
-    assert body["game_type"] == "gba"
-    assert body["cover_path"] == f"game/gba/{cid}/cover.png"
-    assert _read(storage_root, f"game/gba/{cid}/cover.png") == b"png-body"
-    assert not (storage_root / "game" / "nes" / cid).exists()
+    assert replaced.status_code == 201, replaced.text
+    body = replaced.json()["data"]
+    assert body["game_type"] == "nes"
+    assert body["cover_path"] == f"game/nes/{cid}/cover.png"
+    assert _read(storage_root, f"game/nes/{cid}/cover.png") == b"png-body"
 
     cover = logged_in_games.get(f"/api/games/{nes['id']}/cover")
     assert cover.status_code == 200
@@ -625,32 +624,113 @@ def test_body_crc32_recorded_on_upload(logged_in_games):
     assert detail["crc32"] == body["crc32"]
 
 
-def test_body_crc32_lock_allows_same_file(logged_in_games):
-    """本体已锁定：重传同一个文件（rom 丢了补传）放行，crc32 不变。"""
-    game = _create_game(logged_in_games, "锁-同文件", "a.nes", b"nes-body").json()["data"]
-    again = logged_in_games.post(
+def test_body_reupload_updates_crc32_and_size(logged_in_games, storage_root):
+    """同类型换本体：任意新内容都接受，crc32/size 一起更新。"""
+    game = _create_game(logged_in_games, "换内容", "a.nes", b"nes-body").json()["data"]
+    new_body = b"nes-body-v2-longer"
+    replaced = logged_in_games.post(
         f"/api/games/manage/{game['id']}/assets",
         data={"kind": "game"},
-        files={"file": ("a.nes", b"nes-body", "application/octet-stream")},
+        files={"file": ("a.nes", new_body, "application/octet-stream")},
     )
-    assert again.status_code == 201
-    assert again.json()["data"]["crc32"] == game["crc32"]
+    assert replaced.status_code == 201, replaced.text
+    body = replaced.json()["data"]
+    assert body["game_path"] == game["game_path"]
+    assert body["crc32"] == _crc32_of(new_body)
+    assert body["size"] == len(new_body)
+    assert _read(storage_root, body["game_path"]) == new_body
+    detail = logged_in_games.get(f"/api/games/manage/{game['id']}").json()["data"]
+    assert detail["crc32"] == _crc32_of(new_body)
 
 
-def test_body_crc32_lock_rejects_other_file(logged_in_games, storage_root):
-    """本体已锁定：换成本不一致的文件被拒，且旧本体文件没被覆盖。"""
-    game = _create_game(logged_in_games, "锁-异文件", "a.nes", b"nes-body").json()["data"]
-    before = _files(storage_root)
+@pytest.mark.parametrize(
+    "game_type,first,second,new_body",
+    [
+        ("gb", "a.gb", "b.gbc", b"gbc-body"),
+        ("snes", "a.sfc", "b.smc", b"smc-body"),
+        ("segaMD", "a.md", "b.gen", b"gen-body"),
+    ],
+)
+def test_body_reupload_same_type_changes_extension(
+    logged_in_games, storage_root, game_type, first, second, new_body
+):
+    """同一游戏类型内可换后缀：新文件就位、旧后缀文件删掉、crc32 更新。"""
+    game = _create_game(logged_in_games, f"换后缀 {game_type}", first, b"old-body").json()[
+        "data"
+    ]
+    cid = game["cartridge_id"]
+    replaced = logged_in_games.post(
+        f"/api/games/manage/{game['id']}/assets",
+        data={"kind": "game"},
+        files={"file": (second, new_body, "application/octet-stream")},
+    )
+    assert replaced.status_code == 201, replaced.text
+    body = replaced.json()["data"]
+    new_path = f"game/{game_type}/{cid}/game{Path(second).suffix}"
+    assert body["game_type"] == game_type
+    assert body["game_path"] == new_path
+    assert body["crc32"] == _crc32_of(new_body)
+    assert _read(storage_root, new_path) == new_body
+    assert not _exists(storage_root, f"game/{game_type}/{cid}/game{Path(first).suffix}")
+
+
+@pytest.mark.parametrize(
+    "first,second,current_label,new_label,new_body",
+    [
+        ("a.nes", "b.gba", "任天堂 FC", "任天堂 GBA", b"gba-body"),
+        ("a.gb", "b.nes", "任天堂 GB/GBC", "任天堂 FC", b"nes-body"),
+        ("a.swf", "b.zip", "Flash", "HTML5", b"zip-body"),
+        ("a.zip", "b.nes", "HTML5", "任天堂 FC", b"nes-body"),
+    ],
+)
+def test_body_reupload_cross_type_rejected(
+    logged_in_games,
+    storage_root,
+    first,
+    second,
+    current_label,
+    new_label,
+    new_body,
+):
+    """跨类型换本体 400：旧文件、库字段、播放内容全部不动。"""
+    seed = _make_zip({"index.html": b"seed"}) if first == "a.zip" else b"old-body"
+    if second == "b.zip":
+        new_body = _make_zip({"index.html": b"new"})
+    game = _create_game(logged_in_games, f"跨类型 {first}", first, seed).json()["data"]
+    before = logged_in_games.get(f"/api/games/manage/{game['id']}").json()["data"]
+    before_files = _files(storage_root)
 
     rejected = logged_in_games.post(
         f"/api/games/manage/{game['id']}/assets",
         data={"kind": "game"},
-        files={"file": ("a.nes", b"other-body", "application/octet-stream")},
+        files={"file": (second, new_body, "application/octet-stream")},
     )
     assert rejected.status_code == 400
-    assert "CRC32" in rejected.json()["message"]
-    assert _files(storage_root) == before
-    assert logged_in_games.get(f"/api/games/manage/{game['id']}").json()["data"]["crc32"] == game["crc32"]
+    message = rejected.json()["message"]
+    assert current_label in message
+    assert new_label in message
+    assert _files(storage_root) == before_files
+
+    after = logged_in_games.get(f"/api/games/manage/{game['id']}").json()["data"]
+    for key in ("game_type", "game_path", "size", "crc32", "updated_at"):
+        assert after[key] == before[key]
+    play = logged_in_games.get(f"/api/games/{game['id']}/play")
+    assert play.status_code == 200
+    assert play.content == seed
+
+
+def test_body_reupload_unknown_extension_rejected(logged_in_games, storage_root):
+    """未收录后缀仍是 400，旧档不动。"""
+    game = _create_game(logged_in_games, "未知后缀", "a.nes", b"nes-body").json()["data"]
+    before_files = _files(storage_root)
+    rejected = logged_in_games.post(
+        f"/api/games/manage/{game['id']}/assets",
+        data={"kind": "game"},
+        files={"file": ("b.txt", b"text-body", "text/plain")},
+    )
+    assert rejected.status_code == 400
+    assert "无法识别" in rejected.json()["message"]
+    assert _files(storage_root) == before_files
 
 
 @pytest.mark.parametrize(
@@ -971,15 +1051,19 @@ def test_rename_cartridge_id_moves_historical_type_dirs(
     game_id = created["id"]
     _upload_image(logged_in_games, "/api/games/screenshots", game_id)
     _upload_save(logged_in_games, game_id)
-    _unlock_body(app, game_id)
 
-    # 换本体换成 gba：游戏目录跟着走，存档与截图目录留在 nes 下
-    switched = logged_in_games.post(
-        f"/api/games/manage/{game_id}/assets",
-        data={"kind": "game"},
-        files={"file": ("b.gba", b"gba-body", "application/octet-stream")},
-    )
-    assert switched.status_code == 201, switched.text
+    # 直接造出「历史版本换过类型」的状态：库与游戏目录改到 gba，存档/截图仍留在 nes 下
+    with Session(app.state.engine) as session:
+        row = session.get(Game, game_id)
+        row.game_type = "gba"
+        row.game_path = "game/gba/HIST-1/game.gba"
+        session.add(row)
+        session.commit()
+    old_dir = Path(storage_root) / "game" / "nes" / "HIST-1"
+    new_dir = Path(storage_root) / "game" / "gba" / "HIST-1"
+    new_dir.parent.mkdir(parents=True, exist_ok=True)
+    old_dir.rename(new_dir)
+    (new_dir / "game.nes").rename(new_dir / "game.gba")
     assert _exists(storage_root, "game/gba/HIST-1/game.gba")
     assert _dir_files(storage_root, "save/alice/nes/HIST-1/")
 
@@ -1210,13 +1294,13 @@ def test_rename_cartridge_id_rejects_path_too_long_on_windows(
     assert _files(storage_root) == before_files
 
 
-def test_rename_cartridge_id_keeps_body_lock_and_cover_type(
+def test_rename_cartridge_id_keeps_crc32_and_cover_type(
     logged_in_games, storage_root
 ):
-    """改名不碰本体内容：CRC32 锁与封面类型都原样保留，锁仍然生效。"""
+    """改名不碰本体内容：CRC32 与封面类型都原样保留，之后仍可换同类型新本体。"""
     created = _create_game(
         logged_in_games,
-        "锁",
+        "改名保摘要",
         "a.nes",
         b"locked-body",
         cover=("cover.png", _PNG_HEAD + b"c", "image/png"),
@@ -1229,28 +1313,27 @@ def test_rename_cartridge_id_keeps_body_lock_and_cover_type(
         ).status_code
         == 200
     )
-    locked = logged_in_games.get(f"/api/games/manage/{game_id}").json()["data"]
-    assert locked["crc32"]
+    original = logged_in_games.get(f"/api/games/manage/{game_id}").json()["data"]
+    assert original["crc32"]
 
     assert _rename(logged_in_games, game_id, "LOCK-2").status_code == 200
     after = logged_in_games.get(f"/api/games/manage/{game_id}").json()["data"]
-    assert after["crc32"] == locked["crc32"]
+    assert after["crc32"] == original["crc32"]
     assert after["cover_type"] == "nes"
 
-    # 换本体仍走 CRC32 锁：同一个文件可以、别的文件不行
-    same = logged_in_games.post(
+    # 同类型换任意新内容：改名后的新目录落盘，摘要跟着更新
+    replacement = b"replaced-body"
+    updated = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
-        files={"file": ("again.nes", b"locked-body", "application/octet-stream")},
+        files={"file": ("new.nes", replacement, "application/octet-stream")},
     )
-    assert same.status_code == 201
-    assert same.json()["data"]["game_path"] == "game/nes/LOCK-2/game.nes"
-    other = logged_in_games.post(
-        f"/api/games/manage/{game_id}/assets",
-        data={"kind": "game"},
-        files={"file": ("other.nes", b"different", "application/octet-stream")},
-    )
-    assert other.status_code == 400
+    assert updated.status_code == 201, updated.text
+    body = updated.json()["data"]
+    assert body["game_path"] == "game/nes/LOCK-2/game.nes"
+    assert body["crc32"] == _crc32_of(replacement)
+    assert _read(storage_root, "game/nes/LOCK-2/game.nes") == replacement
+    assert body["cover_type"] == "nes"
 
 
 def test_sanitize_game_name_for_import():
@@ -1324,19 +1407,23 @@ def test_rename_to_existing_name_rejected(logged_in_games):
     assert same.status_code == 200
 
 
-def test_failed_switch_keeps_old_asset(game_service, storage_root):
-    """换类型时新本体校验失败：类型、旧本体文件都保持原样（不先毁旧档）。"""
+def test_failed_same_type_upload_keeps_old_asset(game_service, storage_root):
+    """同类型换本体但新文件校验失败：类型、旧本体与库值都保持原样。"""
+    good_zip = _make_zip({"index.html": b"old"})
     item = game_service.create(
-        "F", "", _upload("a.swf", b"swf-body"), cartridge_id="KEEP1"
+        "H", "", _upload("a.zip", good_zip), cartridge_id="KEEP1"
     )
+    before = game_service.get(item.id)
     bad_zip = _make_zip({"a.js": b"no-entry"})
     with pytest.raises(Exception):
         game_service.upload_asset(item.id, kind="game", upload=_upload("bad.zip", bad_zip))
 
     fresh = game_service.get(item.id)
-    assert fresh.game_type == "flash"
-    assert fresh.game_path == "game/flash/KEEP1/game.swf"
-    assert _read(storage_root, "game/flash/KEEP1/game.swf") == b"swf-body"
+    assert fresh.game_type == "h5"
+    assert fresh.game_path == "game/h5/KEEP1/game.zip"
+    assert fresh.crc32 == before.crc32
+    assert fresh.size == before.size
+    assert _read(storage_root, "game/h5/KEEP1/game.zip") == good_zip
 
 
 def test_create_leaves_cover_type_empty(logged_in_games):
@@ -1397,21 +1484,23 @@ def test_cover_type_rejects_for_unsupported_type(logged_in_games):
     assert blank.json()["data"]["cover_type"] is None
 
 
-def test_type_switch_clears_cover_type(logged_in_games, storage_root):
-    """换本体换类型后，新类型不认原来的封面类型就清空。"""
-    gb = _create_game(logged_in_games, "CT 换类型", "a.gb", b"gb-body").json()["data"]
+def test_body_replacement_keeps_cover_type(logged_in_games, storage_root):
+    """同类型换后缀（.gb→.gbc）不碰封面类型，旧后缀本体被删掉。"""
+    gb = _create_game(logged_in_games, "CT 换后缀", "a.gb", b"gb-body").json()["data"]
+    cid = gb["cartridge_id"]
     logged_in_games.put(f"/api/games/manage/{gb['id']}", json={"cover_type": "gbc"})
-    _unlock_body(logged_in_games.app, gb["id"])
 
-    switched = logged_in_games.post(
+    replaced = logged_in_games.post(
         f"/api/games/manage/{gb['id']}/assets",
         data={"kind": "game"},
-        files={"file": ("a.nes", b"nes-body", "application/octet-stream")},
+        files={"file": ("b.gbc", b"gbc-body", "application/octet-stream")},
     )
-    assert switched.status_code == 201, switched.text
-    body = switched.json()["data"]
-    assert body["game_type"] == "nes"
-    assert body["cover_type"] is None
+    assert replaced.status_code == 201, replaced.text
+    body = replaced.json()["data"]
+    assert body["game_type"] == "gb"
+    assert body["game_path"] == f"game/gb/{cid}/game.gbc"
+    assert body["cover_type"] == "gbc"
+    assert not _exists(storage_root, f"game/gb/{cid}/game.gb")
 
 
 def test_assets_writes_cover_type_with_cover(logged_in_games, storage_root):
@@ -1460,7 +1549,6 @@ def test_assets_rejects_bad_cover_type(logged_in_games, storage_root):
 def test_assets_ignores_cover_type_for_game_kind(logged_in_games):
     """换本体（kind=game）不认这个字段，封面类型不会被顺带写进去。"""
     gb = _create_game(logged_in_games, "CT 本体", "a.gb", b"gb-body").json()["data"]
-    _unlock_body(logged_in_games.app, gb["id"])
 
     uploaded = logged_in_games.post(
         f"/api/games/manage/{gb['id']}/assets",
@@ -1573,19 +1661,6 @@ def _make_zip(files: dict[str, bytes]) -> bytes:
     return buffer.getvalue()
 
 
-def _unlock_body(app, game_id: int) -> None:
-    """清掉本体 CRC32 锁（crc32 为空 = 未锁定）。
-
-    换本体/换类型/换 H5 代这些路径只在未锁定时可用，本文件里凡是考这些行为的用例
-    都先解锁；锁定语义本身另由 test_body_crc32_lock_* 覆盖。
-    """
-    with Session(app.state.engine) as session:
-        row = session.get(Game, game_id)
-        row.crc32 = ""
-        session.add(row)
-        session.commit()
-
-
 def _upload_h5(logged_in_games, name="H5 demo"):
     """建一个 H5 游戏（本体是含 index.html 的最小 zip，类型由扩展名自动识别）。"""
     create = _create_game(
@@ -1593,9 +1668,7 @@ def _upload_h5(logged_in_games, name="H5 demo"):
     )
     assert create.status_code == 201
     assert create.json()["data"]["game_type"] == "h5"
-    game_id = create.json()["data"]["id"]
-    _unlock_body(logged_in_games.app, game_id)
-    return game_id
+    return create.json()["data"]["id"]
 
 
 def test_h5_upload_and_serve(logged_in_games, storage_root, runtime_root):
@@ -1927,7 +2000,6 @@ def test_h5_strips_single_wrapper_dir(logged_in_games):
     assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").content == b"wrapped"
     assert logged_in_games.get(f"/api/games/{game_id}/h5/a.js").content == b"js"
 
-    _unlock_body(logged_in_games.app, game_id)
     flat = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
@@ -1962,7 +2034,6 @@ def test_h5_reupload_replaces_whole_package(logged_in_games, storage_root, runti
     assert logged_in_games.get(f"/api/games/{game_id}/h5/old.js").content == b"old"
     assert _exists(runtime_root, f"game/h5/{cid}/h5/old.js")
 
-    _unlock_body(logged_in_games.app, game_id)
     logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
@@ -1975,57 +2046,17 @@ def test_h5_reupload_replaces_whole_package(logged_in_games, storage_root, runti
     assert _exists(storage_root, f"game/h5/{cid}/game.zip")
 
 
-def test_h5_delete_and_type_change_cleanup(
-    logged_in_games, storage_root, runtime_root
-):
+def test_h5_cleanup_on_delete(logged_in_games, storage_root, runtime_root):
+    """H5 解包产物按需生成；删除游戏时两个根都清空。"""
     game_id = _upload_h5(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
     # 先访问一次，让运行时根产生解包产物
     assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
     assert _exists(runtime_root, f"game/h5/{cid}/h5/index.html")
 
-    # 换成主机 ROM 本体：类型离开 h5，旧本体与解包产物一并清理
-    switched = logged_in_games.post(
-        f"/api/games/manage/{game_id}/assets",
-        data={"kind": "game"},
-        files={"file": ("g.nes", b"nes-body", "application/octet-stream")},
-    )
-    assert switched.status_code == 201
-    assert switched.json()["data"]["game_type"] == "nes"
-    assert switched.json()["data"]["game_path"] == f"game/nes/{cid}/game.nes"
-    assert not (storage_root / "game" / "h5" / cid).exists()
-    assert not (Path(runtime_root) / "game" / "h5" / cid).exists()
-    assert not _exists(storage_root, f"game/nes/{cid}/game.zip")
-
-    # 再换回 H5、访问一次、然后删除游戏：两个根都全清
-    _unlock_body(logged_in_games.app, game_id)
-    logged_in_games.post(
-        f"/api/games/manage/{game_id}/assets",
-        data={"kind": "game"},
-        files={"file": ("g.zip", _make_zip({"index.html": b"x"}), "application/zip")},
-    )
-    assert logged_in_games.get(f"/api/games/{game_id}/h5/index.html").status_code == 200
     assert logged_in_games.delete(f"/api/games/manage/{game_id}").status_code == 200
     assert _files(storage_root) == set()
     assert _files(runtime_root) == set()
-
-
-def test_replacing_swf_with_zip_switches_to_h5(logged_in_games, storage_root):
-    """Flash 本体换成 zip：类型切到 h5、旧 swf 删除、解包资源可用。"""
-    flash = _create_game(logged_in_games, "F", "a.swf", b"swf-body").json()["data"]
-    _unlock_body(logged_in_games.app, flash["id"])
-    uploaded = logged_in_games.post(
-        f"/api/games/manage/{flash['id']}/assets",
-        data={"kind": "game"},
-        files={"file": ("g.zip", _make_zip({"index.html": b"h5"}), "application/zip")},
-    )
-    assert uploaded.status_code == 201
-    body = uploaded.json()["data"]
-    assert body["game_type"] == "h5"
-    assert body["game_path"] == f"game/h5/{flash['cartridge_id']}/game.zip"
-    assert body["path"] == f"/games/h5/{flash['id']}"
-    assert not (storage_root / "game" / "flash" / flash["cartridge_id"]).exists()
-    assert logged_in_games.get(f"/api/games/{flash['id']}/h5/index.html").content == b"h5"
 
 
 def test_h5_enforces_limits(logged_in_games, storage_root, monkeypatch):
@@ -2526,25 +2557,25 @@ def test_guide_removed_with_game_delete(logged_in_games, storage_root, runtime_r
     assert not (Path(runtime_root) / "game" / "flash" / cid).exists()
 
 
-def test_guide_removed_on_game_type_switch(logged_in_games, storage_root, runtime_root):
-    """换本体换了类型：攻略包与它的解包产物随旧类型目录一起消失。"""
+def test_guide_kept_on_body_replacement(logged_in_games, storage_root):
+    """同类型换本体不影响攻略包与它的解包产物。"""
     game_id = _guide_game(logged_in_games)
     cid = _cartridge_of(logged_in_games.app, game_id)
     _upload_guide(logged_in_games, game_id, {"index.html": b"x"})
     assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
-    _unlock_body(logged_in_games.app, game_id)
-    switch = logged_in_games.post(
+
+    replaced = logged_in_games.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
-        files={"file": ("new.nes", b"NES\x1a", "application/octet-stream")},
+        files={"file": ("new.swf", b"FWS-new", "application/octet-stream")},
     )
-    assert switch.status_code == 201
-    assert switch.json()["data"]["game_type"] == "nes"
-    assert switch.json()["data"]["has_guide"] is False
-    assert switch.json()["data"]["guide_kind"] == ""
-    assert _guide_kind_of(logged_in_games.app, game_id) == ""
-    assert not (Path(storage_root) / "game" / "flash" / cid).exists()
-    assert not (Path(runtime_root) / "game" / "flash" / cid).exists()
+    assert replaced.status_code == 201, replaced.text
+    body = replaced.json()["data"]
+    assert body["game_type"] == "flash"
+    assert body["has_guide"] is True
+    assert body["guide_kind"] == "zip"
+    assert _exists(storage_root, f"game/flash/{cid}/guide.zip")
+    assert logged_in_games.get(f"/api/games/{game_id}/guide/index.html").status_code == 200
 
 
 def test_guide_state_comes_from_database(logged_in_games, storage_root):
@@ -2639,9 +2670,9 @@ def test_h5_extraction_goes_to_runtime_root_only(split_logged_in, split_app):
 
 
 @pytest.mark.parametrize("kind", ["h5", "guide"])
-@pytest.mark.parametrize("action", ["delete", "type-switch", "rename"])
+@pytest.mark.parametrize("action", ["delete", "reupload", "rename"])
 def test_runtime_cleanup_with_split_roots(split_logged_in, split_app, kind, action):
-    """两个根分开时，删游戏 / 换类型 / 改卡带ID 都要把运行时根的产物一起收拾干净。"""
+    """两个根分开时，删游戏 / 重传资源 / 改卡带ID 都要把运行时根的产物作废。"""
     runtime = Path(split_app.state.settings.runtime_root)
     storage = Path(split_app.state.settings.STORAGE_ROOT)
 
@@ -2661,19 +2692,35 @@ def test_runtime_cleanup_with_split_roots(split_logged_in, split_app, kind, acti
 
     if action == "delete":
         assert split_logged_in.delete(f"/api/games/manage/{game_id}").status_code == 200
-    elif action == "type-switch":
-        _unlock_body(split_app, game_id)
-        switched = split_logged_in.post(
-            f"/api/games/manage/{game_id}/assets",
-            data={"kind": "game"},
-            files={"file": ("new.nes", b"NES\x1a", "application/octet-stream")},
-        )
-        assert switched.status_code == 201
+    elif action == "reupload":
+        if kind == "guide":
+            assert (
+                _upload_guide(split_logged_in, game_id, {"index.html": b"y"}).status_code
+                == 201
+            )
+        else:
+            reuploaded = split_logged_in.post(
+                f"/api/games/manage/{game_id}/assets",
+                data={"kind": "game"},
+                files={
+                    "file": (
+                        "new.zip",
+                        _make_zip({"index.html": b"y"}),
+                        "application/zip",
+                    )
+                },
+            )
+            assert reuploaded.status_code == 201
     else:
         assert _rename(split_logged_in, game_id, "RENAMED-1").status_code == 200
 
-    assert not (runtime / "game" / "h5" / cid).exists()
-    assert not (storage / "game" / "h5" / cid).exists()
+    if action == "reupload":
+        # 旧解包产物立即作废；数据根的原始文件仍保留
+        assert not _exists(runtime, f"game/h5/{cid}/{sub}")
+        assert (storage / "game" / "h5" / cid).exists()
+    else:
+        assert not (runtime / "game" / "h5" / cid).exists()
+        assert not (storage / "game" / "h5" / cid).exists()
 
 
 # ---------- 搬运（7k7k / 4399） ----------
@@ -3179,21 +3226,67 @@ def test_create_game_requires_body_or_url(logged_in_games):
 
 
 def test_upload_body_from_url_on_edit(logged_in_games, storage_root, remote_files):
-    """编辑游戏时换本体走直链：类型随所选类型切换，旧目录被清理。"""
+    """编辑时换本体走直链：只接受同类型，成功后更新 crc32。"""
     created = _create_game(logged_in_games, "换本体", "a.nes", b"nes-body").json()["data"]
-    _unlock_body(logged_in_games.app, created["id"])
+    remote_files["https://cdn.test/roms/new.nes"] = b"nes-rom-v2"
+
+    response = logged_in_games.post(
+        f"/api/games/manage/{created['id']}/assets",
+        data={"kind": "game", "url": "https://cdn.test/roms/new.nes", "game_type": "nes"},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()["data"]
+    assert body["game_type"] == "nes"
+    assert body["game_path"] == f"game/nes/{created['cartridge_id']}/game.nes"
+    assert body["crc32"] == _crc32_of(b"nes-rom-v2")
+    assert _read(storage_root, body["game_path"]) == b"nes-rom-v2"
+
+
+def test_upload_body_from_url_on_edit_rejects_cross_type(
+    logged_in_games, storage_root, remote_files
+):
+    """直链换本体也必须同类型：下载前就拒绝，存储与库都不动。"""
+    created = _create_game(
+        logged_in_games, "换本体跨类型", "a.nes", b"nes-body"
+    ).json()["data"]
+    before_files = _files(storage_root)
     remote_files["https://cdn.test/roms/new.gba"] = b"gba-rom"
 
     response = logged_in_games.post(
         f"/api/games/manage/{created['id']}/assets",
         data={"kind": "game", "url": "https://cdn.test/roms/new.gba", "game_type": "gba"},
     )
+    assert response.status_code == 400
+    message = response.json()["message"]
+    assert "任天堂 FC" in message
+    assert "任天堂 GBA" in message
+    assert _files(storage_root) == before_files
+    detail = logged_in_games.get(f"/api/games/manage/{created['id']}").json()["data"]
+    assert detail["game_type"] == "nes"
+    assert detail["crc32"] == created["crc32"]
+
+
+def test_upload_body_from_url_on_edit_no_extension(
+    logged_in_games, storage_root, remote_files
+):
+    """无后缀直链按当前类型的默认后缀落盘。"""
+    created = _create_game(
+        logged_in_games, "换本体无后缀", "a.nes", b"nes-body"
+    ).json()["data"]
+    remote_files["https://cdn.test/roms/download?id=1"] = b"nes-rom-download"
+
+    response = logged_in_games.post(
+        f"/api/games/manage/{created['id']}/assets",
+        data={
+            "kind": "game",
+            "url": "https://cdn.test/roms/download?id=1",
+            "game_type": "nes",
+        },
+    )
     assert response.status_code == 201, response.text
     body = response.json()["data"]
-    assert body["game_type"] == "gba"
-    assert body["game_path"] == f"game/gba/{created['cartridge_id']}/game.gba"
-    assert body["crc32"] == _crc32_of(b"gba-rom")
-    assert not (storage_root / "game" / "nes" / created["cartridge_id"]).exists()
+    assert body["game_path"] == f"game/nes/{created['cartridge_id']}/game.nes"
+    assert _read(storage_root, body["game_path"]) == b"nes-rom-download"
 
 
 def test_upload_cover_from_url_on_edit(logged_in_games, storage_root, remote_files):

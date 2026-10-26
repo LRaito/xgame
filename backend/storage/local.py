@@ -166,7 +166,7 @@ class LocalStorage:
         return True
 
     def remove_tree(self, key: str) -> None:
-        """递归删掉一个目录（删游戏、换类型、H5 换代都用它）；不存在时静默返回。"""
+        """递归删掉一个目录（删游戏、改卡带ID、H5 换代都用它）；不存在时静默返回。"""
         path = self._resolve(key)
         if not path.exists():
             return

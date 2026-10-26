@@ -63,7 +63,7 @@ def _center_payload(item, stat=None) -> dict:
         "cover_path": item.cover_path,
         "game_path": item.game_path,
         "updated_at": iso(item.updated_at),
-        # 攻略形态来自 games.guide_kind（上传写值、删除/换类型清空），列表不 stat 磁盘
+        # 攻略形态来自 games.guide_kind（上传写值、删除清空），列表不 stat 磁盘
         "has_guide": bool(item.guide_kind),
         "guide_kind": item.guide_kind,
         # 游玩统计按账号走，没有记录时是 0 秒 + 未开始
@@ -302,10 +302,11 @@ def games_upload_asset(
     game_type: str = Form(""),
     cover_type: str = Form(""),
 ):
-    """一步上传游戏本体或封面：流式写入存储目录 → 删旧文件 → 更新游戏行。
+    """一步上传游戏本体或封面：校验类型 → 流式写入存储目录 → 更新游戏行 → 删旧文件。
 
-    来源可以是本地文件（`file`）或网络直链（`url`）；换本体时游戏类型随新本体的
-    扩展名自动切换——直链看不出类型时由 `game_type` 指定，两者必须一致。
+    来源可以是本地文件（`file`）或网络直链（`url`）。**换本体只接受与当前游戏类型
+    相同的本体**（按扩展名判定，创建后类型不可变），跨类型返回 400 且旧档不动；
+    成功后重算并更新 `crc32`/`size`/`game_path`。直链的 `game_type` 必须等于当前类型。
 
     `cover_type`（封面样式 id）**只在 kind="cover" 且非空时生效**，供「美化封面」
     把所选样式与封面文件一次写进去；kind="game" 时忽略。

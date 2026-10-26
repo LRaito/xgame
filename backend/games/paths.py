@@ -12,7 +12,7 @@
     game/{game_type}/{卡带ID}/cover.{后缀}          封面
     game/{game_type}/{卡带ID}/guide.zip             攻略包（原始 zip，与 guide.pdf 二选一）
     game/{game_type}/{卡带ID}/guide.pdf             攻略 PDF（与 guide.zip 二选一）
-    game/{game_type}/{卡带ID}/image/{uuid}.{后缀}   图集（全站共享，随游戏类型迁移）
+    game/{game_type}/{卡带ID}/image/{uuid}.{后缀}   图集（全站共享）
     save/{用户名}/{game_type}/{卡带ID}/{uuid}.state 云端存档文件
     image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀} 游戏截图（按账号隔离；播放页截的是 .png）
 

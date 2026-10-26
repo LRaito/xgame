@@ -174,6 +174,18 @@ def detect_game_type(filename: str) -> str:
     return game_type
 
 
+def _body_type_mismatch(current: str, detected: str) -> ValidationError:
+    """换本体时新文件与游戏当前类型不一致的中文错误（类型创建后不可变）。"""
+    current_label = GAME_TYPE_LABELS.get(current, current)
+    detected_label = GAME_TYPE_LABELS.get(detected, detected)
+    allowed = "、".join(sorted(_GAME_TYPE_EXTENSIONS.get(current, ())))
+    suffix = f"（支持 {allowed}）" if allowed else ""
+    return ValidationError(
+        f"该游戏的本体类型是「{current_label}」，只能更换同一游戏类型的本体{suffix}；"
+        f"上传的文件是「{detected_label}」，类型不一致，已拒绝。"
+    )
+
+
 # 游戏名要同时能当 Windows 文件名与百度网盘文件名（本体/封面下载下来就是「游戏名.后缀」，
 # 也会被整包传到网盘），所以按两边的限制取交集校验。规则常量与包内路径校验共用，
 # 放在最底层的 `backend/games/archive.py` 里。
@@ -282,17 +294,6 @@ class GameUpload:
     stream: BinaryIO
     size: int
     mime: str | None
-
-
-@dataclass
-class _TypeSwitch:
-    """一次「换本体顺带换类型」需要做的磁盘收尾：挪封面与图集 + 删旧类型目录。"""
-
-    stale_dir: str
-    cover_from: str | None
-    cover_to: str
-    gallery_from: str
-    gallery_to: str
 
 
 @dataclass(frozen=True)
@@ -695,8 +696,8 @@ class GameService:
         要搬的目录一共三类：游戏目录一棵树（本体、封面、h5、攻略、图集都在里面）、
         以及按存档与截图的 `file_path` 反推出来的 `save/{用户名}/{类型}/{卡带ID}` 与
         `image/{用户名}/{类型}/{卡带ID}`。后两类的目录名带的是**写入当时的游戏类型**
-        （截图与存档不参与换类型的迁移），所以只能从 file_path 反推、绝不用游戏当前类型拼
-        ——与 `delete()` 同一条规矩。
+        （历史数据里可能换过类型，截图与存档目录仍留在旧类型下），所以只能从 file_path
+        反推、绝不用游戏当前类型拼——与 `delete()` 同一条规矩。
         """
         old_id = row.cartridge_id
         old_dir = paths.game_dir(row.game_type, old_id)
@@ -863,10 +864,11 @@ class GameService:
         game_type: str = "",
         cover_type: str = "",
     ) -> GameItem:
-        """一步完成：按文件名定类型/后缀 → 分块上传 → 删旧对象 → 更新行。
+        """一步完成：校验类型/后缀 → 分块上传 → 更新行 → 删旧对象。
 
-        来源可以是本地文件（`upload`）或网络直链（`url`，本体要带上 `game_type`）；
-        失败即整体回滚：切换类型时只改行状态不动对象，新本体就位后才清理旧档。
+        换本体只接受与游戏当前 `game_type` 相同的本体（类型创建后不可变），成功后
+        重算并覆盖 `crc32`/`size`/`game_path`；失败整体回滚，旧档不动。
+        来源可以是本地文件（`upload`）或网络直链（`url`，本体要带上 `game_type`）。
 
         `cover_type` 只在 kind="cover" 且非空时生效——美化封面时把所选样式 id 与
         封面文件一次写进去（分两步会有「封面换了、类型没跟上」的中间态）。
@@ -879,6 +881,15 @@ class GameService:
             return self._upload_asset_now(
                 game_id, kind=kind, upload=upload, cover_type=cover_type
             )
+        if kind == "game":
+            # 下载可能很慢/很大：类型不符时在下载前就拒绝
+            row = self._session.get(Game, game_id)
+            if row is None:
+                raise NotFoundError("游戏不存在。")
+            if not game_type:
+                raise ValidationError("请选择游戏类型。")
+            if game_type != row.game_type:
+                raise _body_type_mismatch(row.game_type, game_type)
         # 下载来的文件要在整个上传期间保持可读，临时目录包住这次上传
         with tempfile.TemporaryDirectory(prefix="x-game-fetch-") as tmp:
             with ExitStack() as stack:
@@ -939,23 +950,18 @@ class GameService:
         if upload.size is None or upload.size <= 0:
             raise ValidationError("文件大小无效。")
         crc32 = ""
-        switched: _TypeSwitch | None = None
         if kind == "game":
-            # crc32 锁：先算摘要再动任何文件/行，摘要不符时旧本体连覆盖都不会发生
+            # 类型创建后不可变：先按扩展名判类型，跨类型时连流都不读、旧档不动
+            detected = detect_game_type(filename)
+            if detected != row.game_type:
+                raise _body_type_mismatch(row.game_type, detected)
+            # 同类型才算摘要；它只是当前本体的记录，不再作为更换的锁
             crc32 = _crc32_stream(upload.stream)
             _rewind(upload.stream)
-            if row.crc32 and crc32 != row.crc32:
-                raise ValidationError(
-                    "该游戏的本体已锁定：上传的文件与首次上传的 CRC32 不一致，换本体请上传同一个文件。"
-                )
-            # 本体决定类型：上传新平台的文件即随之切换类型
-            switched = self._switch_game_type(row, detect_game_type(filename))
             if row.game_type == GAME_TYPE_H5:
-                item = self._upload_h5_zip(
+                return self._upload_h5_zip(
                     row, stream=upload.stream, size=upload.size, mime=upload.mime, crc32=crc32
                 )
-                self._finish_type_switch(switched)
-                return item
             path = paths.body_path(row.game_type, row.cartridge_id, extension)
         elif kind == "cover":
             if extension not in _COVER_EXTENSIONS:
@@ -968,8 +974,6 @@ class GameService:
             raise ValidationError("无效的上传类型。")
         self._storage.upload(path, upload.stream, upload.size, upload.mime)
         old = row.game_path if kind == "game" else row.cover_path
-        if old and old != path:
-            self._delete_storage_key(old)
         if kind == "game":
             row.game_path = path
             row.size = upload.size
@@ -980,65 +984,10 @@ class GameService:
         self._session.add(row)
         self._session.commit()
         self._session.refresh(row)
-        self._finish_type_switch(switched)
+        # 落库成功后再删旧对象：commit 失败时旧档仍然完好，最多留下一个未被引用的新文件
+        if old and old != path:
+            self._delete_storage_key(old)
         return self._to_item(row)
-
-    def _switch_game_type(self, row: Game, game_type: str) -> _TypeSwitch | None:
-        """把行的类型换成 game_type，返回新本体就位后要收尾的目录搬家。
-
-        磁盘目录带游戏类型，所以类型一变，旧目录里的封面也得跟着挪到新目录；
-        但这里只改行状态，真正的文件搬家交给调用方在新本体写成功之后做，
-        避免上传失败先把旧档毁了。
-        """
-        if game_type == row.game_type:
-            return None
-        # 类型换了就是另一组命名空间：同名游戏若已存在，这次换本体不能落库
-        self._ensure_name_free(game_type, row.name, exclude_id=row.id)
-        # 下面要按「旧类型 → 新类型」改写路径，先把旧类型固定下来（行稍后就会被改）
-        old_type = row.game_type
-        old_dir = paths.game_dir(old_type, row.cartridge_id)
-        new_dir = paths.game_dir(game_type, row.cartridge_id)
-        switch = _TypeSwitch(
-            stale_dir=old_dir,
-            cover_from=row.cover_path,
-            cover_to="",
-            gallery_from=paths.gallery_dir(old_type, row.cartridge_id),
-            gallery_to=paths.gallery_dir(game_type, row.cartridge_id),
-        )
-        if row.cover_path:
-            suffix = Path(row.cover_path).suffix
-            switch.cover_to = paths.cover_path(game_type, row.cartridge_id, suffix)
-            row.cover_path = switch.cover_to
-        # 图集在游戏目录里，随目录一起搬；行里的路径跟着换成新类型那层前缀
-        for image in self._gallery_rows(row.id):
-            if not image.file_path.startswith(f"{old_dir}/"):
-                continue
-            image.file_path = f"{new_dir}/{image.file_path[len(old_dir) + 1:]}"
-            self._session.add(image)
-        row.game_path = ""
-        row.size = 0
-        # 旧类型目录随后被 _finish_type_switch 整棵删掉；攻略不跨类型迁移
-        row.guide_kind = ""
-        row.game_type = game_type
-        # 封面类型跟着游戏类型走：新类型不认当前值（如 NES 的 FC 壳换成 SNES）就清空
-        if row.cover_type is not None and row.cover_type not in cover_types_for(game_type):
-            row.cover_type = None
-        return switch
-
-    def _finish_type_switch(self, switch: _TypeSwitch | None) -> None:
-        """新本体已就位：把封面与图集挪进新类型目录，再删掉旧类型目录。
-
-        这一删是递归的（整个旧游戏目录），所以凡是要留下的子目录都得先搬走——
-        图集就是其中之一（两个 zip 与它们的解包产物都不迁，随旧目录一起清掉）。
-        """
-        if switch is None:
-            return
-        if switch.cover_from and switch.cover_to:
-            self._storage.move(switch.cover_from, switch.cover_to)
-        self._storage.move_tree(switch.gallery_from, switch.gallery_to)
-        self._storage.remove_tree(switch.stale_dir)
-        # 运行时根下同名的解包产物也作废（类型变了，下次访问会按新类型目录重新解包）
-        self._assets.drop_tree(switch.stale_dir)
 
     def open_asset(self, path: str):
         if not path:
@@ -1274,7 +1223,7 @@ class GameService:
         )
 
     def _gallery_rows(self, game_id: int) -> list[GameGalleryImage]:
-        """该游戏的全部图集行——删游戏时清掉，换类型时逐行改路径。"""
+        """该游戏的全部图集行——删游戏时清掉，改卡带ID 时逐行改路径。"""
         return list(
             self._session.exec(
                 select(GameGalleryImage).where(GameGalleryImage.game_id == game_id)

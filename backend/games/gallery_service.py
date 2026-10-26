@@ -39,8 +39,8 @@ class GalleryService:
 
     与截图（ScreenshotService，按 (用户, 游戏) 隔离）相比只少了「用户」这一维：
     图片校验、分数排序、上传/删除流程都一致。字节落在游戏目录内的
-    game/{类型}/{卡带ID}/image/ 下，所以换游戏类型时随目录一起迁移
-    （见 GameService 的类型切换收尾）；删游戏时行与文件一并清掉。
+    game/{类型}/{卡带ID}/image/ 下；游戏类型创建后不可变，目录不会跨类型迁移，
+    删游戏时行与文件一并清掉。
     """
 
     def __init__(self, session: Session, storage: StorageBackend) -> None:

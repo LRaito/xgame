@@ -10,7 +10,7 @@ let swReady = null;
 let swUsable = false;
 
 /**
- * 破缓存用的版本后缀：updated_at 在改封面/换本体/换类型/改名时都会刷新，
+ * 破缓存用的版本后缀：updated_at 在改封面/换本体/改名时都会刷新，
  * 是「这份内容变了没有」的可靠信号。
  */
 function versionQuery(game) {

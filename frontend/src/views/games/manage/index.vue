@@ -202,7 +202,7 @@
                                 {{ editingItem.crc32 }}
                             </span>
                             <span v-else class="game-manage__file-hint muted">
-                                尚未锁定（补传本体后写入）
+                                尚未计算（上传或更换本体后写入）
                             </span>
                         </el-form-item>
                     </div>
@@ -344,6 +344,7 @@
                         v-model="remoteBody.gameType"
                         placeholder="请选择游戏类型"
                         class="game-manage__remote-select"
+                        :disabled="formMode === 'edit'"
                     >
                         <el-option
                             v-for="type in gameTypes"
@@ -353,7 +354,11 @@
                         />
                     </el-select>
                 </el-form-item>
-                <p class="game-manage__file-hint muted">
+                <p v-if="formMode === 'edit'" class="game-manage__file-hint muted">
+                    编辑时只能更换同一游戏类型的本体（同类型后缀可互换：.gb ↔ .gbc、.sfc ↔ .smc、.md ↔ .gen）；
+                    类型不同会被拒绝。
+                </p>
+                <p v-else class="game-manage__file-hint muted">
                     地址里能看出类型会先替你选上，之后仍可改；看不出（如网盘直链）就按这里选的类型入库。
                     地址与所选类型不符会当场报错。保存时才真正下载。
                 </p>
@@ -497,6 +502,7 @@ import {
     ALL_GAME_EXTENSIONS,
     gameTypeByExtension,
     gameTypeLabel as typeLabel,
+    gameTypeMeta,
 } from "@/constants/gameTypes";
 import { ensureGameAssetSw, gameCoverUrl } from "@/utils/gameAssetCache";
 
@@ -611,17 +617,29 @@ const bodySourceType = computed(() => {
     return null;
 });
 const hasBodySource = computed(() => Boolean(form.gameFile || form.bodyUrl));
-const gameAccept = computed(() => bodyExtensions.value.join(","));
+const gameAccept = computed(() => {
+    if (formMode.value === "edit") {
+        // 编辑只能换同类型本体：文件选择器直接收窄到当前类型的后缀
+        const extensions = gameTypeMeta(editingItem.value?.game_type)?.extensions;
+        if (extensions?.length) {
+            return extensions.join(",");
+        }
+    }
+    return bodyExtensions.value.join(",");
+});
 
-// 封面类型的候选：按「这次保存后会落成的游戏类型」给——选了新本体就按新类型的扩展名，
-// 否则用当前类型（编辑时）；不支持美化封面的类型与「新建还没选本体」都是空数组（那一行不显示）。
-const effectiveGameType = computed(
-    () => bodySourceType.value || editingItem.value?.game_type || ""
-);
+// 封面类型的候选：编辑态类型固定；新建态按待上传本体的扩展名推测。
+// 不支持美化封面的类型与「新建还没选本体」都是空数组（那一行不显示）。
+const effectiveGameType = computed(() => {
+    if (formMode.value === "edit") {
+        return editingItem.value?.game_type || "";
+    }
+    return bodySourceType.value || "";
+});
 const coverTypeOptions = computed(() => beautifyStylesFor(effectiveGameType.value));
 
-// 类型变了（如编辑时改选成另一机种的本体）后，原来选的封面类型可能不再合法，清空它
-// （后端换本体时也会按新类型清一遍，这里先清是为了表单里不留一个存不下去的值）
+// 新建时换了本体文件后，原来选的封面类型可能不再合法，清空它
+// （表单里先清，避免留一个存不下去的值）
 watch(coverTypeOptions, (options) => {
     if (form.coverType && !options.some((item) => item.id === form.coverType)) {
         form.coverType = "";
@@ -646,7 +664,7 @@ const typeFieldText = computed(() => {
     }
     return bodySourceType.value === current
         ? currentLabel
-        : `${currentLabel} → ${typeLabel(bodySourceType.value)}（保存后切换）`;
+        : `${currentLabel}（新本体是「${typeLabel(bodySourceType.value)}」，类型不符，不能保存）`;
 });
 
 /** 取地址路径的最后一段（去掉查询串、URL 解码）；解析不出来返回空串。 */
@@ -957,8 +975,11 @@ function clearGuide() {
 
 function openRemoteBody() {
     remoteBody.url = form.bodyUrl;
-    // 地址能看出类型就先替用户选上，看不出再让他自己挑
-    remoteBody.gameType = form.bodyGameType || gameTypeOfUrl(remoteBody.url) || "";
+    // 编辑态类型固定为当前游戏类型；新建态地址能看出类型就先替用户选上
+    remoteBody.gameType =
+        formMode.value === "edit"
+            ? editingItem.value?.game_type || ""
+            : form.bodyGameType || gameTypeOfUrl(remoteBody.url) || "";
     remoteBodyVisible.value = true;
 }
 
@@ -980,7 +1001,9 @@ function confirmRemoteBody() {
     const detected = gameTypeOfUrl(url);
     if (detected && detected !== remoteBody.gameType) {
         ElMessage.warning(
-            `该地址是「${typeLabel(detected)}」，与所选类型「${typeLabel(remoteBody.gameType)}」不符`,
+            formMode.value === "edit"
+                ? `只能更换同一游戏类型的本体：当前是「${typeLabel(remoteBody.gameType)}」，该地址是「${typeLabel(detected)}」`
+                : `该地址是「${typeLabel(detected)}」，与所选类型「${typeLabel(remoteBody.gameType)}」不符`,
         );
         return;
     }
@@ -990,8 +1013,11 @@ function confirmRemoteBody() {
     remoteBodyVisible.value = false;
 }
 
-/** 地址里能看出类型就在还没选时替用户选上；已经选过的不动（改由下面的冲突校验管）。 */
+/** 地址里能看出类型就在还没选时替用户选上；编辑态类型固定，不做自动改写。 */
 function syncRemoteType() {
+    if (formMode.value === "edit") {
+        return;
+    }
     const detected = gameTypeOfUrl(remoteBody.url);
     if (detected && !remoteBody.gameType) {
         remoteBody.gameType = detected;
@@ -1167,6 +1193,21 @@ async function onSave() {
         ElMessage.warning("攻略只支持 ZIP 压缩包或 PDF 文件");
         return;
     }
+    // 编辑换本体只允许同类型：在写元数据之前拦住，避免「名称改了、本体被拒」
+    if (formMode.value === "edit" && hasBodySource.value) {
+        const currentType = editingItem.value?.game_type;
+        if (!bodySourceType.value) {
+            ElMessage.warning("无法识别游戏本体格式，请更换文件或检查下载地址");
+            return;
+        }
+        if (currentType && bodySourceType.value !== currentType) {
+            ElMessage.warning(
+                `只能更换同一游戏类型的本体：当前是「${typeLabel(currentType)}」，` +
+                    `所选文件/地址是「${typeLabel(bodySourceType.value)}」`,
+            );
+            return;
+        }
+    }
 
     saving.value = true;
     try {
@@ -1192,7 +1233,6 @@ async function onSave() {
                 });
             }
             if (guideFile.value) {
-                // 排在换本体之后：同一次保存里换了类型的，攻略包要落到新类型目录
                 await uploadGuide(editingId.value);
             }
         }

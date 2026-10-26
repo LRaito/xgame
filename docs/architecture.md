@@ -148,15 +148,15 @@ backend/
   换资源用 url[+game_type]），由服务端 backend/games/remote.py 下到临时目录再走同一条上传管线，
   单文件上限 512MB；本体走直链时类型以所选 game_type 为准——地址能认出类型就必须一致（否则 400），
   认不出（网盘式无后缀直链）就用该类型的默认后缀；封面直链必须是 jpg/jpeg/png/gif/webp
-  换本体：POST /manage/{id}/assets(kind=game) 同样按新扩展名切换类型——先算新本体 CRC32 并与库里已锁定的比对
-  （不一致直接 400，连旧文件都不覆盖），再写新本体，成功后才清理旧类型遗留（整个旧类型目录，
-  封面会先挪到新类型目录，旧类型目录连同两个 zip 与其解包产物一并清掉），写入失败整体回滚、不动旧档；PUT /manage/{id} 只改
+  换本体：POST /manage/{id}/assets(kind=game) **只接受与当前 game_type 相同的本体**（按扩展名判定，
+  类型创建后不可变；同类型内可换后缀 .gb↔.gbc、.sfc↔.smc、.md↔.gen）。跨类型直接 400 且旧档不动；
+  写新本体、落库成功后才删旧后缀文件，并重算覆盖 crc32/size/game_path，写入失败整体回滚；PUT /manage/{id} 只改
   名称/描述/清空封面（clear_cover），不接收 cartridge_id 也不接收 game_type；同一类型下游戏名唯一
   （联合唯一索引 uq_games_game_type_name），不同类型可重名；卡带ID 全局唯一（uq_games_cartridge_id）
   改卡带ID：PUT /manage/{id}/cartridge-id（body {cartridge_id}）——显式迁移，不是普通编辑。
   它把 game/{类型}/{旧ID} 一棵树（本体/封面/两个 zip/图集）、以及按 file_path 反推出来的
   save/{用户名}/{类型}/{旧ID} 与 image/{用户名}/{类型}/{旧ID}（存档与截图的目录名带的是**写入当时的**
-  类型，换过类型的游戏与当前 game_type 不同，只能从 file_path 反推）整体改名，再在同一个事务里改写
+  类型，历史数据里换过类型的游戏与当前 game_type 不同，只能从 file_path 反推）整体改名，再在同一个事务里改写
   games.cartridge_id/game_path/cover_path 与 game_gallery_images/game_screenshots/
   game_cloud_snapshot_files 的 file_path；改完名运行时根下的旧解包产物直接作废（下次访问重解）。**先搬磁盘、后提交数据库**：搬不动就把已搬的按相反顺序
   搬回去、库一个字节不动（反过来一旦搬不动，库里所有路径就都指向不存在的位置）。源目录不在
@@ -167,7 +167,7 @@ backend/
   总解压量/压缩比/加密条目/必须含 index.html，可剥单一顶层目录），zip 原样存数据根的
   game/{类型}/{卡带ID}/game.zip，不落任何清单表。播放时 backend/games/runtime_assets.py 按需解包：
   先 stat 入口文件，在就不再解；否则解到运行时根的同层暂存目录 .h5-{随机}，再目录改名整体替换 h5/。
-  重传 zip / 换类型 / 改卡带ID / 删游戏时由写路径显式作废运行时根那份
+  重传 zip / 改卡带ID / 删游戏时由写路径显式作废运行时根那份
 攻略（登录）：POST /api/games/manage/{id}/guide（multipart：单个 file，ZIP 或 PDF；二者互斥）
   ZIP 包存数据根的 game/{类型}/{卡带ID}/guide.zip，入口固定包内根目录 index.html（整包套单层目录会剥掉）
   与 H5 共用同一套校验与上限；后端只校验不解压，不动本体路径/大小/CRC32
@@ -177,7 +177,7 @@ backend/
   查看 ZIP 时按需解到运行时根的 game/{类型}/{卡带ID}/guide/（同一套 ensure 逻辑）
   读取 GET|HEAD /api/games/{id}/guide/{资源路径}（**需登录**）：路径归一化后从运行时根取，无清单表
   PDF 读取 GET|HEAD /api/games/{id}/guide.pdf（**需登录**）：从数据根直读，application/pdf inline
-  攻略形态存 games.guide_kind（""/zip/pdf）：上传写值、删除与换类型清空，列表不再 stat 磁盘
+  攻略形态存 games.guide_kind（""/zip/pdf）：上传写值、删除清空，列表不再 stat 磁盘
 搬运（登录）：POST /api/games/manage/import { url, cartridge_id }
   backend/games/importer.py 解析 7k7k / 4399 / flash.homes 游戏页并下载到临时目录，
   再走上面同一条上传管线（Flash 单个 swf；H5 镜像 bundle 打成 zip 走同一条 H5 上传）；封面一并下载。
@@ -258,7 +258,7 @@ backend/
   读图显式当 content-type 下发（`.webp` 在部分 Python 的 mimetypes 里不认识）
   截图按 (用户, 游戏) 隔离：只本人可见可改，越权一律 404；图片接口必须登录（不做公开静态路径）
   元数据落 game_screenshots，内容按 image/{用户名}/{类型}/{卡带ID}/{uuid}.{后缀} 落盘；
-  读取一律用行里的 file_path（截图不参与「换游戏类型」的迁移，目录里的类型是上传当时的）
+  读取一律用行里的 file_path（目录里的类型是上传当时的；历史数据里换过类型的游戏可能留在旧类型下）
   排序是分数排序：sort_order 为浮点分数，新图追加到末尾，拖动重排只改被拖那一行的分数
   （取相邻两分数的中值），相邻间隔小到阈值以下才由后端把整份重新铺开（间隙不足时后台重排）
   封面渲染集中在 components/games/GameCover.vue，**只有游戏中心的卡片**用它
@@ -360,14 +360,14 @@ backend/
 
 ### 决策 6：H5 游戏以 ZIP 上传并用沙箱隔离
 
-**决定：** H5 游戏本体是 `.zip`，上传时**只校验、不解压**：zip 原样存数据根的 `game/{类型}/{卡带ID}/game.zip`，播放时按需解到**运行时根**的 `game/{类型}/{卡带ID}/h5/{路径}`（入口固定 `index.html`，已解过就不再解；重传/换类型/改卡带ID/删游戏时显式作废），没有清单表；播放时在 `GameShell` 内嵌 sandbox iframe，资源响应带 `Content-Security-Policy: sandbox`（不含 `allow-same-origin`）。H5 不接入云存档。
+**决定：** H5 游戏本体是 `.zip`，上传时**只校验、不解压**：zip 原样存数据根的 `game/{类型}/{卡带ID}/game.zip`，播放时按需解到**运行时根**的 `game/{类型}/{卡带ID}/h5/{路径}`（入口固定 `index.html`，已解过就不再解；重传/改卡带ID/删游戏时显式作废），没有清单表；播放时在 `GameShell` 内嵌 sandbox iframe，资源响应带 `Content-Security-Policy: sandbox`（不含 `allow-same-origin`）。H5 不接入云存档。
 **原因：** H5 是从外部站点抓取/导入的第三方 HTML/JS，若与本站同源，游戏脚本可读取并操作本站接口。sandbox 不透明源让游戏读不到 cookie/DOM、无法注册 Service Worker、也无法调用 `/api`；资源另加 `Access-Control-Allow-Origin: *` 以放行不透明源下的 `fetch`/ES module/引擎 `.wasm` 读取。
 **代价：** 不透明源下 `localStorage`/`IndexedDB`/Web Worker 不可用，依赖它们的游戏可能报错；`<video>/<audio>` 的 Range 请求不支持。若需兼容，升级路径是给 H5 单独端口/子域（本期不做）。
 **何时重评：** 有大量依赖浏览器存储的 H5 游戏时，改为独立源承载。
 
 ### 决策 7：文件存储走「相对路径 + 本地目录」，保留流式协议
 
-**决定：** `StorageBackend` 协议（`backend/storage/types.py`）只含 `upload`（分块流式写）/ `delete` / `stat` / `open_download`（流式读），唯一实现是 `LocalStorage`（`backend/storage/local.py`）：把 SQLite 里的相对路径拼上根读写，写文件先落同目录临时文件再改名。`create_app()` 建**两个实例**——`app.state.storage`（数据根，素材与两个 zip）与 `app.state.runtime_storage`（运行时根，解包产物）；两个根下相对路径逐字一致。目录级操作（`remove_tree` / `replace_tree` / `move`）由它单独提供（删游戏、解包整体替换、类型切换挪封面）。列表来自 SQLite，协议没有 `list`。`open_download()` 返回的流还透传 `seek/tell`，供 `zipfile` 把 zip 当底层流读。
+**决定：** `StorageBackend` 协议（`backend/storage/types.py`）只含 `upload`（分块流式写）/ `delete` / `stat` / `open_download`（流式读），唯一实现是 `LocalStorage`（`backend/storage/local.py`）：把 SQLite 里的相对路径拼上根读写，写文件先落同目录临时文件再改名。`create_app()` 建**两个实例**——`app.state.storage`（数据根，素材与两个 zip）与 `app.state.runtime_storage`（运行时根，解包产物）；两个根下相对路径逐字一致。目录级操作（`remove_tree` / `replace_tree` / `move`）由它单独提供（删游戏、解包整体替换、改卡带ID 搬目录）。列表来自 SQLite，协议没有 `list`。`open_download()` 返回的流还透传 `seek/tell`，供 `zipfile` 把 zip 当底层流读。
 **原因：** 磁盘上没有元数据存储，所以「上传时的 mime」不落盘，读取时按后缀现猜（H5 资源另有显式 MIME 表，由 router 传入 content-type）；相对路径 + 统一拼根路径既让 SQLite 的引用稳定（换盘只改一个环境变量），又保住了分块流式与「service 不知道根目录在哪」的分层。
 **何时重评：** 需要多机共享或对象存储语义时再换实现，service 侧不用改。
 
@@ -400,7 +400,7 @@ backend/
 
 ### 决策 12：游戏截图按账号隔离，封面全站共享
 
-**决定：** 截图是账号自己的东西——元数据按 (user_id, game_id) 存 `game_screenshots`，字节落 `image/{用户名}/{类型}/{卡带ID}/{uuid}.{后缀}`，只有本人能看、能改描述、能删能排序（越权一律 404，图片接口也要登录）。游戏封面仍然只有全站共享的一份（`games.cover_path`），所有人在详情里看到同一张。截图**不参与**「换游戏类型」的目录迁移：目录里的类型是上传当时的，读取、单张删除与删游戏清理一律按行里的 `file_path`。**排序用分数**：`sort_order` 是浮点分数，拖动重排只改被拖那一行的分数（相邻中值），间隙切没了才整份重排——顺序只在一处（后端）说了算，前端整份替换。
+**决定：** 截图是账号自己的东西——元数据按 (user_id, game_id) 存 `game_screenshots`，字节落 `image/{用户名}/{类型}/{卡带ID}/{uuid}.{后缀}`，只有本人能看、能改描述、能删能排序（越权一律 404，图片接口也要登录）。游戏封面仍然只有全站共享的一份（`games.cover_path`），所有人在详情里看到同一张。截图目录名带的是**写入当时的类型**（历史数据里换过类型的游戏可能留在旧类型下）：读取、单张删除与删游戏清理一律按行里的 `file_path`。**排序用分数**：`sort_order` 是浮点分数，拖动重排只改被拖那一行的分数（相邻中值），间隙切没了才整份重排——顺序只在一处（后端）说了算，前端整份替换。
 **原因：** 同一盘游戏可能多人玩，截图是「我的游玩记录」（还带自己的描述），混进一个共享视图没有意义；封面是这盘卡带的样子，本来就该只有一份。不做目录迁移是因为它只让磁盘更整齐，却要为此写一条跨用户、跨类型目录的搬移逻辑——按路径读写的代价为零，收益为负。
 
 **图集是另一档**（`game_gallery_images`，与截图共用同一套相册实现）：一个游戏一套的展示图（宣传图、说明书扫描件之类），**按游戏共享**——不记上传者，任何登录用户都能传、改描述、删、拖动排序，字节落在**游戏目录内**的 `game/{类型}/{卡带ID}/image/`。两组图回答的是两个问题：「这盘卡带长什么样」（共享、随游戏类型一起迁移）与「我玩到哪儿了」（私有、不迁移）。
@@ -416,9 +416,9 @@ backend/
 
 ### 决策 14：H5 与 ZIP 攻略只上传 zip，按需解到运行时根（PDF 攻略原样直存）
 
-**决定：** H5 游戏与 ZIP 形态的攻略的交付形态都是**一个 zip**（根目录含 `index.html`，整包套单层目录会自动剥掉）。上传时**只校验、不解压**：`backend/games/archive.py` 的 `read_manifest()` 读中央目录做全量校验（路径归一化、重名、条目数、单条/总量、压缩比、加密条目），zip 原样写进**数据根**（H5 是 `game/{类型}/{卡带ID}/game.zip`，攻略是 `.../guide.zip`），**没有清单表**。播放 H5 或查看攻略时，`backend/games/runtime_assets.py` 的 `RuntimeAssets.ensure()` 检查**运行时根**里解包产物的入口文件：在就直接用，不在才把整包解到同层暂存目录 `.h5-{随机}` / `.guide-{随机}`，再用一次目录改名整体替换。相对路径与数据根逐字一致，只是拼的根不同。攻略的另一种形态是**单个 PDF**：它原样存数据根的 `.../guide.pdf`、不做任何解包，读取时直接从数据根流式返回；同一个游戏只保留一种形态，上传一种会删掉另一种。形态本身记在 `games.guide_kind`（上传写值、删除与换类型清空），列表接口不再为它 stat 磁盘。
+**决定：** H5 游戏与 ZIP 形态的攻略的交付形态都是**一个 zip**（根目录含 `index.html`，整包套单层目录会自动剥掉）。上传时**只校验、不解压**：`backend/games/archive.py` 的 `read_manifest()` 读中央目录做全量校验（路径归一化、重名、条目数、单条/总量、压缩比、加密条目），zip 原样写进**数据根**（H5 是 `game/{类型}/{卡带ID}/game.zip`，攻略是 `.../guide.zip`），**没有清单表**。播放 H5 或查看攻略时，`backend/games/runtime_assets.py` 的 `RuntimeAssets.ensure()` 检查**运行时根**里解包产物的入口文件：在就直接用，不在才把整包解到同层暂存目录 `.h5-{随机}` / `.guide-{随机}`，再用一次目录改名整体替换。相对路径与数据根逐字一致，只是拼的根不同。攻略的另一种形态是**单个 PDF**：它原样存数据根的 `.../guide.pdf`、不做任何解包，读取时直接从数据根流式返回；同一个游戏只保留一种形态，上传一种会删掉另一种。形态本身记在 `games.guide_kind`（上传写值、删除清空），列表接口不再为它 stat 磁盘。
 **原因：** 数据根是「整个拷走交给网盘备份」的那一份，解包产物是派生物——放进数据根等于同一份内容存两遍，还会让备份体积随游玩历史膨胀。把派生物赶到运行时根之后，恢复数据根不需要恢复解包产物（首次访问自动重建），而 zip 仍然是唯一的事实来源。攻略改成 zip 也是为了砍掉「前端 `webkitdirectory` + `paths`/`files` 按下标对位」那套接口形态：zip 是这类静态站点的自然交付格式，校验只需要一处、前端不需要剥目录名。
-**代价：** 每个游戏**首次**播放/查看会多一次解压（128MB 的包约 1–3 秒）。解包必须防并发重复：`RuntimeAssets` 用模块级 `threading.Lock`（键 = 类别 + 类型 + 卡带ID）串行化同一个游戏，**因此 gunicorn 必须保持 `--workers 1`**——多进程下锁不跨进程，并发 `os.replace` 覆盖非空目录会在 POSIX 上报 `ENOTEMPTY`。解包产物必须由写路径显式作废（重传 zip / 换游戏类型 / 改卡带ID / 删游戏 → `drop_tree`），刻意不做「两个根相同就跳过」的分支：重传只覆盖 zip 一个文件，同一棵树里的解包目录不会被碰到。`RUNTIME_ROOT` 不配时它就是数据根（本机默认、Windows 包的 `data/runtime` 之外的情形），此时清理退化成一次 `exists()` 检查。免登录的 H5 资源接口现在会触发解包写盘，代价上界是一份已上传内容的解压副本。
+**代价：** 每个游戏**首次**播放/查看会多一次解压（128MB 的包约 1–3 秒）。解包必须防并发重复：`RuntimeAssets` 用模块级 `threading.Lock`（键 = 类别 + 类型 + 卡带ID）串行化同一个游戏，**因此 gunicorn 必须保持 `--workers 1`**——多进程下锁不跨进程，并发 `os.replace` 覆盖非空目录会在 POSIX 上报 `ENOTEMPTY`。解包产物必须由写路径显式作废（重传 zip / 改卡带ID / 删游戏 → `drop_tree`），刻意不做「两个根相同就跳过」的分支：重传只覆盖 zip 一个文件，同一棵树里的解包目录不会被碰到。`RUNTIME_ROOT` 不配时它就是数据根（本机默认、Windows 包的 `data/runtime` 之外的情形），此时清理退化成一次 `exists()` 检查。免登录的 H5 资源接口现在会触发解包写盘，代价上界是一份已上传内容的解压副本。
 **何时重评：** 如果解压耗时成为体感问题，可以在上传后台预先解一次（仍是同一套幂等逻辑）；如果将来支持多进程部署，锁要换成文件锁或把解包挪到一个专职进程。
 
 ## 模块依赖
@@ -545,7 +545,7 @@ pytest            # 后端（临时 SQLite + 临时 STORAGE_ROOT + TestClient）
 cd frontend && npm run lint
 ```
 
-最低要求：未登录写接口 401；`/health` 未登录 200；注册（合法/非法用户名、重名、注册即登录）与登录锁定；`LocalStorage` 的读写/覆盖/删除/目录替换与越界路径拒绝；游戏创建必填卡带ID、转大写、唯一、`PUT` 改不动；上传后文件按 `game/{类型}/{卡带ID}/…` 真实落盘；改卡带ID 把三类目录都搬了（含换过类型的历史 `save/{用户}/{旧类型}/{旧ID}`）、三张子表的 `file_path` 都改了、多账号都搬、改完素材与存档截图仍读得到、两个根下都不留旧 ID 的残迹，以及非法/被占用/游戏不存在/新旧相同/源不在而目标在/搬不动回滚/Windows 路径过长各分支；未登录访问游戏接口（列表/状态/封面/本体/管理/存档/截图/攻略）一律 401、H5 资源接口可匿名访问；H5/攻略的 zip 只校验不解压（上传后运行时根仍然干净）、首次访问才解到运行时根、二次访问不重解、重传后旧解包产物作废、缺 `index.html` / 路径越界 / 重名 / 超上限一律 400 且两个根零残留、PDF 攻略上传后只落 `guide.pdf`（非 PDF 内容 / 超限 400、GET 返回 inline PDF、ZIP 与 PDF 互斥替换）、删除攻略同时清掉两个文件与运行时产物并把 `guide_kind` 置空（幂等、删文件失败 500 且不清列）、无攻略 404、删游戏 / 换类型 / 改卡带ID 后运行时根也清干净（两个根分开时另跑一遍）、`has_guide` / `guide_kind` 来自 `games.guide_kind`（上传写值、删除清空、换类型清空、改名保留，列表不再 stat 磁盘）；模拟器设置按 (user, game_type) 隔离、非法平台或 payload 返回 400；截图按 (user, game) 隔离（越权 404）、落盘 `image/{用户名}/{类型}/{卡带ID}/{uuid}.{后缀}`、认不出的图片内容 / 空文件 / 超限 / 描述超 15 字返回 400、拖到越界位置返回 400、删游戏清干净。
+最低要求：未登录写接口 401；`/health` 未登录 200；注册（合法/非法用户名、重名、注册即登录）与登录锁定；`LocalStorage` 的读写/覆盖/删除/目录替换与越界路径拒绝；游戏创建必填卡带ID、转大写、唯一、`PUT` 改不动；上传后文件按 `game/{类型}/{卡带ID}/…` 真实落盘；改卡带ID 把三类目录都搬了（含换过类型的历史 `save/{用户}/{旧类型}/{旧ID}`）、三张子表的 `file_path` 都改了、多账号都搬、改完素材与存档截图仍读得到、两个根下都不留旧 ID 的残迹，以及非法/被占用/游戏不存在/新旧相同/源不在而目标在/搬不动回滚/Windows 路径过长各分支；未登录访问游戏接口（列表/状态/封面/本体/管理/存档/截图/攻略）一律 401、H5 资源接口可匿名访问；H5/攻略的 zip 只校验不解压（上传后运行时根仍然干净）、首次访问才解到运行时根、二次访问不重解、重传后旧解包产物作废、缺 `index.html` / 路径越界 / 重名 / 超上限一律 400 且两个根零残留、PDF 攻略上传后只落 `guide.pdf`（非 PDF 内容 / 超限 400、GET 返回 inline PDF、ZIP 与 PDF 互斥替换）、删除攻略同时清掉两个文件与运行时产物并把 `guide_kind` 置空（幂等、删文件失败 500 且不清列）、无攻略 404、删游戏 / 重传资源 / 改卡带ID 后运行时根也清干净（两个根分开时另跑一遍）、同类型换本体更新 crc32/size 且保留封面/图集/攻略、跨类型换本体 400 且旧档不动、`has_guide` / `guide_kind` 来自 `games.guide_kind`（上传写值、删除清空、改名保留，列表不再 stat 磁盘）；模拟器设置按 (user, game_type) 隔离、非法平台或 payload 返回 400；截图按 (user, game) 隔离（越权 404）、落盘 `image/{用户名}/{类型}/{卡带ID}/{uuid}.{后缀}`、认不出的图片内容 / 空文件 / 超限 / 描述超 15 字返回 400、拖到越界位置返回 400、删游戏清干净。
 
 ## 排障（设计层面）
 

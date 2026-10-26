@@ -59,9 +59,10 @@ def _utcnow() -> datetime:
 
 
 class Game(SQLModel, table=True):
-    """一个游戏条目。同类下名称唯一、卡带ID 全局唯一；crc32 锁住本体（锁定后只能换回同一个文件）。
+    """一个游戏条目。同类下名称唯一、卡带ID 全局唯一；game_type 创建后不可变。
 
-    卡带ID 在创建时定下、之后不可修改（只能删掉重建），既是磁盘目录名，
+    ``crc32`` 是当前本体的摘要（换同类型本体时重算，不再作为锁定凭据）。
+    卡带ID 在创建时定下，普通编辑改不动，只能走显式改名接口；它既是磁盘目录名，
     也是「同一盘卡带」的身份标识。``game_path`` / ``cover_path`` 存的是
     相对 `STORAGE_ROOT` 的路径。
     """
@@ -82,7 +83,7 @@ class Game(SQLModel, table=True):
     crc32: str = Field(default="", max_length=8)  # 本体内容摘要（8 位大写十六进制）；空 = 尚未算出
     game_path: str = Field(default="", max_length=500)
     cover_path: str | None = Field(default=None, max_length=500)
-    # 攻略形态："" = 没有 / "zip"（静态站包）/ "pdf"。随上传、删除、换游戏类型维护。
+    # 攻略形态："" = 没有 / "zip"（静态站包）/ "pdf"。随上传、删除维护。
     guide_kind: str = Field(
         default="",
         max_length=10,
@@ -152,7 +153,7 @@ class GameGalleryImage(SQLModel, table=True):
     与截图相反，图集**按游戏共享**——不记上传者，任何登录用户都能看、能改。
     排序与截图同一套分数机制（sort_order 是浮点分数，见 GameScreenshot 的说明），
     所以同样不加 (game_id, sort_order) 唯一约束。字节落在
-    game/{类型}/{卡带ID}/image/ 下（**游戏目录内**，换类型时随目录迁移），
+    game/{类型}/{卡带ID}/image/ 下（**游戏目录内**，类型创建后不可变），
     file_path 存相对路径。
     """
 
