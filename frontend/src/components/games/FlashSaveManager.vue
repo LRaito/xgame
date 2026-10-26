@@ -40,11 +40,19 @@
                         </button>
                         <button
                             type="button"
+                            class="save-manager__btn save-manager__btn--primary"
+                            :disabled="cloudBusy"
+                            @click="onUploadCloud"
+                        >
+                            {{ cloudBusy ? "正在同步…" : "同步至云端" }}
+                        </button>
+                        <button
+                            type="button"
                             class="save-manager__btn"
                             :disabled="working"
                             @click="onUpload"
                         >
-                            上传
+                            从本地上传
                         </button>
                         <button type="button" class="save-manager__btn" :disabled="working" @click="refresh">
                             刷新
@@ -86,25 +94,34 @@
                 <!-- 云端存档 -->
                 <template v-else>
                     <div class="save-manager__toolbar">
-                        <button
-                            type="button"
-                            class="save-manager__btn save-manager__btn--primary"
-                            :disabled="cloudBusy"
-                            @click="onUploadCloud"
+                        <div
+                            class="save-manager__view-mode"
+                            role="group"
+                            aria-label="云端存档展示方式"
                         >
-                            {{ cloudBusy ? "正在同步…" : "同步至云端" }}
-                        </button>
-                        <button
-                            type="button"
-                            class="save-manager__btn"
-                            :disabled="cloudBusy"
-                            @click="refreshCloud"
-                        >
-                            刷新
-                        </button>
+                            <button
+                                type="button"
+                                class="save-manager__mode-btn"
+                                :class="{ 'is-active': cloudViewMode === 'list' }"
+                                :aria-pressed="cloudViewMode === 'list'"
+                                @click="cloudViewMode = 'list'"
+                            >
+                                列表模式
+                            </button>
+                            <button
+                                type="button"
+                                class="save-manager__mode-btn"
+                                :class="{ 'is-active': cloudViewMode === 'tree' }"
+                                :aria-pressed="cloudViewMode === 'tree'"
+                                title="树形模式暂未实现"
+                                @click="cloudViewMode = 'tree'"
+                            >
+                                树形模式
+                            </button>
+                        </div>
                     </div>
                     <p v-if="!cloudSaves.length" class="save-manager__empty">
-                        还没有云端存档。点「同步至云端」把当前本地存档整体备份一份。
+                        还没有云端存档。切到「本地存档」点「同步至云端」把当前本地存档整体备份一份。
                     </p>
                     <ul v-else class="save-manager__list">
                         <li v-for="snapshot in cloudSaves" :key="snapshot.id" class="save-manager__item save-manager__cloud-item">
@@ -118,7 +135,7 @@
                                     </span>
                                 </div>
                                 <span class="save-manager__cloud-desc">
-                                    {{ snapshot.remark }}
+                                    {{ firstLine(snapshot.remark) }}
                                 </span>
                             </div>
                             <div class="save-manager__item-actions">
@@ -307,6 +324,13 @@ const fileInputRef = ref(null);
 // “同步至云端”的描述填写面板
 const uploadPromptVisible = ref(false);
 const uploadDesc = ref("");
+// 云端存档展示方式；树形模式暂未实现，选项先占位
+const cloudViewMode = ref("list");
+
+/** 列表收起时只展示描述的第一行（按换行符截断）。 */
+function firstLine(text) {
+    return String(text || "").split(/\r\n|\r|\n/, 1)[0];
+}
 
 function onClose() {
     emit("update:modelValue", false);
@@ -796,7 +820,50 @@ defineExpose({
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 14px 20px;
+    /* 与上方「本地/云端存档」标签、下方存档列表的左边缘对齐（body 已有 20px 内边距） */
+    padding: 14px 0;
+}
+
+/* 云端存档的展示方式：分段按钮，单击切换；树形模式暂未实现 */
+.save-manager__view-mode {
+    display: inline-flex;
+}
+
+.save-manager__mode-btn {
+    /* 后一个的左边界压在前一个的右边界上 */
+    margin-left: -1px;
+    padding: 6px 12px;
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    background: rgba(30, 41, 59, 0.6);
+    color: #cbd5e1;
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+}
+
+.save-manager__mode-btn:first-child {
+    margin-left: 0;
+    border-radius: 8px 0 0 8px;
+}
+
+.save-manager__mode-btn:last-child {
+    border-radius: 0 8px 8px 0;
+}
+
+.save-manager__mode-btn:hover {
+    color: #fff;
+    border-color: rgba(148, 163, 184, 0.4);
+}
+
+/* 选中的那个压在相邻按钮之上，避免主色边线被后一个按钮的灰边盖掉 */
+.save-manager__mode-btn.is-active {
+    position: relative;
+    z-index: 1;
+    border-color: rgba(96, 165, 250, 0.5);
+    background: rgba(37, 99, 235, 0.85);
+    color: #fff;
 }
 
 .save-manager__body {
