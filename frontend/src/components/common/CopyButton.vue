@@ -1,7 +1,7 @@
 <template>
     <app-button
-        :variant="variant === 'pill' ? 'secondary' : 'link'"
-        :size="variant === 'pill' ? 'xs' : 'md'"
+        text
+        :size="variant === 'pill' ? 'sm' : 'md'"
         :class="{ 'copy-button--pill': variant === 'pill' }"
         :loading="copying"
         :disabled="disabled"
@@ -52,14 +52,37 @@ async function copy() {
 </script>
 
 <style>
-/* 卡带 ID 药丸：与 AppButton 的 secondary xs 共用底色与圆角，只压一行高度。 */
-.app-button.copy-button--pill.el-button {
+/* 卡带 ID 药丸：可复制的数据 chip，不是操作按钮。
+   高度固定 20px，discover 表格的 44px 行高依赖它。 */
+.app-button.app-button--text.copy-button--pill.el-button {
     height: 20px;
+    min-height: 0;
     padding: 0 8px;
+    border: 0;
     border-radius: var(--app-radius-pill);
+    background: var(--app-surface-subtle);
+    color: #282828;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-size: var(--app-font-size-xs);
+    font-size: 12px;
     font-weight: 500;
-    line-height: 14px;
+    line-height: 20px;
+}
+
+.app-button.app-button--text.copy-button--pill.el-button:hover {
+    background: #e4e4e4;
+    color: #282828;
+    text-decoration: none;
+}
+
+.app-button.app-button--text.copy-button--pill.el-button:focus-visible {
+    border-color: transparent;
+    box-shadow: inset 0 0 0 1px var(--app-color-primary-active);
+    text-decoration: none;
+}
+
+.app-button.app-button--text.copy-button--pill.is-disabled.el-button,
+.app-button.app-button--text.copy-button--pill.is-disabled.el-button:hover {
+    background: var(--app-color-disabled-bg);
+    color: var(--app-color-disabled-text);
 }
 </style>

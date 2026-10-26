@@ -3,7 +3,7 @@
         <section class="save-manager__card" :class="{ 'save-manager__card--tree': isTreeMode }">
             <app-button
                 class="save-manager__close"
-                variant="ghost"
+                text
                 tone="dark"
                 size="sm"
                 icon-only
@@ -28,7 +28,7 @@
                 <template v-if="activeTab === 'local'">
                     <div class="save-manager__toolbar">
                         <app-button
-                            variant="primary"
+                            variant="secondary"
                             tone="dark"
                             :disabled="working"
                             @click="onSync"
@@ -36,7 +36,7 @@
                             {{ syncing ? "正在同步…" : "重启游戏以同步最新存档" }}
                         </app-button>
                         <app-button
-                            variant="primary"
+                            variant="secondary"
                             tone="dark"
                             :disabled="cloudBusy"
                             @click="onUploadCloud"
@@ -83,7 +83,6 @@
                                 </app-button>
                                 <app-button
                                     variant="danger"
-                                    plain
                                     tone="dark"
                                     size="sm"
                                     :disabled="working"
@@ -129,7 +128,7 @@
                                 </div>
                                 <div class="save-manager__item-actions">
                                     <app-button
-                                        variant="primary"
+                                        variant="secondary"
                                         tone="dark"
                                         size="sm"
                                         :disabled="cloudBusy"
@@ -148,7 +147,6 @@
                                     </app-button>
                                     <app-button
                                         variant="danger"
-                                        plain
                                         tone="dark"
                                         size="sm"
                                         :disabled="cloudBusy"
@@ -198,7 +196,7 @@
                                                         取消
                                                     </app-button>
                                                     <app-button
-                                                        variant="primary"
+                                                        variant="secondary"
                                                         tone="dark"
                                                         size="sm"
                                                         :disabled="cloudBusy"
@@ -262,7 +260,7 @@
                     <h3 class="save-manager__prompt-title">同步至云端</h3>
                     <app-button
                         class="save-manager__close"
-                        variant="ghost"
+                        text
                         tone="dark"
                         size="sm"
                         icon-only
@@ -290,7 +288,7 @@
                     <app-button variant="secondary" tone="dark" @click="cancelUploadPrompt">
                         取消
                     </app-button>
-                    <app-button variant="primary" tone="dark" @click="confirmUploadCloud">
+                    <app-button variant="secondary" tone="dark" @click="confirmUploadCloud">
                         同步
                     </app-button>
                 </div>
@@ -456,7 +454,11 @@ async function onSyncToLocal(snapshot) {
     }
     const confirmed = await confirmAction(
         "将用该云端存档覆盖本地对应存档并重启游戏，确定吗？",
-        { title: "同步至本地", confirmText: "同步", danger: true },
+        {
+            title: "同步至本地",
+            confirmText: "同步",
+            danger: true,
+        },
     );
     if (!confirmed) {
         return;
@@ -623,7 +625,11 @@ async function onFileChange(event) {
             // 同名存档：询问是否覆盖
             const confirmed = await confirmAction(
                 `本地已有同名存档「${name}.sol」，覆盖后当前游戏会重启以读取新存档。确定覆盖吗？`,
-                { title: "覆盖存档", confirmText: "覆盖", danger: true },
+                {
+                    title: "覆盖存档",
+                    confirmText: "覆盖",
+                    danger: true,
+                },
             );
             if (!confirmed) {
                 return;
@@ -634,7 +640,11 @@ async function onFileChange(event) {
             // 一条本地档都没有时，直接按「站点 origin + 本游戏 SWF 路径 + 存档名」构造。
             const confirmed = await confirmAction(
                 `将把「${name}.sol」导入为本地新存档，导入后当前游戏会重启以读取。确定吗？`,
-                { title: "导入存档", confirmText: "导入", type: "info" },
+                {
+                    title: "导入存档",
+                    confirmText: "导入",
+                    type: "info",
+                },
             );
             if (!confirmed) {
                 return;

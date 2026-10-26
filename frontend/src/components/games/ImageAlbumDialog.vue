@@ -10,7 +10,7 @@
         <div class="album">
             <div class="album__bar">
                 <app-button
-                    variant="primary"
+                    variant="secondary"
                     :disabled="busy"
                     @click="onPickFile"
                 >

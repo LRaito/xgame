@@ -3,6 +3,7 @@ import { ElMessageBox } from "element-plus";
 // 所有 ElMessageBox 确认框共用：取消文案、禁止点遮罩关闭、warning 图标。
 const BASE = {
     cancelButtonText: "取消",
+    cancelButtonClass: "el-button--secondary",
     closeOnClickModal: false,
     distinguishCancelAndClose: false,
     type: "warning",
@@ -28,7 +29,9 @@ export async function confirmAction(message, options = {}) {
             type,
             confirmButtonText: confirmText,
             cancelButtonText: cancelText,
-            confirmButtonClass: danger ? "el-button--danger" : "",
+            confirmButtonClass: danger
+                ? "el-button--danger is-plain"
+                : "el-button--secondary",
         });
         return true;
     } catch {
@@ -61,7 +64,7 @@ export async function dangerPrompt(message, options = {}) {
             type: "warning",
             confirmButtonText: confirmText,
             cancelButtonText: cancelText,
-            confirmButtonClass: "el-button--danger",
+            confirmButtonClass: "el-button--danger is-plain",
         });
         return true;
     } catch {

@@ -3,7 +3,7 @@
         <section class="save-manager__card" :class="{ 'save-manager__card--tree': isTreeMode }">
             <app-button
                 class="save-manager__close"
-                variant="ghost"
+                text
                 tone="dark"
                 size="sm"
                 icon-only
@@ -28,7 +28,7 @@
                 <template v-if="activeTab === 'local'">
                     <div class="save-manager__toolbar">
                         <app-button
-                            variant="primary"
+                            variant="secondary"
                             tone="dark"
                             :disabled="!engineReady || working"
                             @click="onCapture"
@@ -36,7 +36,7 @@
                             {{ working ? "正在捕捉…" : "捕捉当前进度" }}
                         </app-button>
                         <app-button
-                            variant="primary"
+                            variant="secondary"
                             tone="dark"
                             :disabled="!engineReady || cloudBusy"
                             @click="onUploadCloud"
@@ -86,7 +86,6 @@
                                 </app-button>
                                 <app-button
                                     variant="danger"
-                                    plain
                                     tone="dark"
                                     size="sm"
                                     :disabled="working"
@@ -132,7 +131,7 @@
                                 </div>
                                 <div class="save-manager__item-actions">
                                     <app-button
-                                        variant="primary"
+                                        variant="secondary"
                                         tone="dark"
                                         size="sm"
                                         :disabled="cloudBusy"
@@ -151,7 +150,6 @@
                                     </app-button>
                                     <app-button
                                         variant="danger"
-                                        plain
                                         tone="dark"
                                         size="sm"
                                         :disabled="cloudBusy"
@@ -201,7 +199,7 @@
                                                         取消
                                                     </app-button>
                                                     <app-button
-                                                        variant="primary"
+                                                        variant="secondary"
                                                         tone="dark"
                                                         size="sm"
                                                         :disabled="cloudBusy"
@@ -266,7 +264,7 @@
                     <h3 class="save-manager__prompt-title">同步至云端</h3>
                     <app-button
                         class="save-manager__close"
-                        variant="ghost"
+                        text
                         tone="dark"
                         size="sm"
                         icon-only
@@ -294,7 +292,7 @@
                     <app-button variant="secondary" tone="dark" @click="cancelUploadPrompt">
                         取消
                     </app-button>
-                    <app-button variant="primary" tone="dark" @click="confirmUploadCloud">
+                    <app-button variant="secondary" tone="dark" @click="confirmUploadCloud">
                         同步
                     </app-button>
                 </div>

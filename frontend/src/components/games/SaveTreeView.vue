@@ -104,7 +104,7 @@
                 <header class="save-tree__detail-head">
                     <h3 class="save-tree__detail-title">存档详情</h3>
                     <app-button
-                        variant="ghost"
+                        text
                         tone="dark"
                         size="sm"
                         icon-only
@@ -161,7 +161,7 @@
                             <app-button
                                 variant="secondary"
                                 tone="dark"
-                                size="xs"
+                                size="sm"
                                 @click="downloadFile(detailNode, file)"
                             >
                                 下载
@@ -171,7 +171,7 @@
                 </div>
                 <footer class="save-tree__detail-actions">
                     <app-button
-                        variant="primary"
+                        variant="secondary"
                         tone="dark"
                         :disabled="locked"
                         @click="onDetailSync"
@@ -189,7 +189,6 @@
                     </app-button>
                     <app-button
                         variant="danger"
-                        plain
                         tone="dark"
                         :disabled="locked"
                         @click="onDetailDelete"

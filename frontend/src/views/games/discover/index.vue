@@ -537,11 +537,9 @@ onMounted(async () => {
     width: 240px;
 }
 
-/* 「已入库比例」是 AppButton 的开关态：只保留文字排版 */
-.game-discover__toolbar .game-discover__stock.el-button {
-    align-items: baseline;
-    gap: 8px;
-}
+/* 「已入库比例」是 AppButton 的开关态：上下居中交给 .el-button 默认的 center。
+   EP 会把 slot 包进一个内层 span，这里再写 align-items: baseline 会把整块文字贴到上边；
+   标签与数字的间距由 __stock-value 的 margin-left 负责。 */
 
 .game-discover__stock-label {
     letter-spacing: 0.02em;

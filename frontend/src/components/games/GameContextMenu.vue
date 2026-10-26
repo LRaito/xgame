@@ -76,7 +76,7 @@ const emit = defineEmits(["detail", "guide", "set-progress", "set-hours"]);
 /* 子菜单里当前生效的那一项：底色加深 + 主色加粗，和 hover 的浅灰区分开 */
 .game-context-menu li.is-current {
     background: #eff6ff;
-    color: #2563eb;
+    color: var(--brand-accent);
     font-weight: 600;
 }
 

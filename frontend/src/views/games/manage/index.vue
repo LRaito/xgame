@@ -26,7 +26,7 @@
             />
             <div class="game-manage__actions">
                 <app-button variant="secondary" @click="openImport">搬运游戏</app-button>
-                <app-button variant="primary" @click="openCreate">添加游戏</app-button>
+                <app-button variant="secondary" @click="openCreate">添加游戏</app-button>
             </div>
         </div>
 
@@ -88,7 +88,7 @@
                                 <app-button variant="secondary" size="sm" @click="openEdit(item.id)">
                                     编辑
                                 </app-button>
-                                <app-button variant="danger" plain size="sm" @click="onDelete(item)">
+                                <app-button variant="danger" size="sm" @click="onDelete(item)">
                                     删除
                                 </app-button>
                             </div>
@@ -154,7 +154,7 @@
                                         取消
                                     </app-button>
                                     <app-button
-                                        variant="primary"
+                                        variant="secondary"
                                         size="sm"
                                         :loading="cartridgeSaving"
                                         @click="onConfirmCartridgeId"
@@ -238,7 +238,7 @@
                             <!-- 网络来源与本地文件二选一：选了直链就把本地文件清掉（反之亦然） -->
                             <p v-else-if="form.bodyUrl" class="game-manage__file-hint">
                                 待上传：{{ form.bodyUrl }}（{{ typeLabel(form.bodyGameType) }}）
-                                <app-button variant="link" size="sm" @click="clearRemoteBody">
+                                <app-button text size="sm" @click="clearRemoteBody">
                                     清除
                                 </app-button>
                             </p>
@@ -273,7 +273,7 @@
                             </p>
                             <p v-else-if="form.coverUrl" class="game-manage__file-hint">
                                 待上传：{{ form.coverUrl }}
-                                <app-button variant="link" size="sm" @click="form.coverUrl = ''">
+                                <app-button text size="sm" @click="form.coverUrl = ''">
                                     清除
                                 </app-button>
                             </p>
@@ -313,7 +313,6 @@
                                 <app-button
                                     v-if="editingItem?.has_guide"
                                     variant="danger"
-                                    plain
                                     :loading="guideDeleting"
                                     :disabled="saving || guideDeleting"
                                     @click="onDeleteGuide"
@@ -323,7 +322,7 @@
                             </div>
                             <p v-if="guideFile" class="game-manage__file-hint">
                                 已选 {{ guideFile.name }}（重新上传会整体替换）
-                                <app-button variant="link" size="sm" @click="clearGuide">
+                                <app-button text size="sm" @click="clearGuide">
                                     清除
                                 </app-button>
                             </p>
@@ -432,7 +431,7 @@
                             :disabled="importing"
                             @keyup.enter="onImport"
                         />
-                        <app-button variant="primary" :loading="importing" @click="onImport">
+                        <app-button variant="secondary" :loading="importing" @click="onImport">
                             搬运
                         </app-button>
                     </div>
@@ -1794,7 +1793,7 @@ onBeforeUnmount(() => {
 }
 
 .game-import__platform-badge--4399 {
-    background: linear-gradient(135deg, #60a5fa, #2563eb);
+    background: linear-gradient(135deg, #60a5fa, #0098ee);
 }
 
 /* flash.homes 的徽标字比 7k7k / 4399 长，单独缩一号字 */

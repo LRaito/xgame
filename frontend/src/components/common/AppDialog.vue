@@ -60,7 +60,7 @@ defineProps({
     cancelText: { type: String, default: "取消" },
     closeText: { type: String, default: "关闭" },
     confirmText: { type: String, default: "确定" },
-    confirmVariant: { type: String, default: "primary" },
+    confirmVariant: { type: String, default: "secondary" },
     confirmDisabled: { type: Boolean, default: false },
     confirmLoading: { type: Boolean, default: false },
     alignCenter: { type: Boolean, default: false },

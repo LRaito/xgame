@@ -151,7 +151,7 @@ const showMeta = computed(
 
 .game-card__tag--playing {
     gap: 4px;
-    color: #2563eb;
+    color: var(--brand-accent);
 }
 
 .game-card__tag--completed {
@@ -176,8 +176,8 @@ const showMeta = computed(
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: #2563eb;
-    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+    background: var(--brand-accent);
+    box-shadow: 0 0 0 3px rgba(0, 152, 238, 0.18);
     flex: none;
 }
 </style>

@@ -1,8 +1,8 @@
 <template>
     <div v-if="updateReady" class="update-banner" role="status" aria-live="polite">
         <span class="update-banner__text">发现新版本，刷新页面后生效。</span>
-        <app-button variant="primary" tone="dark" @click="reloadPage">立即刷新</app-button>
-        <app-button variant="ghost" tone="dark" size="sm" @click="dismissVersion">
+        <app-button variant="secondary" tone="dark" @click="reloadPage">立即刷新</app-button>
+        <app-button text tone="dark" size="sm" @click="dismissVersion">
             稍后
         </app-button>
     </div>

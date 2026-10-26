@@ -9,8 +9,8 @@
     color: #1e293b;
     background: #f1f5f9;
     --brand-dark: #0f172a;
-    --brand-accent: #2563eb;
-    --brand-accent-soft: #e9effd;
+    --brand-accent: #0098ee;
+    --brand-accent-soft: #e6f5fd;
     --surface: #ffffff;
     --border: #e2e8f0;
     --text-muted: #64748b;
@@ -19,31 +19,36 @@
     --radius-lg: 14px;
     --radius-md: 10px;
 
-    /* ---------- 按钮与控件设计 token（全站统一） ---------- */
-    --app-color-primary: #2563eb;
-    --app-color-primary-rgb: 37, 99, 235;
-    --app-color-primary-hover: #1d4ed8;
-    --app-color-primary-active: #1e40af;
-    --app-color-primary-soft: #e9effd;
-    --app-color-primary-light-3: #6692f1;
-    --app-color-primary-light-5: #92b1f5;
-    --app-color-primary-light-7: #bed0f9;
-    --app-color-primary-light-8: #d3e0fb;
-    --app-color-primary-light-9: #e9effd;
-    --app-color-primary-dark-2: #1e4fbc;
+    /* ---------- 按钮与控件设计 token（全站统一） ----------
+       按钮只有两种类型：删除 = 白底红字红框，其他 = 白底蓝字蓝框。
+       text 是去掉背景与边框的形态，不是第三种类型；pressed 是开关的选中状态。
+       禁用态背景/边框 #EEEEEE、文字 #AAAAAA，不用透明度。 */
+    --app-color-primary: #0098ee;
+    --app-color-primary-rgb: 0, 152, 238;
+    --app-color-primary-hover: #33acf1;
+    --app-color-primary-active: #0088d5;
 
-    --app-color-danger: #dc2626;
-    --app-color-danger-hover: #b91c1c;
-    --app-color-danger-active: #991b1b;
-    --app-color-danger-soft: #fce9e9;
-    --app-color-danger-light-5: #ee9393;
+    --app-color-danger: #ff3320;
+    --app-color-danger-hover: #ff3320;
+    --app-color-danger-active: #ff3320;
     --app-color-success: #16a34a;
     --app-color-warning: #d97706;
 
+    /* 开关选中态：浅蓝底 + 深蓝边，避免重新引入实心主按钮 */
+    --app-color-selected-bg: #e6f5fd;
+    --app-color-selected-border: #0088d5;
+    --app-color-selected-fg: #0088d5;
+    --app-color-disabled-bg: #eeeeee;
+    --app-color-disabled-border: #eeeeee;
+    --app-color-disabled-text: #aaaaaa;
+    --app-disabled-bg-dark: rgba(148, 163, 184, 0.1);
+    --app-disabled-border-dark: rgba(148, 163, 184, 0.1);
+    --app-disabled-text-dark: #7a8699;
+
     --app-text: #1e293b;
     --app-text-muted: #64748b;
-    --app-surface-subtle: #f8fafc;
-    --app-border: #e2e8f0;
+    --app-surface-subtle: #eeeeee;
+    --app-border: #dddddd;
 
     /* 深色区域：播放器标题栏、存档管理、侧栏、更新横幅 */
     --app-dark-surface: rgba(30, 41, 59, 0.8);
@@ -51,46 +56,44 @@
     --app-dark-border: rgba(148, 163, 184, 0.3);
     --app-dark-border-hover: rgba(148, 163, 184, 0.5);
     --app-dark-text: #e2e8f0;
-    --app-dark-primary: rgba(37, 99, 235, 0.85);
-    --app-dark-primary-hover: rgba(37, 99, 235, 1);
-    --app-dark-primary-border: rgba(96, 165, 250, 0.5);
-    --app-dark-danger-text: #fca5a5;
-    --app-dark-danger-border: rgba(248, 113, 113, 0.35);
-    --app-dark-danger-hover-bg: rgba(127, 29, 29, 0.4);
+    --app-dark-accent-text: #7fd4f8;
+    --app-dark-accent-text-hover: #9addfa;
+    --app-dark-accent-border: #33acf1;
+    --app-dark-accent-border-hover: #66c2f5;
+    --app-dark-primary: rgba(0, 152, 238, 0.24);
+    --app-dark-primary-hover: rgba(0, 152, 238, 0.34);
+    --app-dark-primary-border: #7fd4f8;
+    --app-dark-danger-text: #ff6b5c;
+    --app-dark-danger-text-hover: #ff8a7e;
+    --app-dark-danger-border: #ff6b5c;
+    --app-dark-danger-border-hover: #ff8a7e;
+    --app-dark-danger-hover-bg: rgba(255, 51, 32, 0.18);
 
     /* 压在图片 / 遮罩上的翻页按钮 */
-    --app-image-surface: rgba(15, 23, 42, 0.45);
-    --app-image-surface-hover: rgba(15, 23, 42, 0.72);
-    --app-overlay-surface: rgba(255, 255, 255, 0.16);
-    --app-overlay-surface-hover: rgba(255, 255, 255, 0.3);
+    --app-image-surface: rgba(15, 23, 42, 0.55);
+    --app-image-surface-hover: rgba(15, 23, 42, 0.78);
+    --app-overlay-surface: rgba(255, 255, 255, 0.14);
+    --app-overlay-surface-hover: rgba(255, 255, 255, 0.28);
 
-    /* 四档尺寸：xs 药丸 / sm 行内 / md 工具栏与弹框 / lg 播放器 */
-    --app-control-h-xs: 22px;
+    /* 三档尺寸：sm 行内 / md 工具栏与弹框 / lg 播放器 */
     --app-control-h-sm: 28px;
-    --app-control-h-md: 36px;
+    --app-control-h-md: 32px;
     --app-control-h-lg: 40px;
-    --app-control-px-xs: 8px;
     --app-control-px-sm: 10px;
-    --app-control-px-md: 14px;
+    --app-control-px-md: 12px;
     --app-control-px-lg: 20px;
-    --app-font-size-xs: 12px;
     --app-font-size-sm: 13px;
     --app-font-size-md: 14px;
     --app-font-size-lg: 15px;
     --app-radius-control-sm: 6px;
     --app-radius-control: 8px;
+    --app-radius-button: 4px;
     --app-radius-pill: 999px;
-    --app-radius-cta: 14px;
 
-    --app-disabled-opacity: 0.5;
     --app-focus-axis: 2px;
     --app-focus-offset: 2px;
-    --app-focus-ring-light: rgba(37, 99, 235, 0.5);
-    --app-focus-ring-dark: #93c5fd;
-
-    --app-cta-gradient: linear-gradient(135deg, #3b82f6, #2563eb);
-    --app-cta-shadow: 0 12px 28px rgba(37, 99, 235, 0.35);
-    --app-cta-shadow-hover: 0 16px 34px rgba(37, 99, 235, 0.45);
+    --app-focus-ring-light: rgba(0, 152, 238, 0.5);
+    --app-focus-ring-dark: #7fd4f8;
 
     --app-space-2: 8px;
     --app-space-3: 12px;
@@ -99,22 +102,22 @@
 /* Element Plus 主题对齐：品牌蓝与危险色，以及派生色（EP 不会从主色自动计算） */
 :root {
     --el-color-primary: var(--app-color-primary);
-    --el-color-primary-rgb: 37, 99, 235;
-    --el-color-primary-light-3: #6692f1;
-    --el-color-primary-light-5: #92b1f5;
-    --el-color-primary-light-7: #bed0f9;
-    --el-color-primary-light-8: #d3e0fb;
-    --el-color-primary-light-9: #e9effd;
-    --el-color-primary-dark-2: #1e4fbc;
+    --el-color-primary-rgb: 0, 152, 238;
+    --el-color-primary-light-3: #4db7f3;
+    --el-color-primary-light-5: #80ccf7;
+    --el-color-primary-light-7: #b3e0fa;
+    --el-color-primary-light-8: #cceafc;
+    --el-color-primary-light-9: #e6f5fd;
+    --el-color-primary-dark-2: #0088d5;
 
     --el-color-danger: var(--app-color-danger);
-    --el-color-danger-rgb: 220, 38, 38;
-    --el-color-danger-light-3: #e76767;
-    --el-color-danger-light-5: #ee9393;
-    --el-color-danger-light-7: #f5bebe;
-    --el-color-danger-light-8: #f8d4d4;
-    --el-color-danger-light-9: #fce9e9;
-    --el-color-danger-dark-2: #b01e1e;
+    --el-color-danger-rgb: 255, 51, 32;
+    --el-color-danger-light-3: #ff7063;
+    --el-color-danger-light-5: #ff9990;
+    --el-color-danger-light-7: #ffc2bc;
+    --el-color-danger-light-8: #ffd6d2;
+    --el-color-danger-light-9: #ffebe9;
+    --el-color-danger-dark-2: #cc291a;
 
     --el-border-radius-base: var(--app-radius-control);
     --el-border-radius-small: var(--app-radius-control-sm);
@@ -125,25 +128,101 @@
     --el-pagination-hover-color: var(--app-color-primary);
 }
 
+/* EP 按钮默认用自己的字体栈（Arial 打头），这里统一继承页面字体。
+   消息框等不经过 AppButton 的原生按钮也一起受益。 */
+.el-button {
+    font-family: inherit;
+}
+
 /* EP 按钮高度是硬编码 32px，不读 --el-component-size；这里给默认尺寸兜底。
    用 :where() 把 specificity 压到最低，让 AppButton 的 size/tone 类能覆盖它。 */
 .el-button:where(:not(.is-link):not(.is-text)) {
     height: var(--app-control-h-md);
     padding: 0 var(--app-control-px-md);
+    border-radius: var(--app-radius-button);
     font-size: var(--app-font-size-md);
 }
 
 .el-button--small:where(:not(.is-link):not(.is-text)) {
     height: var(--app-control-h-sm);
     padding: 0 var(--app-control-px-sm);
+    border-radius: var(--app-radius-button);
     font-size: var(--app-font-size-sm);
-    border-radius: var(--app-radius-control-sm);
 }
 
 .el-button--large:where(:not(.is-link):not(.is-text)) {
     height: var(--app-control-h-lg);
     padding: 0 var(--app-control-px-lg);
+    border-radius: var(--app-radius-button);
     font-size: var(--app-font-size-lg);
+}
+
+/* 游玩页（GameShell 内）：深色场景的普通按钮用与浅色页一致的蓝框蓝字。
+   删除按钮保持红框红字，不在此列；「开始游戏」是 light tone，也不受影响。 */
+.game-shell .app-button.app-button--dark.app-button--secondary:not(.is-disabled) {
+    --_btn-secondary-fg: #0098ee;
+    --_btn-secondary-border: #0098ee;
+    --_btn-secondary-border-hover: #33acf1;
+    --_btn-secondary-border-focus: #0088d5;
+    --_btn-text-fg: #0098ee;
+    --_btn-text-hover-fg: #33acf1;
+    --_btn-pressed-fg: #0088d5;
+    --_btn-pressed-border: #0088d5;
+}
+
+/* 存档管理的页签也是按钮：深色分段控件同步蓝框蓝字 */
+.game-shell .app-segmented--dark {
+    --_seg-fg: #0098ee;
+    --_seg-border: #0098ee;
+    --_seg-hover-fg: #0098ee;
+    --_seg-hover-border: #33acf1;
+    --_seg-active-fg: #0088d5;
+    --_seg-active-border: #0088d5;
+}
+
+/* ElMessageBox 不经过 AppButton，用这两个全局类拿到同一套两种按钮外观。
+   confirm.js 必须给危险按钮同时加 is-plain，否则 EP 仍是实心红。 */
+.el-button--secondary {
+    --el-button-bg-color: #fff;
+    --el-button-text-color: #0098ee;
+    --el-button-border-color: #0098ee;
+    --el-button-hover-bg-color: #eee;
+    --el-button-hover-text-color: #0098ee;
+    --el-button-hover-border-color: #33acf1;
+    --el-button-active-bg-color: #eee;
+    --el-button-active-text-color: #0098ee;
+    --el-button-active-border-color: #33acf1;
+    --el-button-disabled-bg-color: #eee;
+    --el-button-disabled-border-color: #eee;
+    --el-button-disabled-text-color: #aaa;
+}
+
+.el-button--secondary:focus-visible {
+    border-color: #0088d5;
+}
+
+.el-button--danger.is-plain {
+    --el-button-bg-color: #fff;
+    --el-button-text-color: #ff3320;
+    --el-button-border-color: #ff3320;
+    --el-button-hover-bg-color: #eee;
+    --el-button-hover-text-color: #ff3320;
+    --el-button-hover-border-color: #ff3320;
+    --el-button-active-bg-color: #eee;
+    --el-button-active-text-color: #ff3320;
+    --el-button-active-border-color: #ff3320;
+    --el-button-disabled-bg-color: #eee;
+    --el-button-disabled-border-color: #eee;
+    --el-button-disabled-text-color: #aaa;
+}
+
+.el-button--danger.is-plain.is-disabled,
+.el-button--danger.is-plain.is-disabled:hover,
+.el-button--danger.is-plain.is-disabled:focus,
+.el-button--danger.is-plain.is-disabled:active {
+    background-color: #eee;
+    border-color: #eee;
+    color: #aaa;
 }
 
 /* 游戏播放页（GameShell 挂载期间）：整页铺满视口、滚动交给内部容器，页面本身不滚动。

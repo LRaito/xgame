@@ -71,11 +71,15 @@ function select(option) {
     --_seg-bg: var(--surface);
     --_seg-fg: var(--app-text-muted);
     --_seg-border: var(--app-border);
+    --_seg-hover-bg: var(--app-surface-subtle);
     --_seg-hover-fg: var(--app-color-primary);
-    --_seg-hover-border: var(--app-color-primary-light-5);
-    --_seg-active-bg: var(--app-color-primary);
-    --_seg-active-border: var(--app-color-primary);
-    --_seg-active-fg: #fff;
+    --_seg-hover-border: var(--app-color-primary-hover);
+    --_seg-active-bg: var(--app-color-selected-bg);
+    --_seg-active-border: var(--app-color-selected-border);
+    --_seg-active-fg: var(--app-color-selected-fg);
+    --_seg-disabled-bg: var(--app-color-disabled-bg);
+    --_seg-disabled-border: var(--app-color-disabled-border);
+    --_seg-disabled-fg: var(--app-color-disabled-text);
     --_seg-focus: var(--app-focus-ring-light);
 }
 
@@ -83,11 +87,15 @@ function select(option) {
     --_seg-bg: rgba(30, 41, 59, 0.6);
     --_seg-fg: #cbd5e1;
     --_seg-border: rgba(148, 163, 184, 0.24);
+    --_seg-hover-bg: rgba(51, 65, 85, 0.9);
     --_seg-hover-fg: #fff;
-    --_seg-hover-border: rgba(148, 163, 184, 0.4);
+    --_seg-hover-border: var(--app-dark-accent-border);
     --_seg-active-bg: var(--app-dark-primary);
-    --_seg-active-border: var(--app-dark-primary-border);
-    --_seg-active-fg: #fff;
+    --_seg-active-border: var(--app-dark-accent-border);
+    --_seg-active-fg: #e6f5fd;
+    --_seg-disabled-bg: var(--app-disabled-bg-dark);
+    --_seg-disabled-border: var(--app-disabled-border-dark);
+    --_seg-disabled-fg: var(--app-disabled-text-dark);
     --_seg-focus: var(--app-focus-ring-dark);
 }
 
@@ -117,14 +125,19 @@ function select(option) {
 
 .app-segmented__item:first-child {
     margin-left: 0;
-    border-radius: var(--app-radius-control) 0 0 var(--app-radius-control);
+    border-radius: var(--app-radius-button) 0 0 var(--app-radius-button);
 }
 
 .app-segmented__item:last-child {
-    border-radius: 0 var(--app-radius-control) var(--app-radius-control) 0;
+    border-radius: 0 var(--app-radius-button) var(--app-radius-button) 0;
 }
 
-.app-segmented__item:hover:not(:disabled) {
+.app-segmented__item:only-child {
+    border-radius: var(--app-radius-button);
+}
+
+.app-segmented__item:hover:not(:disabled):not(.is-active) {
+    background: var(--_seg-hover-bg);
     color: var(--_seg-hover-fg);
     border-color: var(--_seg-hover-border);
 }
@@ -138,13 +151,17 @@ function select(option) {
 }
 
 .app-segmented__item:disabled {
-    opacity: var(--app-disabled-opacity);
+    background: var(--_seg-disabled-bg);
+    border-color: var(--_seg-disabled-border);
+    color: var(--_seg-disabled-fg);
     cursor: not-allowed;
 }
 
 /* 只有一个选项时，它是「已选中的事实」，不是灰掉的控件 */
 .app-segmented__item.is-active:disabled {
-    opacity: 1;
+    background: var(--_seg-active-bg);
+    border-color: var(--_seg-active-border);
+    color: var(--_seg-active-fg);
     cursor: default;
 }
 
