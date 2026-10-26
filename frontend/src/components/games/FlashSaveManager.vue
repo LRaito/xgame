@@ -1,18 +1,16 @@
 <template>
     <div v-if="modelValue" class="save-manager" @click.self="onClose">
         <section class="save-manager__card">
-            <header class="save-manager__head">
-                <h2 class="save-manager__title">存档管理</h2>
-                <button type="button" class="save-manager__close" @click="onClose">
-                    ✕
-                </button>
-            </header>
+            <button type="button" class="save-manager__close" @click="onClose">
+                ✕
+            </button>
 
             <nav class="save-manager__tabs">
                 <button
                     type="button"
                     class="save-manager__tab"
-                    :class="{ 'save-manager__tab--active': activeTab === 'local' }"
+                    :class="{ 'is-active': activeTab === 'local' }"
+                    :aria-pressed="activeTab === 'local'"
                     @click="switchTab('local')"
                 >
                     本地存档
@@ -20,7 +18,8 @@
                 <button
                     type="button"
                     class="save-manager__tab"
-                    :class="{ 'save-manager__tab--active': activeTab === 'cloud' }"
+                    :class="{ 'is-active': activeTab === 'cloud' }"
+                    :aria-pressed="activeTab === 'cloud'"
                     @click="switchTab('cloud')"
                 >
                     云端存档
@@ -701,6 +700,7 @@ defineExpose({
 }
 
 .save-manager__card {
+    position: relative;
     width: 620px;
     max-width: 100%;
     max-height: 80vh;
@@ -714,21 +714,12 @@ defineExpose({
     overflow: hidden;
 }
 
-.save-manager__head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 16px 20px 12px;
-    border-bottom: 1px solid rgba(148, 163, 184, 0.16);
-}
-
-.save-manager__title {
-    margin: 0;
-    font-size: 18px;
-    font-weight: 600;
-}
-
+/* 弹框没有标题栏了，关闭按钮贴右上角浮在内容之上 */
 .save-manager__close {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    z-index: 2;
     border: 0;
     background: transparent;
     color: #94a3b8;
@@ -744,21 +735,37 @@ defineExpose({
     color: #fff;
 }
 
+/* 单选栏：两个按钮共用中间那条边线，看着是一整条分段控件（样式参考游戏发现页的
+   游戏检索/游戏榜单，按弹框尺寸与深色底调整）。 */
 .save-manager__tabs {
     display: flex;
-    gap: 6px;
-    padding: 14px 20px 0;
+    padding: 18px 56px 0 20px;
 }
 
 .save-manager__tab {
-    padding: 7px 16px;
+    /* 后一个的左边界压在前一个的右边界上 */
+    margin-left: -1px;
+    padding: 10px 30px;
     border: 1px solid rgba(148, 163, 184, 0.24);
-    border-radius: 999px;
     background: rgba(30, 41, 59, 0.6);
     color: #cbd5e1;
-    font-size: 13px;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 1;
+    letter-spacing: 1px;
     cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+    user-select: none;
+    transition: none;
+}
+
+.save-manager__tab:first-child {
+    margin-left: 0;
+    border-radius: 8px 0 0 8px;
+}
+
+.save-manager__tab:last-child {
+    border-radius: 0 8px 8px 0;
 }
 
 .save-manager__tab:hover {
@@ -766,9 +773,12 @@ defineExpose({
     border-color: rgba(148, 163, 184, 0.4);
 }
 
-.save-manager__tab--active {
-    background: rgba(37, 99, 235, 0.85);
+/* 选中的那个要压在相邻按钮之上，否则它那条主色边线会被后一个按钮的灰边盖掉 */
+.save-manager__tab.is-active {
+    position: relative;
+    z-index: 1;
     border-color: rgba(96, 165, 250, 0.5);
+    background: rgba(37, 99, 235, 0.85);
     color: #fff;
 }
 
