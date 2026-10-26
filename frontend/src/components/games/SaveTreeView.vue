@@ -1137,16 +1137,28 @@ defineExpose({ handleEscape, handleSaveHotkey });
 }
 
 .save-tree__side-list {
+    position: relative;
     display: flex;
     flex: 1;
     min-height: 0;
     flex-direction: column;
     gap: 8px;
-    overflow-y: auto;
+    /* 始终显示滚动条轨道：存档很少时也保留一条不能滚动的滚动条，避免列表宽度跳动 */
+    overflow-y: scroll;
     scrollbar-gutter: stable;
     padding-right: 2px;
     scrollbar-width: thin;
     scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
+}
+
+/* 内容不足时也撑出 1px 的滚动范围，让滑块始终出现并占满整条轨道 */
+.save-tree__side-list::after {
+    content: "";
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    height: 1px;
 }
 
 .save-tree__side-list::-webkit-scrollbar {

@@ -102,15 +102,17 @@ function close() {
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    min-height: 34px;
+    /* 与右侧按钮同高，云端标题栏也用 32px，两个分区标题对齐 */
+    height: 32px;
     padding-right: 44px;
 }
 
 .save-manager__section-title {
     margin: 0;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     color: #f8fafc;
+    line-height: 1.4;
 }
 
 .save-manager__local-actions {

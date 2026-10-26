@@ -619,7 +619,8 @@ defineExpose({
 
 .save-manager__item {
     box-sizing: border-box;
-    flex: 0 0 240px;
+    /* 固定宽度 = 云端存档左侧列表的外框宽（sidebar 184 + 左右 padding 20 + 边框 2） */
+    flex: 0 0 206px;
     display: flex;
     flex-direction: column;
     align-items: stretch;
@@ -659,7 +660,8 @@ defineExpose({
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
-    gap: 6px;
+    justify-content: flex-start;
+    gap: 4px;
 }
 
 .save-manager__file {

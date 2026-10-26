@@ -138,14 +138,18 @@ defineExpose({ refresh, handleEscape, handleSaveHotkey });
 }
 
 .cloud-save-panel__head {
+    display: flex;
     flex: 0 0 auto;
-    padding: 0 2px 8px;
+    align-items: center;
+    height: 32px;
+    margin-bottom: 8px;
+    padding: 0 2px;
 }
 
 .cloud-save-panel__title {
     margin: 0;
     color: #f8fafc;
-    font-size: 14px;
+    font-size: 16px;
     font-weight: 600;
     line-height: 1.4;
 }
