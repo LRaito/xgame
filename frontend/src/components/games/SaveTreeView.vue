@@ -510,10 +510,15 @@ async function startRemarkEdit(node, source = "side") {
     if (editingRemarkId.value === node.id) {
         return;
     }
+    // 画布节点是布局副本，初始值取原始节点上的描述
+    const target = byId.value.get(node.id);
+    if (!target) {
+        return;
+    }
     selectedId.value = node.id;
     editingRemarkId.value = node.id;
     remarkSource.value = source;
-    remarkDraft.value = String(node.remark || "").slice(0, 100);
+    remarkDraft.value = String(target.remark || "").slice(0, 100);
     await nextTick();
     let input = remarkInputRef.value;
     if (source === "detail") {
@@ -542,20 +547,23 @@ async function saveRemark(node) {
     if (editingRemarkId.value !== node.id || remarkSavingId.value != null) {
         return;
     }
-    const previous = String(node.remark || "");
+    // 画布节点是布局算出来的副本，改动要写回 nodes 里的原始节点，
+    // 左侧列表与详情弹框才会跟着更新
+    const target = byId.value.get(node.id) || node;
+    const previous = String(target.remark || "");
     const remark = remarkDraft.value.trim().slice(0, 100);
     if (remark === previous) {
         cancelRemarkEdit();
         return;
     }
     remarkSavingId.value = node.id;
-    node.remark = remark;
+    target.remark = remark;
     try {
         const detail = await updateCloudSaveAPI(node.id, remark, {
             notShowError: true,
         });
-        node.remark = detail.remark || "";
-        emit("remark-changed", { id: node.id, remark: node.remark });
+        target.remark = detail.remark || "";
+        emit("remark-changed", { id: node.id, remark: target.remark });
         if (editingRemarkId.value === node.id) {
             editingRemarkId.value = null;
             remarkSource.value = null;
@@ -563,7 +571,7 @@ async function saveRemark(node) {
         }
         appMessage.success("描述已更新。");
     } catch (err) {
-        node.remark = previous;
+        target.remark = previous;
         showNotice(err?.message || "描述保存失败。");
     } finally {
         remarkSavingId.value = null;
