@@ -101,13 +101,11 @@
         <section
             ref="canvasRef"
             class="save-tree__canvas"
-            tabindex="0"
             @wheel.prevent="onWheel"
             @pointerdown="onPointerDown"
             @pointermove="onPointerMove"
             @pointerup="onPointerEnd"
             @pointercancel="onPointerEnd"
-            @keydown="onKeydown"
             @dragover.prevent
             @drop.prevent="onDropCanvas"
             @contextmenu.prevent
@@ -704,11 +702,12 @@ watch(
     () => props.snapshots,
     (items) => {
         nodes.value = (items || []).map((item) => ({ ...item }));
+        // 进页面默认不选中任何节点；选中的节点被删掉时也清空，而不是自动跳到第一条
         if (
-            selectedId.value == null ||
+            selectedId.value != null &&
             !nodes.value.some((node) => node.id === selectedId.value)
         ) {
-            selectedId.value = nodes.value[0]?.id ?? null;
+            selectedId.value = null;
         }
         if (
             detailId.value != null &&
@@ -807,6 +806,8 @@ function onPointerDown(event) {
     ) {
         return;
     }
+    // 点空白画布（左键）取消选中，再开始平移
+    selectedId.value = null;
     pointerStart = {
         pointerId: event.pointerId,
         x: event.clientX,
@@ -814,7 +815,6 @@ function onPointerDown(event) {
         panX: panX.value,
         panY: panY.value,
     };
-    canvasRef.value?.focus();
     canvasRef.value?.setPointerCapture?.(event.pointerId);
 }
 
@@ -836,31 +836,6 @@ function onPointerEnd(event) {
     } catch {
         // 指针已经释放时忽略
     }
-}
-
-function onKeydown(event) {
-    if (detailId.value != null) {
-        return;
-    }
-    // Shift + ↑/↓ 是同级排序，交给 window 上的管理器处理，这里不能同时平移
-    if (event.altKey || event.shiftKey) {
-        return;
-    }
-    // 方向与内容移动一致：按哪个方向，画面就往哪边走（看起来像在挪节点）
-    const step = 40;
-    const deltas = {
-        ArrowLeft: [-step, 0],
-        ArrowRight: [step, 0],
-        ArrowUp: [0, -step],
-        ArrowDown: [0, step],
-    };
-    const delta = deltas[event.key];
-    if (!delta) {
-        return;
-    }
-    event.preventDefault();
-    panX.value += delta[0];
-    panY.value += delta[1];
 }
 
 // ---------- 拖动建树 ----------
