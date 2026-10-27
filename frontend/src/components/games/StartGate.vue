@@ -1,11 +1,10 @@
 <template>
-    <div class="start-gate">
+    <div class="start-gate" @click="$emit('start')">
         <div class="start-gate__content">
             <button
                 type="button"
                 class="start-gate__start"
                 aria-label="开始游戏"
-                @click="$emit('start')"
             >
                 <span class="start-gate__press">PRESS START</span>
                 <span class="start-gate__zh">投币开始</span>
@@ -29,17 +28,21 @@ defineEmits(["start"]);
     font-display: swap;
 }
 
-/* 整块播放区都是启动画面：铺满外壳正文，扫描线与光晕只做氛围，不接事件 */
+/* 整个播放区都是启动按钮：铺满游戏外壳，点哪里都能开始；扫描线与光晕只做氛围，不接事件 */
 .start-gate {
-    position: relative;
-    width: 100%;
-    align-self: stretch;
+    position: absolute;
+    inset: 0;
+    /* 盖过顶部 12px 的标题栏唤出感应带，保证页面最上沿也能开始游戏；
+       标题栏本身 z-index 20，仍照常可点 */
+    z-index: 11;
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 32px 24px;
     overflow: hidden;
     box-sizing: border-box;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
 }
 
 .start-gate::before {
@@ -122,7 +125,7 @@ defineEmits(["start"]);
     animation: start-gate-blink 2.4s steps(1, end) infinite;
 }
 
-.start-gate__start:hover .start-gate__press {
+.start-gate:hover .start-gate__press {
     color: #ffffff;
     text-shadow:
         0 0 8px #ffffff,
