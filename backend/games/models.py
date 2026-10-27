@@ -94,9 +94,23 @@ class Game(SQLModel, table=True):
 
 
 class GameCloudSnapshot(SQLModel, table=True):
-    """一个云端存档 = 某(用户,游戏)此刻全部本地 .sol 的整体快照。"""
+    """一个云端存档 = 某(用户,游戏)此刻全部本地 .sol 的整体快照。
+
+    展示顺序用**分数排序**（与 GameScreenshot 同一套机制）：``sort_order`` 是浮点
+    分数，升序即展示顺序（越新越靠下）；新快照追加到末尾，同级上移/下移只改被
+    移动那一行的分数，间隙不足时才由 service 整份重排。因此不加唯一约束。
+    注意它与 ``GameCloudSnapshotFile.sort_order``（快照内文件序号）不是一回事。
+    """
 
     __tablename__ = "game_cloud_snapshots"
+    __table_args__ = (
+        Index(
+            "ix_game_cloud_snapshots_user_game_order",
+            "user_id",
+            "game_id",
+            "sort_order",
+        ),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
     user_id: int = Field(foreign_key="users.id", index=True)
@@ -105,6 +119,7 @@ class GameCloudSnapshot(SQLModel, table=True):
     # 不加物理外键：SQLite 未开 PRAGMA foreign_keys，且老库靠 ALTER 补列，
     # 加 FK 会让新旧库结构不一致；父子完整性由 service 保证。
     parent_id: int | None = Field(default=None, index=True)
+    sort_order: float = Field(default=0.0)  # 展示分数，越小越靠前
     remark: str = Field(default="", max_length=100)  # 描述上限 100 字
     created_at: datetime = Field(default_factory=_utcnow)
 

@@ -11,6 +11,7 @@
             @delete="onDelete"
             @parents-changed="onParentsChanged"
             @remark-changed="onRemarkChanged"
+            @order-changed="onOrderChanged"
             @refresh="refresh"
         />
     </div>
@@ -72,6 +73,13 @@ function onParentsChanged({ id, parentId }) {
 
 function onRemarkChanged({ id, remark }) {
     patchSnapshot(id, { remark });
+}
+
+/** 排序落库成功后，用后端给的整份有序列表替换本地快照（顺序以后端为准）。 */
+function onOrderChanged(items) {
+    if (Array.isArray(items)) {
+        snapshots.value = items;
+    }
 }
 
 async function onSyncLocal(node) {

@@ -1628,7 +1628,7 @@ def test_init_db_adds_missing_guide_kind_column(tmp_path):
 
 
 def test_init_db_adds_missing_snapshot_parent_column_and_index(tmp_path):
-    """老库的 game_cloud_snapshots 表没有 parent_id：启动时补可空列与索引。"""
+    """老库的 game_cloud_snapshots 表没有 parent_id / sort_order：启动时补列与索引。"""
     from sqlalchemy import inspect as sa_inspect
     from sqlmodel import create_engine
 
@@ -1650,9 +1650,16 @@ def test_init_db_adds_missing_snapshot_parent_column_and_index(tmp_path):
     }
     assert "parent_id" in columns
     assert columns["parent_id"]["nullable"] is True
+    # sort_order 带默认值，所以老库补列时可以是 NOT NULL（旧行一律 0）
+    assert "sort_order" in columns
+    assert columns["sort_order"]["nullable"] is False
 
     indexes = sa_inspect(engine).get_indexes("game_cloud_snapshots")
     assert any(index["column_names"] == ["parent_id"] for index in indexes)
+    assert any(
+        index["column_names"] == ["user_id", "game_id", "sort_order"]
+        for index in indexes
+    )
 
 
 def test_update_ignores_manual_game_type(logged_in_games):

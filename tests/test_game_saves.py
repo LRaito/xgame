@@ -543,8 +543,8 @@ def test_cloud_snapshot_delete_reparents_children(logged_in_saves, storage_root)
     assert download.content == _sol_data(b"snapshot")
 
 
-def test_cloud_snapshot_list_tiebreak_id_desc(logged_in_saves):
-    """同一创建时间也按 id 倒序，树里的兄弟顺序稳定。"""
+def test_cloud_snapshot_list_oldest_first(logged_in_saves):
+    """列表按展示分数升序：越新越靠下（与 created_at 无关）。"""
     client = logged_in_saves
     game_id = _make_game(client, cartridge_id="TREE-9")["id"]
     first = _create_snapshot(client, game_id)
@@ -561,7 +561,152 @@ def test_cloud_snapshot_list_tiebreak_id_desc(logged_in_saves):
         session.commit()
 
     ids = [item["id"] for item in _list_snapshots(client, game_id)]
-    assert ids == sorted([first["id"], second["id"]], reverse=True)
+    assert ids == [first["id"], second["id"]]
+
+
+def _make_siblings(client, game_id: int, count: int = 3) -> list[dict]:
+    """建 count 条快照并把它们都设为顶层，成为同级兄弟。"""
+    items = [_create_snapshot(client, game_id, remark=f"第 {i + 1} 条") for i in range(count)]
+    for item in items:
+        response = client.put(
+            f"/api/games/saves/{item['id']}/parent", json={"parent_id": None}
+        )
+        assert response.status_code == 200, response.text
+    return items
+
+
+def _order(client, game_id: int) -> list[int]:
+    return [item["id"] for item in _list_snapshots(client, game_id)]
+
+
+def test_cloud_snapshot_create_appends_last(logged_in_saves):
+    """新快照追加在末尾（越新越靠下），分数递增。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-1")["id"]
+    first = _create_snapshot(client, game_id)
+    second = _create_snapshot(client, game_id)
+    third = _create_snapshot(client, game_id)
+
+    listed = _list_snapshots(client, game_id)
+    assert [item["id"] for item in listed] == [first["id"], second["id"], third["id"]]
+    scores = [item["sort_order"] for item in listed]
+    assert scores == sorted(scores)
+    assert len(set(scores)) == 3
+
+
+def test_cloud_snapshot_move_reorders_siblings(logged_in_saves):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-2")["id"]
+    first, second, third = _make_siblings(client, game_id)
+    assert _order(client, game_id) == [first["id"], second["id"], third["id"]]
+
+    # 第三条移到同级最上面，返回整份有序列表
+    moved = client.post(f"/api/games/saves/{third['id']}/move", json={"to_index": 0})
+    assert moved.status_code == 200, moved.text
+    assert [item["id"] for item in moved.json()["data"]] == [
+        third["id"],
+        first["id"],
+        second["id"],
+    ]
+    assert _order(client, game_id) == [third["id"], first["id"], second["id"]]
+
+    # 第一条（现在在中间）下移一位
+    moved = client.post(f"/api/games/saves/{first['id']}/move", json={"to_index": 2})
+    assert moved.status_code == 200, moved.text
+    assert _order(client, game_id) == [third["id"], second["id"], first["id"]]
+
+
+def test_cloud_snapshot_move_only_touches_target(logged_in_saves):
+    """只改被移动那一行的分数，其余兄弟不动。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-3")["id"]
+    first, second, third = _make_siblings(client, game_id)
+
+    with Session(client.app.state.engine) as session:
+        before = {
+            row.id: row.sort_order
+            for row in session.exec(
+                select(GameCloudSnapshot).where(GameCloudSnapshot.game_id == game_id)
+            ).all()
+        }
+
+    response = client.post(
+        f"/api/games/saves/{third['id']}/move", json={"to_index": 0}
+    )
+    assert response.status_code == 200, response.text
+
+    with Session(client.app.state.engine) as session:
+        after = {
+            row.id: row.sort_order
+            for row in session.exec(
+                select(GameCloudSnapshot).where(GameCloudSnapshot.game_id == game_id)
+            ).all()
+        }
+    assert after[first["id"]] == before[first["id"]]
+    assert after[second["id"]] == before[second["id"]]
+    assert after[third["id"]] < after[first["id"]]
+
+
+def test_cloud_snapshot_move_edge_cases(logged_in_saves, app):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-4")["id"]
+    first, second, third = _make_siblings(client, game_id)
+
+    # 越界
+    response = client.post(
+        f"/api/games/saves/{first['id']}/move", json={"to_index": 9}
+    )
+    assert response.status_code == 400
+    assert "位置" in response.json()["message"]
+    assert _order(client, game_id) == [first["id"], second["id"], third["id"]]
+
+    # 原位：空操作
+    response = client.post(
+        f"/api/games/saves/{second['id']}/move", json={"to_index": 1}
+    )
+    assert response.status_code == 200
+    assert _order(client, game_id) == [first["id"], second["id"], third["id"]]
+
+    # 别人的快照 → 404
+    with Session(app.state.engine) as session:
+        AuthService(session).create_user("bobby", "secret123")
+    client.post("/api/logout")
+    client.post("/api/login", json={"username": "bobby", "password": "secret123"})
+    response = client.post(
+        f"/api/games/saves/{first['id']}/move", json={"to_index": 0}
+    )
+    assert response.status_code == 404
+
+
+def test_cloud_snapshot_move_requires_login(client):
+    response = client.post("/api/games/saves/1/move", json={"to_index": 0})
+    assert response.status_code == 401
+
+
+def test_cloud_snapshot_move_renumbers_when_gap_runs_out(logged_in_saves):
+    """反复挤同一个间隙，间隔耗尽时整份重排，顺序仍正确。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-5")["id"]
+    _make_siblings(client, game_id)
+
+    for _ in range(40):
+        ids = _order(client, game_id)
+        response = client.post(
+            f"/api/games/saves/{ids[-1]}/move", json={"to_index": 1}
+        )
+        assert response.status_code == 200, response.text
+
+    with Session(client.app.state.engine) as session:
+        scores = [
+            row.sort_order
+            for row in session.exec(
+                select(GameCloudSnapshot)
+                .where(GameCloudSnapshot.game_id == game_id)
+                .order_by(GameCloudSnapshot.sort_order, GameCloudSnapshot.id)
+            ).all()
+        ]
+    assert scores == sorted(scores)
+    assert len(set(scores)) == len(scores)
 
 
 def test_delete_game_removes_snapshot_tree(logged_in_saves, app):

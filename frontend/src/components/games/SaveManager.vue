@@ -527,16 +527,25 @@ function onKeydown(event) {
         emit("update:modelValue", false);
         return;
     }
-    if (event.key !== "Enter" && event.key !== "Delete") {
+    // Shift + ↑/↓：在选中的节点上调整同级顺序；其余修饰键组合不算
+    const reorder =
+        event.shiftKey &&
+        (event.key === "ArrowUp" || event.key === "ArrowDown");
+    if (!reorder && event.key !== "Enter" && event.key !== "Delete") {
         return;
     }
-    if (
+    if (reorder) {
+        if (event.ctrlKey || event.altKey || event.metaKey) {
+            return;
+        }
+    } else if (
         event.repeat ||
         event.ctrlKey ||
         event.altKey ||
         event.metaKey ||
         event.shiftKey
     ) {
+        // Enter/Delete 不吃连发；排序（Shift + ↑/↓）允许按住连续挪位
         return;
     }
     const target = event.target;

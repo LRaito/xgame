@@ -245,6 +245,16 @@ export function setCloudSaveParentAPI(id, parentId, config = {}) {
     });
 }
 
+/** 调整云端存档在同级兄弟中的位置（toIndex 从 0 起）；返回整份有序列表。 */
+export function moveCloudSaveAPI(id, toIndex, config = {}) {
+    return request({
+        url: `/api/games/saves/${id}/move`,
+        method: "post",
+        data: { to_index: toIndex },
+        ...config,
+    });
+}
+
 /** 云端存档单个文件的同源流式地址（octet-stream）。 */
 export function cloudSaveFileDownloadPath(id, fileId) {
     return `/api/games/saves/${id}/files/${fileId}/download`;

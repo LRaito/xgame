@@ -18,8 +18,11 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
         "guide_kind": "VARCHAR(10) NOT NULL DEFAULT ''",
     },
     # 云端存档的父节点（NULL = 顶层）。老库里没有这一列，补成可空列即可。
+    # sort_order 是展示分数（同级排序用）。老行一律 0，按 (sort_order, id) 升序
+    # 正好等于创建先后；新快照从 1000 起算，所以不需要回填。
     "game_cloud_snapshots": {
         "parent_id": "INTEGER",
+        "sort_order": "REAL NOT NULL DEFAULT 0",
     },
 }
 
@@ -27,6 +30,8 @@ _ADDED_COLUMNS: dict[str, dict[str, str]] = {
 _ADDED_INDEXES: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS ix_game_cloud_snapshots_parent_id "
     "ON game_cloud_snapshots (parent_id)",
+    "CREATE INDEX IF NOT EXISTS ix_game_cloud_snapshots_user_game_order "
+    "ON game_cloud_snapshots (user_id, game_id, sort_order)",
 )
 
 # 已删除的表：create_all 只建不删，老库里可能还留着，启动时顺手清掉。没有迁移框架，

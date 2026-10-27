@@ -28,6 +28,10 @@ class CloudSaveParentBody(BaseModel):
     parent_id: int | None = None
 
 
+class CloudSaveMoveBody(BaseModel):
+    to_index: int = -1
+
+
 def _uploaded_size(file: UploadFile) -> int:
     spool = file.file
     spool.seek(0, os.SEEK_END)
@@ -41,6 +45,7 @@ def _item_payload(item) -> dict:
         "id": item.id,
         "game_id": item.game_id,
         "parent_id": item.parent_id,
+        "sort_order": item.sort_order,
         "remark": item.remark,
         "file_count": item.file_count,
         "total_size": item.total_size,
@@ -74,7 +79,7 @@ def cloud_saves_list(
     service: SaveServiceDep,
     game_id: int = Query(...),
 ):
-    """某游戏的云端存档（整体快照）列表，按创建时间倒序。"""
+    """某游戏的云端存档（整体快照）列表，按展示顺序（分数升序，越新越靠下）。"""
     items = service.list_snapshots(user_id=_user.id, game_id=game_id)
     return json_ok([_item_payload(item) for item in items])
 
@@ -194,6 +199,31 @@ def cloud_saves_set_parent(
         body.parent_id,
     )
     return json_ok(_detail_payload(detail))
+
+
+@router.post("/{snapshot_id}/move")
+def cloud_saves_move(
+    snapshot_id: int,
+    body: CloudSaveMoveBody,
+    _user: CurrentUser,
+    service: SaveServiceDep,
+):
+    """把快照挪到同级兄弟中的第 to_index 位（0 起），返回整份有序列表。"""
+    try:
+        items = service.move_snapshot(
+            user_id=_user.id, snapshot_id=snapshot_id, to_index=body.to_index
+        )
+    except ValidationError as exc:
+        return json_err(str(exc), 400)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    logger.info(
+        "已调整云端存档顺序 user_id=%s snapshot_id=%s to_index=%s",
+        _user.id,
+        snapshot_id,
+        body.to_index,
+    )
+    return json_ok([_item_payload(item) for item in items])
 
 
 @router.put("/{snapshot_id}")

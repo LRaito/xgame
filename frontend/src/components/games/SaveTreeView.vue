@@ -327,6 +327,7 @@ import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue"
 import {
     cloudSaveDetailAPI,
     cloudSaveFileDownloadPath,
+    moveCloudSaveAPI,
     setCloudSaveParentAPI,
     updateCloudSaveAPI,
 } from "@/api/games";
@@ -342,9 +343,10 @@ const ROOT_GAP = 48;
 const PAD = 40;
 const MIN_ZOOM = 0.2;
 const MAX_ZOOM = 2.5;
+const MOVE_SAVE_DELAY = 200; // 连按方向键时，停手后再落库
 
 const props = defineProps({
-    // 快照的扁平列表（含 parent_id），由父组件按 created_at DESC, id DESC 给出
+    // 快照的扁平列表（含 parent_id），由父组件按展示顺序（sort_order 升序）给出
     snapshots: { type: Array, default: () => [] },
     // 父组件正在删除/同步等操作：禁止拖动与弹框按钮
     busy: { type: Boolean, default: false },
@@ -355,6 +357,7 @@ const emit = defineEmits([
     "delete",
     "parents-changed",
     "remark-changed",
+    "order-changed",
     "refresh",
 ]);
 
@@ -384,6 +387,10 @@ const remarkInputRef = ref(null);
 const detailInputRef = ref(null);
 const notice = ref(null);
 let noticeTimer = null;
+// 同级排序：本地先动、停手再落库；请求串行发送，队列里每个节点只保留最新目标位置
+let moveTimer = null;
+let moveSending = false;
+const pendingMoves = new Map();
 
 const locked = computed(() => props.busy || mutating.value);
 
@@ -800,12 +807,17 @@ function onKeydown(event) {
     if (detailId.value != null) {
         return;
     }
-    const step = event.shiftKey ? 120 : 40;
+    // Shift + ↑/↓ 是同级排序，交给 window 上的管理器处理，这里不能同时平移
+    if (event.altKey || event.shiftKey) {
+        return;
+    }
+    // 方向与内容移动一致：按哪个方向，画面就往哪边走（看起来像在挪节点）
+    const step = 40;
     const deltas = {
-        ArrowLeft: [step, 0],
-        ArrowRight: [-step, 0],
-        ArrowUp: [0, step],
-        ArrowDown: [0, -step],
+        ArrowLeft: [-step, 0],
+        ArrowRight: [step, 0],
+        ArrowUp: [0, -step],
+        ArrowDown: [0, step],
     };
     const delta = deltas[event.key];
     if (!delta) {
@@ -919,6 +931,8 @@ async function applyParent(id, parentId) {
     if (previous === parentId) {
         return;
     }
+    // 换了父级，之前排在同级里的目标位置就作废了
+    pendingMoves.delete(id);
     node.parent_id = parentId;
     selectedId.value = id;
     mutating.value = true;
@@ -934,6 +948,92 @@ async function applyParent(id, parentId) {
         emit("refresh");
     } finally {
         mutating.value = false;
+    }
+}
+
+// ---------- 同级排序（Shift + ↑/↓） ----------
+
+/** 同一父级的兄弟节点，顺序与画布布局、左侧列表一致。 */
+function siblingsOf(nodeId) {
+    const parentId = resolvedParents.value.get(nodeId) ?? null;
+    return nodes.value.filter(
+        (node) => (resolvedParents.value.get(node.id) ?? null) === parentId,
+    );
+}
+
+function moveSelected(delta) {
+    const node = selectedNode.value;
+    if (!node) {
+        return false;
+    }
+    const siblings = siblingsOf(node.id);
+    const from = siblings.findIndex((item) => item.id === node.id);
+    const to = from + delta;
+    if (from < 0 || to < 0 || to >= siblings.length) {
+        // 已经在同级首/尾：消费按键但不动作（不环绕）
+        return true;
+    }
+    // 先本地乐观重排：摘出节点，插到目标兄弟之前（上移）或之后（下移）
+    const reference = siblings[to];
+    const next = nodes.value.filter((item) => item.id !== node.id);
+    const refIndex = next.findIndex((item) => item.id === reference.id);
+    next.splice(delta > 0 ? refIndex + 1 : refIndex, 0, node);
+    nodes.value = next;
+
+    pendingMoves.set(node.id, to);
+    if (moveTimer != null) {
+        clearTimeout(moveTimer);
+    }
+    moveTimer = setTimeout(() => {
+        moveTimer = null;
+        void flushMove();
+    }, MOVE_SAVE_DELAY);
+    return true;
+}
+
+/**
+ * 按顺序把队列里的挪位落库：每次取队首的那一条，成功后再取下一批。
+ * 同一个节点在等待期间被继续挪动时，只保留最新的目标位置。
+ */
+async function flushMove() {
+    if (moveTimer != null) {
+        clearTimeout(moveTimer);
+        moveTimer = null;
+    }
+    if (moveSending || !pendingMoves.size) {
+        return;
+    }
+    const [id, target] = pendingMoves.entries().next().value;
+    moveSending = true;
+    try {
+        const items =
+            (await moveCloudSaveAPI(id, target, { notShowError: true })) || [];
+        if (pendingMoves.get(id) === target) {
+            pendingMoves.delete(id);
+        }
+        // 期间若刚好有人删/加/挪了快照，列表成员已经变了，别用旧响应覆盖它
+        const currentShape = new Map(
+            nodes.value.map((node) => [node.id, node.parent_id ?? null]),
+        );
+        const sameNodes =
+            items.length === currentShape.size &&
+            items.every(
+                (item) => currentShape.get(item.id) === (item.parent_id ?? null),
+            );
+        if (!pendingMoves.size && sameNodes) {
+            // 队列清空才用后端返回的整份列表对齐（顺序的真相在后端）
+            nodes.value = items.map((item) => ({ ...item }));
+            emit("order-changed", items);
+        }
+    } catch (err) {
+        pendingMoves.clear();
+        showNotice(err?.message || "调整顺序失败。");
+        emit("refresh");
+    } finally {
+        moveSending = false;
+        if (pendingMoves.size) {
+            void flushMove();
+        }
     }
 }
 
@@ -1080,6 +1180,10 @@ onBeforeUnmount(() => {
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     resizeObserver?.disconnect();
     sideListObserver?.disconnect();
+    // 关弹框时把还没到点的排序请求立刻发出去，别丢掉最后一次挪位
+    if (moveTimer != null) {
+        void flushMove();
+    }
     clearNotice();
     if (document.fullscreenElement === rootRef.value) {
         document.exitFullscreen?.().catch(() => {});
@@ -1108,6 +1212,12 @@ function handleSaveHotkey(key) {
     if (key === "Delete") {
         emit("delete", node);
         return true;
+    }
+    if (key === "ArrowUp") {
+        return moveSelected(-1);
+    }
+    if (key === "ArrowDown") {
+        return moveSelected(1);
     }
     return false;
 }

@@ -10,6 +10,7 @@ from sqlmodel import Session, col, select
 from backend.errors import NotFoundError, StorageError, ValidationError
 from backend.games import paths
 from backend.games.models import Game, GameCloudSnapshot, GameCloudSnapshotFile
+from backend.games.sort_order import SCORE_STEP, score_between
 from backend.storage.types import StorageBackend, StoredObjectStream
 
 _SAVE_MAX_FILE_SIZE = 8 * 1024 * 1024  # 单 .sol 上限，远小于服务端 32M 总限
@@ -31,6 +32,7 @@ class CloudSnapshotItem:
     id: int
     game_id: int
     parent_id: int | None
+    sort_order: float
     remark: str
     file_count: int
     total_size: int
@@ -79,17 +81,8 @@ class CloudSaveService:
         self._username = username
 
     def list_snapshots(self, user_id: int, game_id: int) -> list[CloudSnapshotItem]:
-        snapshots = self._session.exec(
-            select(GameCloudSnapshot)
-            .where(
-                GameCloudSnapshot.user_id == user_id,
-                GameCloudSnapshot.game_id == game_id,
-            )
-            .order_by(
-                col(GameCloudSnapshot.created_at).desc(),
-                col(GameCloudSnapshot.id).desc(),
-            )
-        ).all()
+        """按展示顺序（分数升序，越新越靠下）返回某游戏的全部快照。"""
+        snapshots = self._ordered_rows(user_id, game_id)
         if not snapshots:
             return []
         ids = [snapshot.id for snapshot in snapshots]
@@ -108,6 +101,7 @@ class CloudSaveService:
                 id=snapshot.id,
                 game_id=snapshot.game_id,
                 parent_id=snapshot.parent_id,
+                sort_order=snapshot.sort_order,
                 remark=snapshot.remark,
                 file_count=agg.get(snapshot.id, (0, 0))[0],
                 total_size=agg.get(snapshot.id, (0, 0))[1],
@@ -167,7 +161,7 @@ class CloudSaveService:
             raise NotFoundError("游戏不存在。")
 
         # 新快照自动接在同组最新一条后面；第一条没有父级。
-        # 排序与列表接口一致（created_at DESC, id DESC），保证“最新”语义相同。
+        # 「最新」按创建时间定（与展示顺序无关，展示顺序可能被用户改过）。
         latest = self._session.exec(
             select(GameCloudSnapshot)
             .where(
@@ -185,6 +179,8 @@ class CloudSaveService:
             game_id=game_id,
             remark=remark,
             parent_id=latest.id if latest is not None else None,
+            # 追加到末尾：越新的存档越靠下
+            sort_order=self._next_score(user_id, game_id),
         )
         self._session.add(snapshot)
         self._session.flush()  # 先拿 snapshot.id 给存档行做外键
@@ -268,6 +264,36 @@ class CloudSaveService:
             self._session.commit()
         return self.get_snapshot(user_id, snapshot_id)
 
+    def move_snapshot(
+        self, user_id: int, snapshot_id: int, to_index: int
+    ) -> list[CloudSnapshotItem]:
+        """把快照在同级兄弟里挪到第 to_index 位（0 起），返回整份有序列表。
+
+        同级 = 同一个 parent_id 的那一段（None 自成一档，即全部顶层）。只改被移动
+        那一行的分数；相邻间隔用尽时先把同 (user, game) 的整份按当前顺序重铺一遍。
+        """
+        snapshot = self._get_owned_snapshot(user_id, snapshot_id)
+        rows = self._ordered_rows(user_id, snapshot.game_id)
+        siblings = [row for row in rows if row.parent_id == snapshot.parent_id]
+        index = next((i for i, row in enumerate(siblings) if row.id == snapshot.id), -1)
+        if to_index < 0 or to_index >= len(siblings):
+            raise ValidationError("目标位置不合法。")
+        if to_index == index:
+            return self.list_snapshots(user_id, snapshot.game_id)
+
+        remaining = [row for row in siblings if row.id != snapshot.id]
+        score = score_between(remaining, to_index)
+        if score is None:
+            # 间隙用尽：把整份按当前顺序重新铺开，再取中值（全表重排只发生在这一刻）
+            for position, row in enumerate(rows):
+                row.sort_order = (position + 1) * SCORE_STEP
+                self._session.add(row)
+            score = score_between(remaining, to_index)
+        snapshot.sort_order = score
+        self._session.add(snapshot)
+        self._session.commit()
+        return self.list_snapshots(user_id, snapshot.game_id)
+
     def _assert_no_cycle(self, child: GameCloudSnapshot, parent: GameCloudSnapshot) -> None:
         """沿父链向上走：遇到 child 就说明会成环；父链本身异常（重复/跨账号）也拦下。"""
         seen: set[int] = set()
@@ -317,6 +343,26 @@ class CloudSaveService:
             # 不区分“不存在”与“别人的”，避免越权探测
             raise NotFoundError("云端存档不存在。")
         return snapshot
+
+    def _ordered_rows(self, user_id: int, game_id: int) -> list[GameCloudSnapshot]:
+        return list(
+            self._session.exec(
+                select(GameCloudSnapshot)
+                .where(
+                    GameCloudSnapshot.user_id == user_id,
+                    GameCloudSnapshot.game_id == game_id,
+                )
+                .order_by(
+                    col(GameCloudSnapshot.sort_order),
+                    col(GameCloudSnapshot.id),
+                )
+            ).all()
+        )
+
+    def _next_score(self, user_id: int, game_id: int) -> float:
+        """新快照追加到末尾：最大分 + 一个步长（空列表从步长起算）。"""
+        rows = self._ordered_rows(user_id, game_id)
+        return rows[-1].sort_order + SCORE_STEP if rows else SCORE_STEP
 
     def _list_files(self, snapshot_id: int) -> list[CloudSnapshotFile]:
         rows = self._session.exec(
