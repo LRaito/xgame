@@ -57,7 +57,7 @@
                     @contextmenu.prevent.stop="openDetail(node)"
                 >
                     <input
-                        v-if="editingRemarkId === node.id"
+                        v-if="editingRemarkId === node.id && remarkSource === 'side'"
                         :ref="(el) => (remarkInputRef = el)"
                         v-model="remarkDraft"
                         class="save-tree__side-input"
@@ -172,7 +172,7 @@
                         width: `${NODE_W}px`,
                         height: `${NODE_H}px`,
                     }"
-                    :draggable="!locked"
+                    :draggable="!locked && editingRemarkId !== node.id"
                     @dragstart.stop="onDragStart($event, node)"
                     @dragend="onDragEnd"
                     @dragover.prevent.stop="onDragOverNode($event, node)"
@@ -182,7 +182,20 @@
                     @dblclick.stop="onCanvasNodeDblClick(node)"
                     @contextmenu.prevent.stop="openDetail(node)"
                 >
-                    <span class="save-tree__node-text">{{ nodeText(node) }}</span>
+                    <input
+                        v-if="editingRemarkId === node.id && remarkSource === 'canvas'"
+                        :ref="(el) => (canvasRemarkInputRef = el)"
+                        v-model="remarkDraft"
+                        class="save-tree__canvas-input"
+                        maxlength="100"
+                        placeholder="填写描述"
+                        @click.stop
+                        @dblclick.stop
+                        @keydown.enter.prevent="onRemarkEnter($event, node)"
+                        @keydown.esc.prevent.stop="cancelRemarkEdit"
+                        @blur="saveRemark(node)"
+                    />
+                    <span v-else class="save-tree__node-text">{{ nodeText(node) }}</span>
                 </div>
             </div>
         </section>
@@ -231,7 +244,7 @@
                 </header>
                 <div class="save-tree__detail-body">
                     <textarea
-                        v-if="editingRemarkId === detailNode.id"
+                        v-if="editingRemarkId === detailNode.id && remarkSource === 'detail'"
                         :ref="(el) => (detailInputRef = el)"
                         v-model="remarkDraft"
                         class="save-tree__detail-input"
@@ -253,7 +266,7 @@
                         {{ detailNode.remark || "暂无描述" }}
                     </p>
                     <div
-                        v-if="editingRemarkId === detailNode.id"
+                        v-if="editingRemarkId === detailNode.id && remarkSource === 'detail'"
                         class="save-tree__detail-edit-foot"
                     >
                         <span>{{ remarkDraft.length }}/100</span>
@@ -377,14 +390,16 @@ const detailId = ref(null);
 const detailFiles = ref([]);
 const detailLoading = ref(false);
 const isFullscreen = ref(false);
-const hasFitted = ref(false);
 const keyword = ref("");
 const selectedId = ref(null);
 const editingRemarkId = ref(null);
+// 编辑入口：side（侧栏）/ canvas（画布节点）/ detail（详情弹框），同一时刻只在一处显示输入框
+const remarkSource = ref(null);
 const remarkDraft = ref("");
 const remarkSavingId = ref(null);
 const remarkInputRef = ref(null);
 const detailInputRef = ref(null);
+const canvasRemarkInputRef = ref(null);
 const notice = ref(null);
 let noticeTimer = null;
 // 同级排序：本地先动、停手再落库；请求串行发送，队列里每个节点只保留最新目标位置
@@ -499,15 +514,22 @@ async function startRemarkEdit(node, source = "side") {
     }
     selectedId.value = node.id;
     editingRemarkId.value = node.id;
+    remarkSource.value = source;
     remarkDraft.value = String(node.remark || "").slice(0, 100);
     await nextTick();
-    const input = source === "detail" ? detailInputRef.value : remarkInputRef.value;
+    let input = remarkInputRef.value;
+    if (source === "detail") {
+        input = detailInputRef.value;
+    } else if (source === "canvas") {
+        input = canvasRemarkInputRef.value;
+    }
     input?.focus();
     input?.setSelectionRange?.(input.value.length, input.value.length);
 }
 
 function cancelRemarkEdit() {
     editingRemarkId.value = null;
+    remarkSource.value = null;
     remarkDraft.value = "";
 }
 
@@ -538,6 +560,7 @@ async function saveRemark(node) {
         emit("remark-changed", { id: node.id, remark: node.remark });
         if (editingRemarkId.value === node.id) {
             editingRemarkId.value = null;
+            remarkSource.value = null;
             remarkDraft.value = "";
         }
         appMessage.success("描述已更新。");
@@ -662,7 +685,19 @@ function fitToCanvas() {
     zoom.value = scale;
     panX.value = (width - content.width * scale) / 2;
     panY.value = (height - content.height * scale) / 2;
-    hasFitted.value = true;
+}
+
+let resizeFitTimer = null;
+
+/** 画布尺寸变化（拉伸窗口、进出全屏等）后自动适应一次视图，防抖到尺寸稳定。 */
+function scheduleFit() {
+    if (resizeFitTimer != null) {
+        clearTimeout(resizeFitTimer);
+    }
+    resizeFitTimer = setTimeout(() => {
+        resizeFitTimer = null;
+        fitToCanvas();
+    }, 120);
 }
 
 watch(
@@ -1051,14 +1086,12 @@ function openDetail(node) {
     void loadDetail(node.id);
 }
 
+/** 与侧栏节点一致：双击就地改描述，不弹详情（详情仍走右键）。 */
 function onCanvasNodeDblClick(node) {
     if (locked.value || dragId.value != null) {
         return;
     }
-    openDetail(node);
-    if (editingRemarkId.value !== node.id) {
-        void startRemarkEdit(node, "detail");
-    }
+    void startRemarkEdit(node, "canvas");
 }
 
 async function loadDetail(id) {
@@ -1157,10 +1190,9 @@ let sideListObserver = null;
 onMounted(() => {
     document.addEventListener("fullscreenchange", onFullscreenChange);
     if (typeof ResizeObserver === "function" && canvasRef.value) {
+        // 存档管理页面开着时，任何尺寸变化都重新适应一次视图
         resizeObserver = new ResizeObserver(() => {
-            if (!hasFitted.value) {
-                fitToCanvas();
-            }
+            scheduleFit();
         });
         resizeObserver.observe(canvasRef.value);
     }
@@ -1180,6 +1212,10 @@ onBeforeUnmount(() => {
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     resizeObserver?.disconnect();
     sideListObserver?.disconnect();
+    if (resizeFitTimer != null) {
+        clearTimeout(resizeFitTimer);
+        resizeFitTimer = null;
+    }
     // 关弹框时把还没到点的排序请求立刻发出去，别丢掉最后一次挪位
     if (moveTimer != null) {
         void flushMove();
@@ -1259,6 +1295,11 @@ defineExpose({ handleEscape, handleSaveHotkey });
     background: #0f172a;
 }
 
+/* 全屏里没有「云端存档」标题，侧栏回到顶部 */
+.save-tree:fullscreen .save-tree__sidebar {
+    margin-top: 0;
+}
+
 .save-tree__sidebar {
     /* 与本地存档按钮列同宽（变量由存档弹框写入） */
     box-sizing: border-box;
@@ -1268,6 +1309,8 @@ defineExpose({ handleEscape, handleSaveHotkey });
     display: flex;
     flex-direction: column;
     gap: 8px;
+    /* 云端标题行占的高度：标题还在原位，画布则一直铺到顶部的横线 */
+    margin-top: 52px;
     /* 左右留给列表/搜索框自己控制，节点的左右留白才一致 */
     padding: 10px 0;
     border: 1px solid rgba(148, 163, 184, 0.24);
@@ -1344,13 +1387,14 @@ defineExpose({ handleEscape, handleSaveHotkey });
     box-sizing: border-box;
     width: 100%;
     height: 30px;
-    padding: 0 8px;
-    border: 1px solid #60a5fa;
-    border-radius: 6px;
-    background: #0f172a;
-    color: #f8fafc;
+    padding: 0 6px;
+    border: 1px solid #4ade80;
+    border-radius: 0;
+    background: #041008;
+    color: #c7ffdb;
     font: inherit;
-    font-size: 13px;
+    font-size: 11px;
+    text-align: center;
     outline: none;
 }
 
@@ -1381,9 +1425,6 @@ defineExpose({ handleEscape, handleSaveHotkey });
     cursor: grabbing;
 }
 
-.save-tree__canvas:focus-visible {
-    box-shadow: inset 0 0 0 2px rgba(96, 165, 250, 0.5);
-}
 
 .save-tree__toolbar {
     position: absolute;
@@ -1478,22 +1519,57 @@ defineExpose({ handleEscape, handleSaveHotkey });
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0 12px;
-    border-radius: 8px;
-    border: 1px solid rgba(148, 163, 184, 0.42);
-    background: linear-gradient(180deg, #334155, #26344a);
-    color: #f1f5f9;
-    font-size: 13px;
-    white-space: nowrap;
+    padding: 0 8px;
+    border: 2px solid #4ade80;
+    border-radius: 0;
+    background: #07120c;
+    box-shadow: 4px 4px 0 rgba(0, 0, 0, 0.6), inset 0 0 0 2px #041008;
+    color: #8ef7b3;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 11px;
+    line-height: 1.3;
     overflow: hidden;
-    text-overflow: ellipsis;
     cursor: grab;
     user-select: none;
+}
+
+/* 像素存档条的扫描线：盖在底色上、文字下 */
+.save-tree__node::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    background: repeating-linear-gradient(
+        180deg,
+        rgba(0, 0, 0, 0.22) 0 1px,
+        transparent 1px 3px
+    );
+    pointer-events: none;
+}
+
+/* 四角 L 形角标：每角一横一竖，像取景框 */
+.save-tree__node::after {
+    content: "";
+    position: absolute;
+    inset: 4px;
+    z-index: 2;
+    pointer-events: none;
+    background:
+        linear-gradient(#bdfdd0, #bdfdd0) left top / 5px 1px no-repeat,
+        linear-gradient(#bdfdd0, #bdfdd0) left top / 1px 5px no-repeat,
+        linear-gradient(#bdfdd0, #bdfdd0) right top / 5px 1px no-repeat,
+        linear-gradient(#bdfdd0, #bdfdd0) right top / 1px 5px no-repeat,
+        linear-gradient(#bdfdd0, #bdfdd0) left bottom / 5px 1px no-repeat,
+        linear-gradient(#bdfdd0, #bdfdd0) left bottom / 1px 5px no-repeat,
+        linear-gradient(#bdfdd0, #bdfdd0) right bottom / 5px 1px no-repeat,
+        linear-gradient(#bdfdd0, #bdfdd0) right bottom / 1px 5px no-repeat;
 }
 
 /* 节点正文：一行 5 个汉字，最多两行，满了直接裁断（不显示省略号）；
    单行时高度由内容决定，仍由节点 flex 垂直居中。 */
 .save-tree__node-text {
+    position: relative;
+    z-index: 1;
     display: block;
     width: 5em;
     max-width: 100%;
@@ -1502,27 +1578,49 @@ defineExpose({ handleEscape, handleSaveHotkey });
     line-height: 1.3;
     white-space: normal;
     word-break: break-word;
+    text-align: center;
+    text-shadow: 0 0 4px rgba(74, 222, 128, 0.45);
+}
+
+/* 画布节点上的就地编辑框（双击节点时替换正文） */
+.save-tree__canvas-input {
+    position: relative;
+    z-index: 3;
+    box-sizing: border-box;
+    width: 100%;
+    height: 28px;
+    padding: 0 4px;
+    border: 1px solid #4ade80;
+    border-radius: 0;
+    background: #041008;
+    color: #c7ffdb;
+    font: inherit;
+    font-size: 10px;
+    text-align: center;
+    outline: none;
 }
 
 .save-tree__node:hover {
-    border-color: rgba(148, 163, 184, 0.65);
-    background: linear-gradient(180deg, #3d4d66, #2f4059);
+    border-color: #86efac;
+    background: #0a1a10;
 }
 
 .save-tree__node--active,
 .save-tree__node--active:hover {
-    border-color: #93c5fd;
-    background: linear-gradient(180deg, #475f83, #374b68);
+    color: #bdfdd0;
+    outline: 2px solid rgba(147, 197, 253, 0.95);
+    outline-offset: 2px;
     box-shadow:
-        0 0 0 1px rgba(147, 197, 253, 0.45),
-        0 6px 16px rgba(2, 6, 23, 0.35);
+        4px 4px 0 rgba(0, 0, 0, 0.6),
+        inset 0 0 0 2px #041008,
+        0 0 14px rgba(74, 222, 128, 0.28);
 }
 
 .save-tree__node--side {
-    position: static;
-    /* 与画布节点同一个宽度（NODE_W） */
+    position: relative;
+    /* 与画布节点同尺寸（NODE_W × NODE_H），同样放得下 2 行 × 5 个汉字 */
     width: 92px;
-    height: 38px;
+    height: 48px;
     flex: 0 0 auto;
 }
 
@@ -1531,8 +1629,11 @@ defineExpose({ handleEscape, handleSaveHotkey });
 }
 
 .save-tree__node--drop {
-    border-color: #60a5fa;
-    box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.55);
+    border-color: #93c5fd;
+    box-shadow:
+        4px 4px 0 rgba(0, 0, 0, 0.6),
+        inset 0 0 0 2px #041008,
+        0 0 0 1px rgba(96, 165, 250, 0.55);
 }
 
 /* 详情弹框：深色自绘，和存档管理弹框同一套配色 */

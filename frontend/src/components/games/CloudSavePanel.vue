@@ -139,19 +139,25 @@ defineExpose({ refresh, handleEscape, handleSaveHotkey });
 
 <style>
 .cloud-save-panel {
+    position: relative;
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
 }
 
+/* 标题不占布局高度：右侧画布要一直铺到十字分隔线的拐角。
+   顶部 12px 是原先云端分区的上间距，标题保持原来的位置。 */
 .cloud-save-panel__head {
+    position: absolute;
+    top: 12px;
+    left: 0;
+    z-index: 2;
     display: flex;
-    flex: 0 0 auto;
     align-items: center;
     height: 32px;
-    margin-bottom: 8px;
     padding: 0 2px;
+    pointer-events: none;
 }
 
 .cloud-save-panel__title {

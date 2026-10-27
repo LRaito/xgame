@@ -247,11 +247,13 @@ function close() {
     background: rgba(148, 163, 184, 0.55);
 }
 
+/* 云端分区不再留上间距：画布要顶到本地分区底部的横线；
+   标题与侧栏的让位改由它们各自的定位/外边距完成。 */
 .save-manager__cloud {
     display: flex;
     flex-direction: column;
     min-height: 0;
     overflow: hidden;
-    padding-top: 12px;
+    padding-top: 0;
 }
 </style>
