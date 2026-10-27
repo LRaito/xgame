@@ -660,7 +660,7 @@ defineExpose({
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: center;
     gap: 4px;
 }
 

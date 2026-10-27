@@ -6,11 +6,38 @@
                     v-model="keyword"
                     class="save-tree__search"
                     size="small"
-                    clearable
                     placeholder="搜索存档详情"
                 />
             </div>
-            <div class="save-tree__side-list">
+            <div v-if="canScrollUp" class="save-tree__side-page">
+                <app-button
+                    text
+                    tone="dark"
+                    size="sm"
+                    icon-only
+                    aria-label="向上翻页"
+                    @click="scrollSideUp"
+                >
+                    <svg
+                        viewBox="0 0 24 24"
+                        width="20"
+                        height="20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path d="M4.5 14.5L12 9l7.5 5.5" />
+                    </svg>
+                </app-button>
+            </div>
+            <div
+                ref="sideListRef"
+                class="save-tree__side-list"
+                @scroll="updateSideScroll"
+            >
                 <p v-if="!sidebarNodes.length" class="save-tree__empty-side">
                     {{ keyword.trim() ? "没有匹配的存档" : "还没有云端存档" }}
                 </p>
@@ -42,8 +69,32 @@
                         @keydown.esc.prevent.stop="cancelRemarkEdit"
                         @blur="saveRemark(node)"
                     />
-                    <template v-else>{{ nodeLabel(node) }}</template>
+                    <span v-else class="save-tree__node-text">{{ nodeText(node) }}</span>
                 </div>
+            </div>
+            <div v-if="canScrollDown" class="save-tree__side-page">
+                <app-button
+                    text
+                    tone="dark"
+                    size="sm"
+                    icon-only
+                    aria-label="向下翻页"
+                    @click="scrollSideDown"
+                >
+                    <svg
+                        viewBox="0 0 24 24"
+                        width="20"
+                        height="20"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.8"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        aria-hidden="true"
+                    >
+                        <path d="M4.5 9.5L12 15l7.5-5.5" />
+                    </svg>
+                </app-button>
             </div>
         </aside>
 
@@ -131,7 +182,7 @@
                     @dblclick.stop="onCanvasNodeDblClick(node)"
                     @contextmenu.prevent.stop="openDetail(node)"
                 >
-                    {{ nodeLabel(node) }}
+                    <span class="save-tree__node-text">{{ nodeText(node) }}</span>
                 </div>
             </div>
         </section>
@@ -208,26 +259,10 @@
                         <span>{{ remarkDraft.length }}/100</span>
                         <span>Ctrl+Enter 保存，Esc 取消</span>
                     </div>
-                    <p v-else class="save-tree__detail-hint">双击描述可编辑</p>
                     <dl class="save-tree__detail-meta">
                         <div>
                             <dt>创建时间</dt>
                             <dd>{{ formatDateTime(detailNode.created_at) }}</dd>
-                        </div>
-                        <div>
-                            <dt>文件</dt>
-                            <dd>
-                                {{ detailNode.file_count }} 个 ·
-                                {{ formatBytes(detailNode.total_size) }}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt>层级</dt>
-                            <dd>{{ hierarchyOf(detailNode) }}</dd>
-                        </div>
-                        <div>
-                            <dt>子存档</dt>
-                            <dd>{{ childCountOf(detailNode) }} 个</dd>
                         </div>
                     </dl>
                     <ul v-if="detailLoading" class="save-tree__file-list">
@@ -299,7 +334,7 @@ import { downloadViaPath } from "@/utils/download";
 import { formatBytes, formatDateTime } from "@/utils/fileDisplay";
 import { appMessage } from "@/utils/overlay";
 
-const NODE_W = 176;
+const NODE_W = 92;
 const NODE_H = 48;
 const GAP_X = 64;
 const GAP_Y = 16;
@@ -325,6 +360,9 @@ const emit = defineEmits([
 
 const rootRef = ref(null);
 const canvasRef = ref(null);
+const sideListRef = ref(null);
+const canScrollUp = ref(false);
+const canScrollDown = ref(false);
 const nodes = ref([]);
 const zoom = ref(1);
 const panX = ref(0);
@@ -411,9 +449,9 @@ const nodesKey = computed(() =>
         .join(","),
 );
 
-function nodeLabel(node) {
-    // 详情为空就留空，不用时间戳兜底（列表与画布保持一致）。
-    return String(node.remark || "").split(/\r\n|\r|\n/, 1)[0].trim();
+/** 节点正文：换行折成空格，交给 CSS 截成最多两行（每行 5 个汉字）。 */
+function nodeText(node) {
+    return String(node.remark || "").replace(/\s+/g, " ").trim();
 }
 
 function blurActiveControl() {
@@ -649,10 +687,42 @@ watch(
 watch(
     nodesKey,
     () => {
-        nextTick(() => fitToCanvas());
+        nextTick(() => {
+            fitToCanvas();
+            updateSideScroll();
+        });
     },
     { immediate: true },
 );
+
+/** 侧栏还能往上/往下滚时，分别在列表上方/下方显示翻页箭头。 */
+function updateSideScroll() {
+    const el = sideListRef.value;
+    if (!el) {
+        canScrollUp.value = false;
+        canScrollDown.value = false;
+        return;
+    }
+    canScrollUp.value = el.scrollTop > 1;
+    canScrollDown.value =
+        el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+}
+
+function scrollSideUp() {
+    const el = sideListRef.value;
+    if (!el) {
+        return;
+    }
+    el.scrollBy({ top: -el.clientHeight, behavior: "smooth" });
+}
+
+function scrollSideDown() {
+    const el = sideListRef.value;
+    if (!el) {
+        return;
+    }
+    el.scrollBy({ top: el.clientHeight, behavior: "smooth" });
+}
 
 // ---------- 缩放 / 平移 ----------
 
@@ -869,23 +939,6 @@ async function applyParent(id, parentId) {
 
 // ---------- 右键详情 ----------
 
-function hierarchyOf(node) {
-    const parentId = resolvedParents.value.get(node.id);
-    if (parentId == null) {
-        return "顶层";
-    }
-    const parent = byId.value.get(parentId);
-    return parent
-        ? `属于「${nodeLabel(parent) || "未命名存档"}」`
-        : "顶层";
-}
-
-function childCountOf(node) {
-    return nodes.value.filter(
-        (item) => resolvedParents.value.get(item.id) === node.id,
-    ).length;
-}
-
 function openDetail(node) {
     selectedId.value = node.id;
     blurActiveControl();
@@ -999,6 +1052,7 @@ function onFullscreenChange() {
 // ---------- 生命周期 ----------
 
 let resizeObserver = null;
+let sideListObserver = null;
 
 onMounted(() => {
     document.addEventListener("fullscreenchange", onFullscreenChange);
@@ -1010,9 +1064,14 @@ onMounted(() => {
         });
         resizeObserver.observe(canvasRef.value);
     }
+    if (typeof ResizeObserver === "function" && sideListRef.value) {
+        sideListObserver = new ResizeObserver(updateSideScroll);
+        sideListObserver.observe(sideListRef.value);
+    }
     nextTick(() =>
         requestAnimationFrame(() => {
             fitToCanvas();
+            updateSideScroll();
         }),
     );
 });
@@ -1020,6 +1079,7 @@ onMounted(() => {
 onBeforeUnmount(() => {
     document.removeEventListener("fullscreenchange", onFullscreenChange);
     resizeObserver?.disconnect();
+    sideListObserver?.disconnect();
     clearNotice();
     if (document.fullscreenElement === rootRef.value) {
         document.exitFullscreen?.().catch(() => {});
@@ -1090,13 +1150,16 @@ defineExpose({ handleEscape, handleSaveHotkey });
 }
 
 .save-tree__sidebar {
-    flex: 0 0 184px;
+    /* 与本地存档按钮列同宽（变量由存档弹框写入） */
+    box-sizing: border-box;
+    flex: 0 0 var(--save-local-actions-width, 114px);
     min-height: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
     gap: 8px;
-    padding: 10px;
+    /* 左右留给列表/搜索框自己控制，节点的左右留白才一致 */
+    padding: 10px 0;
     border: 1px solid rgba(148, 163, 184, 0.24);
     border-radius: 8px;
     background: rgba(15, 23, 42, 0.35);
@@ -1107,6 +1170,8 @@ defineExpose({ handleEscape, handleSaveHotkey });
     flex: 0 0 auto;
     flex-direction: column;
     gap: 8px;
+    /* 与列表同宽：搜索框宽度 = 节点宽度 */
+    padding: 0 10px;
 }
 
 .save-tree__search {
@@ -1115,6 +1180,9 @@ defineExpose({ handleEscape, handleSaveHotkey });
 
 .save-tree__search :deep(.el-input__wrapper) {
     border-radius: 6px;
+    /* 侧栏收窄后默认内边距会挤掉 placeholder，收紧左右留白 */
+    padding-left: 6px;
+    padding-right: 6px;
     background: rgba(15, 23, 42, 0.55);
     box-shadow: 0 0 0 1px rgba(148, 163, 184, 0.28) inset;
 }
@@ -1142,42 +1210,24 @@ defineExpose({ handleEscape, handleSaveHotkey });
     flex: 1;
     min-height: 0;
     flex-direction: column;
+    align-items: center;
     gap: 8px;
-    /* 始终显示滚动条轨道：存档很少时也保留一条不能滚动的滚动条，避免列表宽度跳动 */
-    overflow-y: scroll;
-    scrollbar-gutter: stable;
-    padding-right: 2px;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(148, 163, 184, 0.35) transparent;
-}
-
-/* 内容不足时也撑出 1px 的滚动范围，让滑块始终出现并占满整条轨道 */
-.save-tree__side-list::after {
-    content: "";
-    position: absolute;
-    top: 100%;
-    left: 0;
-    right: 0;
-    height: 1px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    /* 不显示滚动条，滚轮照常能滚；列表底部用箭头提示还有内容 */
+    padding: 0;
+    scrollbar-width: none;
 }
 
 .save-tree__side-list::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
+    display: none;
 }
 
-.save-tree__side-list::-webkit-scrollbar-track,
-.save-tree__side-list::-webkit-scrollbar-corner {
-    background: transparent;
-}
-
-.save-tree__side-list::-webkit-scrollbar-thumb {
-    border-radius: 3px;
-    background: rgba(148, 163, 184, 0.35);
-}
-
-.save-tree__side-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(148, 163, 184, 0.55);
+.save-tree__side-page {
+    display: flex;
+    flex: 0 0 auto;
+    justify-content: center;
+    padding: 2px 0;
 }
 
 .save-tree__side-input {
@@ -1195,6 +1245,7 @@ defineExpose({ handleEscape, handleSaveHotkey });
 }
 
 .save-tree__empty-side {
+    align-self: stretch;
     margin: 4px 4px;
     color: #64748b;
     font-size: 12px;
@@ -1316,6 +1367,7 @@ defineExpose({ handleEscape, handleSaveHotkey });
     box-sizing: border-box;
     display: flex;
     align-items: center;
+    justify-content: center;
     padding: 0 12px;
     border-radius: 8px;
     border: 1px solid rgba(148, 163, 184, 0.42);
@@ -1327,6 +1379,19 @@ defineExpose({ handleEscape, handleSaveHotkey });
     text-overflow: ellipsis;
     cursor: grab;
     user-select: none;
+}
+
+/* 节点正文：一行 5 个汉字，最多两行，满了直接裁断（不显示省略号）；
+   单行时高度由内容决定，仍由节点 flex 垂直居中。 */
+.save-tree__node-text {
+    display: block;
+    width: 5em;
+    max-width: 100%;
+    max-height: 2.6em;
+    overflow: hidden;
+    line-height: 1.3;
+    white-space: normal;
+    word-break: break-word;
 }
 
 .save-tree__node:hover {
@@ -1345,7 +1410,8 @@ defineExpose({ handleEscape, handleSaveHotkey });
 
 .save-tree__node--side {
     position: static;
-    width: auto;
+    /* 与画布节点同一个宽度（NODE_W） */
+    width: 92px;
     height: 38px;
     flex: 0 0 auto;
 }
@@ -1451,12 +1517,6 @@ defineExpose({ handleEscape, handleSaveHotkey });
     gap: 12px;
     margin: -4px 0 12px;
     color: #94a3b8;
-    font-size: 12px;
-}
-
-.save-tree__detail-hint {
-    margin: -4px 0 12px;
-    color: #64748b;
     font-size: 12px;
 }
 
