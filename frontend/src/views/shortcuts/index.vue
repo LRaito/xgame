@@ -79,6 +79,8 @@ import { onBeforeUnmount, onMounted, ref } from "vue";
 //  存档管理：components/games/SaveManager.vue + SaveTreeView.vue，
 //  分页：components/common/AppPagination.vue，大图预览：components/games/GameScreenshotGallery.vue）。
 // 每个页面一张表；feature 相同的连续行会在「功能」列合并成一个单元格。
+// 同一页内的行按键帽长度从短到长排列（短的在上，如 ` 在 Enter 上面），
+// 相同功能的行保持相邻，便于合并单元格。
 const SHORTCUT_PAGES = [
     {
         id: "shortcut-manage",
@@ -107,19 +109,24 @@ const SHORTCUT_PAGES = [
         title: "游玩页面",
         rows: [
             {
-                feature: "截图",
-                keys: [["Ctrl", "Shift", "S"]],
-                desc: "截取当前画面并保存到截图图库",
-            },
-            {
                 feature: "存档",
                 keys: [["`"]],
                 desc: "将当前进度同步至云端",
             },
             {
                 feature: "存档",
+                keys: [["Enter"]],
+                desc: "载入本地存档并选中游戏画面",
+            },
+            {
+                feature: "存档",
                 keys: [["Alt", "`"]],
                 desc: "打开存档管理面板",
+            },
+            {
+                feature: "截图",
+                keys: [["Ctrl", "Shift", "S"]],
+                desc: "截取当前画面并保存到截图图库",
             },
         ],
     },
@@ -129,19 +136,19 @@ const SHORTCUT_PAGES = [
         rows: [
             {
                 feature: "节点操作",
-                keys: [["Shift", "↑"], ["Shift", "↓"]],
-                desc: "调整选中节点的同级顺序",
+                keys: [["Delete"]],
+                desc: "删除选中的云端节点",
             },
             {
                 feature: "节点操作",
-                keys: [["Delete"]],
-                desc: "删除选中的云端节点",
+                keys: [["Shift", "↑"], ["Shift", "↓"]],
+                desc: "调整选中节点的同级顺序",
             },
         ],
     },
     {
-        id: "shortcut-album",
-        title: "截图与图集",
+        id: "shortcut-preview",
+        title: "图片预览",
         rows: [
             {
                 feature: "大图预览",
