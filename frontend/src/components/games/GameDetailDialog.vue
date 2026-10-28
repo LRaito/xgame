@@ -135,6 +135,7 @@ import GameScreenshotGallery from "@components/games/GameScreenshotGallery.vue";
 import ImageUploadButton from "@components/games/ImageUploadButton.vue";
 import ScreenshotManagerDialog from "@components/games/ScreenshotManagerDialog.vue";
 import { gameCoverUrl } from "@/utils/gameAssetCache";
+import { formatDateTimeSeconds as formatDateTime } from "@/utils/fileDisplay";
 import { downloadViaPath } from "@/utils/download";
 
 // 游戏详情弹窗：游戏中心（右键「详情」）与游戏管理（列表「详情」按钮）共用同一份内容。
@@ -249,17 +250,6 @@ function formatSize(bytes) {
         return `${(bytes / 1024).toFixed(1)} KB`;
     }
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function formatDateTime(value) {
-    if (!value) {
-        return "—";
-    }
-    // 后端给的是 ISO（带 +00:00）：空格分隔、去掉时区后缀，并砍掉毫秒——只展示到秒
-    return value
-        .replace("T", " ")
-        .replace(/\.\d+/, "")
-        .replace(/\+00:00$/, "");
 }
 </script>
 

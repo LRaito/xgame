@@ -525,6 +525,7 @@ import {
     gameTypeMeta,
 } from "@/constants/gameTypes";
 import { ensureGameAssetSw, gameCoverUrl } from "@/utils/gameAssetCache";
+import { formatDateTimeSeconds as formatDateTime } from "@/utils/fileDisplay";
 
 // 每页 5 条，与后端 backend/games/service.py 的 MANAGE_PAGE_SIZE_DEFAULT 保持一致
 const PAGE_SIZE = 5;
@@ -726,16 +727,6 @@ function formatSize(bytes) {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function formatDateTime(value) {
-    if (!value) {
-        return "—";
-    }
-    // 后端给的是 ISO（带 +00:00）：空格分隔、去掉时区后缀，并砍掉毫秒——只展示到秒
-    return value
-        .replace("T", " ")
-        .replace(/\.\d+/, "")
-        .replace(/\+00:00$/, "");
-}
 
 // 列表里展开的那条描述（同时只展开一条）。列表重新加载后行会换掉，顺手收起来。
 const expandedDescId = ref(null);

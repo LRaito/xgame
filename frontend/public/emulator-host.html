@@ -39,6 +39,12 @@
             height: 100vh;
             overflow: hidden;
         }
+        /* 父页面在全屏闲置时给 <html> 挂这个类，让 iframe 内的光标一起隐藏。
+           必须 !important：引擎样式里 .ejs_game 等把 cursor 设成了 default/pointer。 */
+        html.x-cursor-hidden,
+        html.x-cursor-hidden * {
+            cursor: none !important;
+        }
         /* 右上角那个三横线“菜单栏开关”是引擎的 .ejs_virtualGamepad_open（即
            menu-bar-button），在触屏/设置了“可见”时会常驻挡画面，直接隐藏。 */
         .ejs_virtualGamepad_open {

@@ -5,6 +5,7 @@
         :class="{
             'game-shell--fullscreen': isFullscreen,
             'game-shell--header-visible': headerVisible,
+            'game-shell--cursor-hidden': cursorHidden,
         }"
         @mousemove="onShellMouseMove"
         @mouseleave="onShellMouseLeave"
@@ -49,7 +50,7 @@ defineProps({
     title: { type: String, required: true },
 });
 
-const emit = defineEmits(["fullscreen-change"]);
+const emit = defineEmits(["fullscreen-change", "cursor-idle-change"]);
 
 const router = useRouter();
 const shellRef = ref(null);
@@ -73,6 +74,68 @@ watch(browserFullscreen, () => {
     headerVisible.value = false;
     headerHovering.value = false;
 }, { immediate: true });
+
+// ---------- 全屏闲置隐藏光标 ----------
+// 全屏游玩时鼠标静止 3 秒就隐藏光标，并顺手收起标题栏浮层；任何鼠标活动立即恢复。
+// 判据只看鼠标：键盘操作不该让光标一直亮着。播放页要把 iframe 里的指针活动
+// 也转进来（iframe 内的事件不冒泡到外层，见 notifyActivity）。
+const CURSOR_IDLE_MS = 3000;
+const cursorHidden = ref(false);
+let cursorIdleTimer = null;
+
+function clearCursorIdleTimer() {
+    if (cursorIdleTimer) {
+        window.clearTimeout(cursorIdleTimer);
+        cursorIdleTimer = null;
+    }
+}
+
+function setCursorHidden(hidden) {
+    // 状态没变不重复 emit（模拟器播放页靠这个事件同步 iframe 内的光标）
+    if (cursorHidden.value === hidden) {
+        return;
+    }
+    cursorHidden.value = hidden;
+    if (hidden) {
+        // 静止时标题栏也一起收起；hover 标记清掉，回来后再按正常规则重新判断
+        headerVisible.value = false;
+        headerHovering.value = false;
+    }
+    emit("cursor-idle-change", hidden);
+}
+
+function armCursorIdleTimer() {
+    clearCursorIdleTimer();
+    // 只在全屏（原生全屏或 F11）下启用
+    if (!isFullscreen.value && !browserFullscreen.value) {
+        return;
+    }
+    cursorIdleTimer = window.setTimeout(() => {
+        cursorIdleTimer = null;
+        if (!isFullscreen.value && !browserFullscreen.value) {
+            return;
+        }
+        setCursorHidden(true);
+    }, CURSOR_IDLE_MS);
+}
+
+/** 鼠标有活动：立即恢复光标并重新计时。播放页把 iframe 里的指针活动也转到这里。 */
+function notifyActivity() {
+    setCursorHidden(false);
+    armCursorIdleTimer();
+}
+
+// 进入全屏开始计时；退出全屏（含 F11）立即恢复光标
+watch([isFullscreen, browserFullscreen], ([native, browser]) => {
+    if (native || browser) {
+        armCursorIdleTimer();
+        return;
+    }
+    clearCursorIdleTimer();
+    setCursorHidden(false);
+}, { immediate: true });
+
+defineExpose({ notifyActivity });
 
 function syncFullscreenState() {
     isFullscreen.value = document.fullscreenElement === shellRef.value;
@@ -141,11 +204,20 @@ function goBack() {
 onMounted(() => {
     document.addEventListener("fullscreenchange", syncFullscreenState);
     document.documentElement.classList.add("game-shell-locked");
+    // 闲置计时挂在 document 捕获阶段：鼠标事件在 Ruffle 的 shadow root 里、或被某个
+    // 组件 stopPropagation 了，也照样算活动（外壳自己的 mousemove 只管标题栏唤出）
+    document.addEventListener("mousemove", notifyActivity, true);
+    document.addEventListener("mousedown", notifyActivity, true);
+    document.addEventListener("wheel", notifyActivity, { capture: true, passive: true });
 });
 
 onBeforeUnmount(() => {
     document.documentElement.classList.remove("game-shell-locked");
     document.removeEventListener("fullscreenchange", syncFullscreenState);
+    document.removeEventListener("mousemove", notifyActivity, true);
+    document.removeEventListener("mousedown", notifyActivity, true);
+    document.removeEventListener("wheel", notifyActivity, true);
+    clearCursorIdleTimer();
     if (document.fullscreenElement === shellRef.value) {
         document.exitFullscreen();
     }
@@ -238,6 +310,14 @@ onBeforeUnmount(() => {
     overflow: auto;
     align-items: safe center;
     justify-content: safe center;
+}
+
+/* 全屏闲置：整棵子树都不显示光标。插槽内容属于播放页组件、没有本组件的
+   scope 属性，必须用 :deep 才能覆盖到（含模拟器/H5 的 iframe 元素与 Flash 的
+   ruffle-player）。 */
+.game-shell--cursor-hidden,
+.game-shell--cursor-hidden :deep(*) {
+    cursor: none !important;
 }
 
 .game-shell--fullscreen {

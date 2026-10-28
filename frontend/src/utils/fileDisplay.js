@@ -44,16 +44,50 @@ export function formatBytes(value) {
     return `${size.toFixed(digits)} ${units[unit]}`;
 }
 
+/**
+ * 解析后端返回的 datetime。
+ *
+ * 库里存的是 UTC（`created_at` 等用 `datetime.now(timezone.utc)` 生成），但 SQLite 不保留
+ * tzinfo，接口序列化出来就是没有时区后缀的 `2026-10-28T13:35:23.455203`。这种字符串浏览器
+ * 会按**本地时间**解析，在北京时区下显示就整整差 8 小时；这里统一按 UTC 解析，再由调用方
+ * 按浏览器本地时区展示。已经带 `Z` / `+08:00` 之类后缀的、以及时间戳数字则原样交给 Date。
+ */
+export function parseApiDate(value) {
+    if (typeof value !== "string") {
+        return new Date(value);
+    }
+    const text = value.trim();
+    const naive =
+        /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(text) &&
+        !/(?:[zZ]|[+-]\d{2}:?\d{2})$/.test(text);
+    return new Date(naive ? `${text.replace(" ", "T")}Z` : text);
+}
+
+function pad2(n) {
+    return String(n).padStart(2, "0");
+}
+
 export function formatDateTime(iso) {
     if (!iso) {
         return "—";
     }
-    const date = new Date(iso);
+    const date = parseApiDate(iso);
     if (Number.isNaN(date.getTime())) {
         return iso;
     }
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+/** 同 formatDateTime，但精确到秒（游戏管理的更新时间列按 19 个字宽排版）。 */
+export function formatDateTimeSeconds(iso) {
+    if (!iso) {
+        return "—";
+    }
+    const date = parseApiDate(iso);
+    if (Number.isNaN(date.getTime())) {
+        return iso;
+    }
+    return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
 }
 
 export function extensionOf(name) {

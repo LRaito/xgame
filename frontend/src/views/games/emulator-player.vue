@@ -1,5 +1,10 @@
 <template>
-    <game-shell :title="gameTitle" @fullscreen-change="onFullscreenChange">
+    <game-shell
+        ref="shellRef"
+        :title="gameTitle"
+        @fullscreen-change="onFullscreenChange"
+        @cursor-idle-change="onCursorIdleChange"
+    >
         <template #extra>
             <span class="emulator-player__hint">{{ platformHint }}</span>
         </template>
@@ -300,6 +305,7 @@ const meta = ref(null);
 const errorText = ref("");
 const iframeSrc = ref("");
 const frameRef = ref(null);
+const shellRef = ref(null);
 const areaRef = ref(null);
 const saveManagerRef = ref(null);
 const saveManagerVisible = ref(false);
@@ -345,6 +351,10 @@ let aspectSynced = false;
 let shotBlob = null;
 // 宿主 iframe 的 window：快捷键要挂在它上面，见 bindFrameHotkey
 let hotkeyFrameWindow = null;
+// 宿主 iframe 的 window：指针活动监听挂在它上面，见 bindFramePointerActivity
+let pointerFrameWindow = null;
+// GameShell 最近一次通知的光标闲置状态；iframe 重载后要按它重新挂类
+let frameCursorHidden = false;
 
 const gameTitle = computed(() => game.value?.name || "模拟器游戏");
 const currentGameId = computed(() => (game.value?.id ? Number(game.value.id) : 0));
@@ -542,6 +552,9 @@ function onFrameLoad() {
     fastForwardOn.value = false;
     // iframe 每次重挂都要重新挂快捷键：焦点在引擎画布上时事件只在 iframe 内部走
     bindFrameHotkey();
+    // 指针活动（全屏闲置计时）与光标类同理，新文档要重新挂
+    bindFramePointerActivity();
+    applyFrameCursorHidden();
     refreshEngineReady();
 }
 
@@ -798,13 +811,76 @@ function onScreenshotHotkey(event) {
 }
 
 /**
- * 快捷键回车：直接载入本地存档（与存档管理里那个「载入」按钮同一条路）。
- * **没有本地存档就什么也不做**——不提示、也不拦这个键，回车照常传给引擎（引擎默认的 Start）。
- * 有存档时这一下会被读档吃掉：不再冒泡给引擎，免得同时还把 Start 按下去。
+ * 快捷键回车：直接载入本地存档（与存档管理里那个「载入」按钮同一条路），
+ * 并顺手选中模拟器——不管有没有存档，按完回车都能直接接着玩。
+ * **有存档时这一下会被读档吃掉**：不再冒泡给引擎，免得同时还把 Start 按下去；
+ * 没有存档时不拦这个键，回车照常传给引擎（引擎默认的 Start）。
  */
 function onLoadLocalHotkey(event) {
     if (takeHotkey(event, null, () => Boolean(getLocalEmuSave(currentGameId.value)))) {
         void onLoadLocal();
+        focusEngineIfNeeded();
+        return;
+    }
+    // 没有存档时 takeHotkey 会放行（焦点在按钮/链接/下拉上时也一样）。
+    // 这里只补「选中模拟器」，不拦键，回车仍然照原来的路径走。
+    if (
+        !isBareEnter(event) ||
+        !hotkeyUsable(event, () => true) ||
+        isInteractiveTarget(event.target)
+    ) {
+        return;
+    }
+    focusEngineIfNeeded();
+}
+
+/** 不带任何修饰键的回车。 */
+function isBareEnter(event) {
+    return (
+        event.key === "Enter" &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.shiftKey
+    );
+}
+
+/** 回车/空格在这些元素上有原生含义（按下按钮、展开下拉），别抢焦点。 */
+function isInteractiveTarget(target) {
+    const tag = String(target?.tagName || "").toUpperCase();
+    return tag === "BUTTON" || tag === "A" || tag === "SELECT";
+}
+
+/** 引擎是否已经拿到键盘焦点：宿主 iframe 处于激活状态，且焦点在 #ejs 里。 */
+function isEngineFocused() {
+    try {
+        const frame = frameRef.value;
+        if (!frame || document.activeElement !== frame) {
+            return false;
+        }
+        const active = frame.contentWindow?.document?.activeElement;
+        return Boolean(active && (active.id === "ejs" || active.closest?.("#ejs")));
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * 没选中模拟器就把焦点交给引擎，之后按键直接进游戏（回车之后不用再点画面）。
+ * 已经选中时不重复聚焦，免得把引擎菜单 / 输入框里的焦点抢走。
+ */
+function focusEngineIfNeeded() {
+    const frame = frameRef.value;
+    if (!frame || isEngineFocused()) {
+        return;
+    }
+    try {
+        frame.focus({ preventScroll: true });
+        const frameWindow = frame.contentWindow;
+        frameWindow?.focus();
+        frameWindow?.document?.getElementById("ejs")?.focus({ preventScroll: true });
+    } catch {
+        // iframe 正在换文档 / 已卸载，忽略
     }
 }
 
@@ -816,6 +892,36 @@ function onSyncCloudHotkey(event) {
     if (takeBareCode(event, "Backquote", () => !syncingCloud)) {
         void syncCloudNow();
     }
+}
+
+/**
+ * 快捷键 Alt + `（Backquote，数字 1 左边那个键）：打开存档管理。
+ * 与标题栏的「存档管理」按钮同一条路；游戏还没加载、弹框开着时不响应。
+ * 注意和 `·` 区分：那个不带修饰键，这个必须按住 Alt。
+ */
+function onSaveManagerHotkey(event) {
+    if (
+        event.code !== "Backquote" ||
+        !event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.repeat
+    ) {
+        return;
+    }
+    const target = event.target;
+    const tag = String(target?.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+    }
+    if (!game.value || saveManagerVisible.value || shotDialogVisible.value) {
+        return;
+    }
+    // 捕获阶段拦下：引擎自己也监听 keydown，Alt+` 不该同时进游戏
+    event.preventDefault();
+    event.stopPropagation();
+    saveManagerVisible.value = true;
 }
 
 async function syncCloudNow() {
@@ -894,6 +1000,64 @@ function takeBareCode(event, code, ready) {
     return true;
 }
 
+// ---------- 全屏闲置：iframe 内的指针活动与光标 ----------
+// GameShell 只管得到外层 DOM：iframe 里的 pointermove 不冒泡出来，光标也得进到
+// 它自己的文档里才藏得住。所以这里把内部活动转给 GameShell，并按闲置状态给
+// 宿主页的 <html> 挂 x-cursor-hidden（样式在 emulator-host.html）。
+function onFramePointerActivity() {
+    shellRef.value?.notifyActivity?.();
+}
+
+function bindFramePointerActivity() {
+    let frameWindow = null;
+    try {
+        frameWindow = frameRef.value?.contentWindow || null;
+    } catch {
+        frameWindow = null;
+    }
+    if (!frameWindow) {
+        return;
+    }
+    // 一律先解再挂：iframe 内导航会换掉 document，旧监听已经不在了，先解不会重复挂
+    unbindFramePointerActivity();
+    pointerFrameWindow = frameWindow;
+    // 捕获阶段：控制条/引擎浮层上停止冒泡也不影响活动判定
+    frameWindow.addEventListener("pointermove", onFramePointerActivity, true);
+    frameWindow.addEventListener("pointerdown", onFramePointerActivity, true);
+    frameWindow.addEventListener("wheel", onFramePointerActivity, { capture: true, passive: true });
+}
+
+function unbindFramePointerActivity() {
+    if (!pointerFrameWindow) {
+        return;
+    }
+    try {
+        pointerFrameWindow.removeEventListener("pointermove", onFramePointerActivity, true);
+        pointerFrameWindow.removeEventListener("pointerdown", onFramePointerActivity, true);
+        pointerFrameWindow.removeEventListener("wheel", onFramePointerActivity, true);
+    } catch {
+        // 窗口已销毁，忽略
+    }
+    pointerFrameWindow = null;
+}
+
+function applyFrameCursorHidden() {
+    let root = null;
+    try {
+        root = frameRef.value?.contentWindow?.document?.documentElement || null;
+    } catch {
+        root = null;
+    }
+    if (root) {
+        root.classList.toggle("x-cursor-hidden", frameCursorHidden);
+    }
+}
+
+function onCursorIdleChange(hidden) {
+    frameCursorHidden = hidden;
+    applyFrameCursorHidden();
+}
+
 function bindFrameHotkey() {
     let frameWindow = null;
     try {
@@ -911,6 +1075,7 @@ function bindFrameHotkey() {
     frameWindow.addEventListener("keydown", onScreenshotHotkey, true);
     frameWindow.addEventListener("keydown", onLoadLocalHotkey, true);
     frameWindow.addEventListener("keydown", onSyncCloudHotkey, true);
+    frameWindow.addEventListener("keydown", onSaveManagerHotkey, true);
 }
 
 function unbindFrameHotkey() {
@@ -921,6 +1086,7 @@ function unbindFrameHotkey() {
         hotkeyFrameWindow.removeEventListener("keydown", onScreenshotHotkey, true);
         hotkeyFrameWindow.removeEventListener("keydown", onLoadLocalHotkey, true);
         hotkeyFrameWindow.removeEventListener("keydown", onSyncCloudHotkey, true);
+        hotkeyFrameWindow.removeEventListener("keydown", onSaveManagerHotkey, true);
     } catch {
         // 页面已经换过 iframe / 窗口已销毁，忽略即可
     }
@@ -1083,6 +1249,7 @@ async function loadGame() {
         saveManagerVisible.value = false;
         shotDialogVisible.value = false;
         unbindFrameHotkey();
+        unbindFramePointerActivity();
         engineReady.value = false;
         fastForwardOn.value = false;
         engineAspect.value = null;
@@ -1100,6 +1267,7 @@ async function loadGame() {
     saveManagerVisible.value = false;
     shotDialogVisible.value = false;
     unbindFrameHotkey();
+    unbindFramePointerActivity();
     engineReady.value = false;
     fastForwardOn.value = false;
     engineAspect.value = null;
@@ -1200,6 +1368,7 @@ onMounted(() => {
     window.addEventListener("keydown", onScreenshotHotkey);
     window.addEventListener("keydown", onLoadLocalHotkey);
     window.addEventListener("keydown", onSyncCloudHotkey);
+    window.addEventListener("keydown", onSaveManagerHotkey);
     loadGame();
 });
 watch(() => route.params.gameId, loadGame);
@@ -1209,7 +1378,9 @@ onBeforeUnmount(() => {
     window.removeEventListener("keydown", onScreenshotHotkey);
     window.removeEventListener("keydown", onLoadLocalHotkey);
     window.removeEventListener("keydown", onSyncCloudHotkey);
+    window.removeEventListener("keydown", onSaveManagerHotkey);
     unbindFrameHotkey();
+    unbindFramePointerActivity();
     releaseShot();
     stopGamePlaytime();
     stopEnginePoll();

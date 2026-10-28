@@ -229,7 +229,10 @@ backend/
                               （帧缓冲 256×224，显示 8:7）；wide → fceumm_aspect = 4:3 + 不裁过扫描
                               （帧缓冲 256×240，显示 4:3）
   H5     → /games/h5/{id}      外层 SPA 壳内嵌 sandbox iframe，入口 /api/games/{id}/h5/index.html，
-                              页内相对资源落到同前缀（/api/games/{id}/h5/…）；首次访问触发按需解包
+                              页内相对资源落到同前缀（/api/games/{id}/h5/…）；首次访问触发按需解包；
+                              父页面拿不到这个不透明源 iframe 的文档，画面内光标无法隐藏
+  三个播放页全屏时鼠标静止 3 秒隐藏光标并收起标题栏（GameShell 计时）；模拟器把 iframe 内的
+  指针活动转进来、并给宿主 <html> 挂 x-cursor-hidden 同步 iframe 内光标；H5 只作用于壳层
   攻略   → 不在 SPA 里开页面：游戏中心右键「攻略」用 window.open 在**新标签页顶层**打开
           ZIP 攻略打开 /api/games/{id}/guide/index.html，页内相对资源落到同前缀
           （/api/games/{id}/guide/…），首次访问触发按需解包；PDF 攻略打开

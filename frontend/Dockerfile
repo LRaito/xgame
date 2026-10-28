@@ -16,6 +16,10 @@ RUN APP_VERSION="$APP_VERSION" npm run build && test -s dist/version.txt
 
 # 同上：nginx 也固定补丁版本 + Alpine 代号（nginx:1.27-alpine 会随上游重发漂移）。
 FROM nginx:1.27.5-alpine3.21
+# 中国上海时区：nginx 访问/错误日志的时间戳按本地时间走。基础镜像自带 tzdata
+# （/usr/share/zoneinfo），所以只设环境变量 + 指向时区文件。
+ENV TZ=Asia/Shanghai
+RUN cp /usr/share/zoneinfo/$TZ /etc/localtime
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80

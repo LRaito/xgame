@@ -227,6 +227,36 @@ function onSyncCloudHotkey(event) {
     void syncCloudNow();
 }
 
+/**
+ * 快捷键 Alt + `（Backquote，数字 1 左边那个键）：打开存档管理。
+ * 与标题栏的「存档管理」按钮同一条路；游戏还没加载出来、弹框开着或正在同步时不响应。
+ * 注意和 `·` 区分：那个不带修饰键，这个必须按住 Alt。
+ */
+function onSaveManagerHotkey(event) {
+    if (
+        event.code !== "Backquote" ||
+        !event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.repeat
+    ) {
+        return;
+    }
+    const target = event.target;
+    const tag = String(target?.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+    }
+    if (!game.value || saveManagerVisible.value || syncingCloud) {
+        return;
+    }
+    // 捕获阶段拦下：Ruffle 在同一个文档里也监听键盘，别让 Alt+` 同时进游戏
+    event.preventDefault();
+    event.stopPropagation();
+    saveManagerVisible.value = true;
+}
+
 async function syncCloudNow() {
     if (syncingCloud) {
         return;
@@ -333,13 +363,15 @@ async function loadGame() {
 }
 
 onMounted(() => {
-    // 捕获阶段：Ruffle 也在同一个文档里监听键盘，只有捕获阶段才拦得住 `·`
+    // 捕获阶段：Ruffle 也在同一个文档里监听键盘，只有捕获阶段才拦得住 `·` 与 Alt+`
     window.addEventListener("keydown", onSyncCloudHotkey, true);
+    window.addEventListener("keydown", onSaveManagerHotkey, true);
     loadGame();
 });
 watch(() => route.params.gameId, loadGame);
 onBeforeUnmount(() => {
     window.removeEventListener("keydown", onSyncCloudHotkey, true);
+    window.removeEventListener("keydown", onSaveManagerHotkey, true);
     stopGamePlaytime();
 });
 </script>
