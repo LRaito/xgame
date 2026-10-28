@@ -36,6 +36,12 @@ const routes = [
                 meta: { title: "游戏发现" },
             },
             {
+                path: "shortcuts",
+                name: "shortcuts",
+                component: () => import("@/views/shortcuts/index.vue"),
+                meta: { title: "按键管理" },
+            },
+            {
                 // 旧路径（游戏检索）重定向到游戏发现，保留 ?tab=ranking 之类的查询参数。
                 // 不设 meta.title，否则会被 buildMenuFromRoutes() 收进侧栏。
                 path: "games/search",
