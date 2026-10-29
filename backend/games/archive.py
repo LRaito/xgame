@@ -39,8 +39,8 @@ _ENTRY_NAMES: dict[str, frozenset[str]] = {
 LABELS: dict[str, str] = {H5: "游戏资源", GUIDE: "攻略"}
 WHERE: dict[str, str] = {H5: "压缩包内", GUIDE: "攻略包内"}
 
-# 解包上限。zip 本体上限与 nginx 的 client_max_body_size（128m）对齐；其余是防压缩炸弹：
-# 单条、总量、条目数与压缩比（只在解压后体积够大时才看比例，避免小文件误伤）。
+# 解包上限。zip 本体上限是应用层自己的限制（网关已放宽到 512m，NDS 本体不从这里过）；
+# 其余是防压缩炸弹：单条、总量、条目数与压缩比（只在解压后体积够大时才看比例，避免小文件误伤）。
 MAX_ZIP_SIZE = 128 * 1024 * 1024
 MAX_ENTRIES = 2000
 MAX_ENTRY_SIZE = 64 * 1024 * 1024

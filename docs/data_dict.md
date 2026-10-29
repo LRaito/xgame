@@ -70,9 +70,9 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 | id | INTEGER | PK 自增 | 接口路由里的 `{game_id}`，与磁盘目录**无关** |
 | name | VARCHAR(255) | NOT NULL, 索引，联合唯一 `(game_type, name)` | 游戏名。校验为合法的 Windows 与百度网盘文件名（`validate_game_name()`）：不含 `\ / : * ? " < > |` 与控制字符、不以点结尾、非保留设备名、≤255 字符 |
 | cartridge_id | VARCHAR(64) | NOT NULL, 唯一索引 `uq_games_cartridge_id` | 卡带ID：创建时必填，同时是磁盘上的目录名与「同一盘卡带」的身份标识。规则见 `validate_cartridge_id()`：只允许数字、字母、中划线、下划线，落库前统一转**大写**。**普通编辑（`PUT /manage/{id}`）改不动它**，要换走显式改名接口 `PUT /manage/{id}/cartridge-id`（`GameService.rename_cartridge_id()`）——一次迁移会搬三类目录并改写下面五处路径列（见「文件存储结构」）。游戏榜单页在**请求期**拿它把榜单行关联到库存（`GameService.map_for_cartridge_ids`，比对前经 `normalize_cartridge_id()` 归一；只读、不落库），所以改名后关联**立刻**跟着新 ID 走、不需要重建索引 |
-| cover_type | VARCHAR(20) | NULL | 封面类型：这盘封面被「美化」成了哪种外观，值就是封面样式 id（`flash` DISK / `gb` GB / `gbc` GBC / `gba` GBA / `fc` FC / `nes` NES）。**可空**，空 = 没有封面类型：新建（手动上传 / 网络上传 / 搬运）一律留空，只有管理页**编辑弹框手动选**（`PUT /manage/{id}`）与**「美化封面」**（`POST /manage/{id}/assets` 的 `cover_type` 表单字段，与封面文件同一次提交）两条写入路径。可选集合按游戏类型给，见 `backend/games/models.py` 的 `COVER_TYPES_BY_GAME_TYPE` / `cover_types_for()`——不支持美化封面的 `h5`/`snes`/`sega*` 返回空元组、永远为空；校验入口 `service.py::validate_cover_type()`。游戏类型创建后不可变，换本体不会改动它。游戏中心「全部游戏」在游戏类型分组内再按它分行，空的自成一组排在最后。前端展示层镜像是 `frontend/src/constants/coverStyles.js` 的 `STYLE_BY_GAME_TYPE`（两边 id 集合与顺序必须一致） |
+| cover_type | VARCHAR(20) | NULL | 封面类型：这盘封面被「美化」成了哪种外观，值就是封面样式 id（`flash` DISK / `gb` GB / `gbc` GBC / `gba` GBA / `nds` NDS / `fc` FC / `nes` NES）。**可空**，空 = 没有封面类型：新建（手动上传 / 网络上传 / 搬运）一律留空，只有管理页**编辑弹框手动选**（`PUT /manage/{id}`）与**「美化封面」**（`POST /manage/{id}/assets` 的 `cover_type` 表单字段，与封面文件同一次提交）两条写入路径。可选集合按游戏类型给，见 `backend/games/models.py` 的 `COVER_TYPES_BY_GAME_TYPE` / `cover_types_for()`——不支持美化封面的 `h5`/`snes`/`sega*` 返回空元组、永远为空；校验入口 `service.py::validate_cover_type()`。游戏类型创建后不可变，换本体不会改动它。游戏中心「全部游戏」在游戏类型分组内再按它分行，空的自成一组排在最后。前端展示层镜像是 `frontend/src/constants/coverStyles.js` 的 `STYLE_BY_GAME_TYPE`（两边 id 集合与顺序必须一致） |
 | description | VARCHAR(200) | NOT NULL, 默认 `''` | 描述。上限 200 字（`validate_description()`）：新建/编辑超长直接 400，搬运抓来的站点简介按上限截断入库 |
-| game_type | VARCHAR(50) | NOT NULL, 索引 | 类型值：`flash`（Ruffle 播放 SWF）、`h5`（上传 ZIP，播放时按需解包，沙箱 iframe 播放）或主机平台 `nes`/`snes`/`gb`/`gba`/`segaMD`/`segaGG`/`segaMS`（EmulatorJS 播放，值与 EJS system key 一致）。**由本体文件扩展名自动判定**（不手动指定），判定入口与白名单在 `backend/games/service.py` 的 `GAME_TYPES`/`_GAME_TYPE_EXTENSIONS`/`detect_game_type()`。中心列表按 `game_path != ''` 过滤 |
+| game_type | VARCHAR(50) | NOT NULL, 索引 | 类型值：`flash`（Ruffle 播放 SWF）、`h5`（上传 ZIP，播放时按需解包，沙箱 iframe 播放）或主机平台 `nes`/`snes`/`gb`/`gba`/`nds`/`segaMD`/`segaGG`/`segaMS`（EmulatorJS 播放，值与 EJS system key 一致）。**由本体文件扩展名自动判定**（不手动指定），判定入口与白名单在 `backend/games/service.py` 的 `GAME_TYPES`/`_GAME_TYPE_EXTENSIONS`/`detect_game_type()`。中心列表按 `game_path != ''` 过滤 |
 | size | INTEGER | NOT NULL, 默认 0 | 本体字节数（h5 为 ZIP 压缩包大小） |
 | crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | **当前本体内容**的 CRC32，8 位大写十六进制（如 `D445F698`）。上传或换本体时重算落库，只作记录、**不再作为锁定凭据**；空串表示尚未算出 |
 | game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径（`game/{game_type}/{卡带ID}/game.{后缀}`）；空串 = 尚未上传。h5 就是它的 zip（`game.zip`），解包产物不落库 |
@@ -150,7 +150,7 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 **`game_emulator_settings`**（模拟器（EmulatorJS）设置：登录用户按平台一套，进游戏时自动加载、由播放页「保存配置」按钮手动整体覆盖保存）
 
-只覆盖 7 个主机模拟器平台（`nes/snes/gb/gba/segaMD/segaGG/segaMS`），不含 flash/h5；内容小（几 KB），**只存 SQLite，不落文件**。
+只覆盖 8 个主机模拟器平台（`nes/snes/gb/gba/nds/segaMD/segaGG/segaMS`），不含 flash/h5；内容小（几 KB），**只存 SQLite，不落文件**。
 
 | 列 | 类型 | 约束 | 说明 |
 |----|------|------|------|
@@ -223,8 +223,8 @@ SQLModel 到 SQLite 的类型映射：`str(max_length=n)` → `VARCHAR(n)`；`st
 
 细节说明：
 
-- **类型目录名**：用 `game_type` 的键值（`flash` / `h5` / `nes` / `snes` / `gb` / `gba` / `segaMD` / `segaGG` / `segaMS`），与 SQLite 字段一致，纯标识符、无空格，后端不需要知道中文展示名。
-- **游戏本体 / 封面**：路径随 `game_type` 与卡带ID 固定、不随上传文件名变，**同名重复上传会覆盖同一个文件**（先写同目录临时文件再改名）。本体后缀决定 `game_type`（扩展名与类型一一对应）：`.swf`→`flash`；`.zip`→`h5`；`.nes`→`nes`；`.sfc/.smc`→`snes`；`.gb/.gbc`→`gb`；`.gba`→`gba`；`.md/.gen`→`segaMD`；`.gg`→`segaGG`；`.sms`→`segaMS`；封面 `.jpg/.jpeg/.png/.gif/.webp`。**游戏类型创建后不可变**：换本体必须与当前类型一致（同类型内可换后缀，如 `.gb`→`.gbc`），跨类型 400 且旧档不动；同类型换后缀时，新本体落库成功后才删旧后缀文件，并重算 `crc32`/`size`/`game_path`。换封面后缀（如 `cover.png` → `cover.jpg`）同样在新文件写成功后删旧文件。
+- **类型目录名**：用 `game_type` 的键值（`flash` / `h5` / `nes` / `snes` / `gb` / `gba` / `nds` / `segaMD` / `segaGG` / `segaMS`），与 SQLite 字段一致，纯标识符、无空格，后端不需要知道中文展示名。
+- **游戏本体 / 封面**：路径随 `game_type` 与卡带ID 固定、不随上传文件名变，**同名重复上传会覆盖同一个文件**（先写同目录临时文件再改名）。本体后缀决定 `game_type`（扩展名与类型一一对应）：`.swf`→`flash`；`.zip`→`h5`；`.nes`→`nes`；`.sfc/.smc`→`snes`；`.gb/.gbc`→`gb`；`.gba`→`gba`；`.nds`→`nds`；`.md/.gen`→`segaMD`；`.gg`→`segaGG`；`.sms`→`segaMS`；封面 `.jpg/.jpeg/.png/.gif/.webp`。**游戏类型创建后不可变**：换本体必须与当前类型一致（同类型内可换后缀，如 `.gb`→`.gbc`），跨类型 400 且旧档不动；同类型换后缀时，新本体落库成功后才删旧后缀文件，并重算 `crc32`/`size`/`game_path`。换封面后缀（如 `cover.png` → `cover.jpg`）同样在新文件写成功后删旧文件。
 - **H5**：上传的 ZIP 本体存数据根的 `game/{类型}/{卡带ID}/game.zip`，**上传时只校验不解压、也不落任何清单**。播放时按需把整包解到**运行时根**的 `h5/` 下，每个文件按包内相对路径落盘；入口固定为根目录 `index.html`（大小写不敏感识别、落盘统一小写）；整包套在单一顶层目录时会剥掉该前缀。**磁盘上没有代际前缀**：解包先写同层暂存目录、再用目录改名整体替换；入口文件存在就直接复用，不重复解。重传 zip / 改卡带ID / 删游戏时由写路径显式作废运行时根那份（两个根相同时退化成一次 `exists()` 检查）。
 - **攻略**：一份攻略可以是 **ZIP 静态站包或单个 PDF**，二者互斥，存数据根的 `game/{类型}/{卡带ID}/guide.zip` / `guide.pdf`。形态记在 `games.guide_kind`（`''` / `zip` / `pdf`），**上传写值、删除清空**，列表载荷的 `has_guide` / `guide_kind` 直接来自这一列，**不再 stat 磁盘**；宿主手动增删文件不会自动反映（手动删掉文件后打开会 404）。上传是**单个文件**（multipart 只有一个 `file`）：ZIP 与 H5 共用同一套校验（路径归一化、大小写不敏感查重、入口只认 `index.html`、zip/条目/单条/总量/压缩比上限），**只校验不解压**；PDF 只查后缀、大小（≤128MB）与前 1024 字节含 `%PDF-`，**原样存储**。**上传一种会删掉另一种**，并作废旧的解包产物。删除走 `DELETE /api/games/manage/<id>/guide`：ZIP/PDF 文件、运行时解包目录与 `guide_kind` 一起清掉，幂等。查看 ZIP 时按需解到运行时根的 `guide/`：没有代际前缀，先写同层暂存目录再一次目录改名整体替换；入口文件存在就直接复用。重传 / 改卡带ID / 删游戏时由写路径显式作废。读取 ZIP 资源走 `GET|HEAD /api/games/<id>/guide/<资源路径>`（**需登录**，与 H5 资源的免登录不同），路径归一化后从运行时根取；PDF 走 `GET|HEAD /api/games/<id>/guide.pdf`（同样需登录），从数据根直读并以 `application/pdf` inline 返回。文件不存在或形态不符即 404。删除游戏时，攻略文件随整个游戏目录一起清掉。
 - **游戏截图**：与云端存档同构——目录按 `用户名/游戏类型/卡带ID` 分，一个截图一个 `{uuid}.{后缀}`（uuid 不可猜、不重名），原始文件名与游戏名都不进路径。后缀由**内容的 magic** 定（播放页截的是 `.png`，图库里手动上传的还可能是 `.jpg`/`.webp`/`.gif`），单张上限 16MB。**目录里的 `game_type` 是上传当时的类型**：历史数据里换过类型的游戏，同一游戏的截图可能分散在两个类型目录里，所以读取、单张删除、删游戏清理一律用行里的 `file_path`，绝不用游戏当前类型拼目录（功能不受影响）。**改卡带ID 同理**：只把 `file_path` 父目录的最后一段换成新 ID，那一层类型保持原样。

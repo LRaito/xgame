@@ -12,13 +12,16 @@ def dist(tmp_path):
     root = tmp_path / "dist"
     (root / "assets").mkdir(parents=True)
     (root / "ruffle").mkdir()
-    (root / "emulatorjs" / "data").mkdir(parents=True)
+    (root / "emulatorjs" / "data" / "cores").mkdir(parents=True)
+    (root / "emulatorjs" / "bios").mkdir()
     (root / "index.html").write_bytes(INDEX_HTML)
     (root / "emulator-host.html").write_bytes(b"<html>host</html>")
     (root / "version.txt").write_bytes(b"v1.0.0")
     (root / "assets" / "app-abc123.js").write_bytes(b"console.log(1)")
     (root / "ruffle" / "ruffle.wasm").write_bytes(b"\x00asm")
     (root / "emulatorjs" / "data" / "fceumm-wasm.data").write_bytes(b"core")
+    (root / "emulatorjs" / "data" / "cores" / "melonds-wasm.data").write_bytes(b"nds-core")
+    (root / "emulatorjs" / "bios" / "nds.zip").write_bytes(b"PK\x03\x04")
     (root / "media").mkdir()
     (root / "media" / "cover.png").write_bytes(b"\x89PNG")
     return root
@@ -55,6 +58,28 @@ def test_engine_assets_have_explicit_mime(site):
 
     core = site.get("/emulatorjs/data/fceumm-wasm.data")
     assert core.headers["content-type"] == "application/octet-stream"
+
+    # 新加的 melonds core 与其它 core 一样走 immutable + octet-stream
+    nds_core = site.get("/emulatorjs/data/cores/melonds-wasm.data")
+    assert nds_core.status_code == 200
+    assert nds_core.headers["content-type"] == "application/octet-stream"
+    assert nds_core.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+def test_nds_bios_is_no_cache(site):
+    """BIOS 文件名固定、用户随时可能替换，不能跟着 /emulatorjs/ 走一年 immutable。"""
+    response = site.get("/emulatorjs/bios/nds.zip")
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["content-type"] == "application/zip"
+
+
+def test_missing_nds_bios_is_404_not_index(site, dist):
+    """BIOS 缺失时必须 404（宿主页据此提示），绝不回落 index.html。"""
+    (dist / "emulatorjs" / "bios" / "nds.zip").unlink()
+    response = site.get("/emulatorjs/bios/nds.zip")
+    assert response.status_code == 404
+    assert b"<div id=app>" not in response.content
 
 
 @pytest.mark.parametrize("path", ["/assets/gone-000000.js", "/assets", "/assets/", "/ruffle"])

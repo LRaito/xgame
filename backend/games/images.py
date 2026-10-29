@@ -9,7 +9,7 @@ from __future__ import annotations
 from backend.errors import ValidationError
 
 # 单张上限：引擎原生帧或同帧拷贝的 PNG 通常几百 KB 到几 MB，
-# 16MB 留足余量，同时远小于 nginx 的 128m 网关，不会先被网关拦掉。
+# 16MB 留足余量，同时远小于 nginx 的 512m 网关，不会先被网关拦掉。
 IMAGE_MAX_SIZE = 16 * 1024 * 1024
 
 # 收哪些图片：播放页截的固定是 PNG，手动上传的还允许常见网页图片格式。

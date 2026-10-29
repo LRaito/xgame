@@ -129,6 +129,7 @@ def test_detect_game_type_by_extension():
     assert detect_game_type("demo.gb") == "gb"
     assert detect_game_type("demo.gbc") == "gb"
     assert detect_game_type("demo.gba") == "gba"
+    assert detect_game_type("demo.nds") == "nds"
     assert detect_game_type("demo.md") == "segaMD"
     assert detect_game_type("demo.gen") == "segaMD"
     assert detect_game_type("demo.gg") == "segaGG"
@@ -533,6 +534,7 @@ def test_manage_filter_combines_with_pagination(logged_in_games):
         ("gb", ".gb"),
         ("gb", ".gbc"),
         ("gba", ".gba"),
+        ("nds", ".nds"),
         ("segaMD", ".md"),
         ("segaMD", ".gen"),
         ("segaGG", ".gg"),

@@ -13,7 +13,12 @@
  * 不然摆到卡片上就是一块方形底。
  */
 
-import { CART_STYLES, FLASH_DISC, cornerRadii } from "@/constants/coverStyles";
+import {
+    CART_STYLES,
+    FLASH_DISC,
+    cornerChamfers,
+    cornerRadii,
+} from "@/constants/coverStyles";
 
 // 素材图（卡带底图、Flash 标志）按 URL 缓存，同一张只解码一次。
 // 值存的是 Promise：并发调用不会各下载一遍。
@@ -45,7 +50,7 @@ export function loadImage(src) {
 /**
  * 合成入口：按样式 id 出图。
  *
- * @param {string} styleId "flash" | "gb" | "gbc" | "gba" | "fc" | "nes"（见 constants/coverStyles.js）
+ * @param {string} styleId "flash" | "gb" | "gbc" | "gba" | "nds" | "fc" | "nes"（见 constants/coverStyles.js）
  * @param {HTMLImageElement} sourceImg 已载入完成的原封面
  * @returns {Promise<Blob>} PNG
  */
@@ -66,9 +71,10 @@ export async function composeCover(styleId, sourceImg) {
  * 卡带：底图铺满 → 把封面**拉伸填满**洞口（`object-fit: fill` 的做法，不改比例地
  * 拉成洞口的长宽比，不裁切也不留边）→ 与底图合成。
  *
- * 贴之前一定要按洞口的圆角裁一刀：底图洞口是按圆角填的，圆角之外仍是机身像素
+ * 贴之前一定要按洞口的形状裁一刀：底图洞口是按同一形状填的，形状之外仍是机身像素
  * （GBA 是机身灰、GBC 是贴纸凹槽的阴影），不裁的话矩形封面会把这圈盖掉。
- * 圆角可以**按角给**（`cornerRadii()` 归一化成 `{ tl, tr, br, bl }`，目前五个样式四角都一样）。
+ * 圆角可以**按角给**（`cornerRadii()` 归一化成 `{ tl, tr, br, bl }`）；
+ * NDS 卡带的左下角是**斜角**，由 `cornerChamfers()` 给（同一个角有斜角就不再走圆角）。
  */
 async function composeCartridge(cart, sourceImg) {
     const { image, hole } = cart;
@@ -78,7 +84,15 @@ async function composeCartridge(cart, sourceImg) {
     ctx.drawImage(base, 0, 0, image.width, image.height);
 
     ctx.save();
-    roundRectPath(ctx, hole.x, hole.y, hole.width, hole.height, cornerRadii(cart.radius));
+    roundRectPath(
+        ctx,
+        hole.x,
+        hole.y,
+        hole.width,
+        hole.height,
+        cornerRadii(cart.radius),
+        cornerChamfers(cart.chamfer),
+    );
     ctx.clip();
     // 没有源矩形：整张封面直接拉伸到洞口大小
     ctx.drawImage(sourceImg, hole.x, hole.y, hole.width, hole.height);
@@ -229,21 +243,48 @@ function angleGradient(ctx, x, y, w, h, deg) {
 }
 
 /**
- * 圆角矩形路径，**四角半径可以各不相同**（`{ tl, tr, br, bl }`，0 = 直角）。
- * 不用 `ctx.roundRect`：那个 Chrome 99+ / Safari 16+ 才有，而且只吃一个统一半径。
- * `arcTo` 半径 0 是退化情形，这里干脆跳过它——上面那句 lineTo 已经走到角上了。
+ * 卡带贴纸窗路径：四角可以是**圆角**（`r`，`{ tl, tr, br, bl }`）或**斜角**
+ * （`c`，同样四角，数字是沿两条边切掉的长度）。同一个角同时给了斜角和圆角时以斜角为准。
+ * 0 = 直角。不用 `ctx.roundRect`：那个 Chrome 99+ / Safari 16+ 才有，而且只吃一个统一半径。
+ * `arcTo` 半径 0 是退化情形，这里干脆跳过它——上一句 lineTo 已经走到角上了。
+ *
+ * NDS 卡带的左下角是斜角：底边走到 (x + c.bl, y + h) 后直接斜线到 (x, y + h - c.bl)，
+ * 与底图补色用的 `rounded_mask` + 三角形切除是同一块区域。
  */
-function roundRectPath(ctx, x, y, w, h, r) {
+function roundRectPath(ctx, x, y, w, h, r, c = { tl: 0, tr: 0, br: 0, bl: 0 }) {
+    // 每条边从角点往里缩的距离：斜角优先，其次圆角，否则 0（直角）
+    const off = {
+        tl: c.tl || r.tl,
+        tr: c.tr || r.tr,
+        br: c.br || r.br,
+        bl: c.bl || r.bl,
+    };
     ctx.beginPath();
-    ctx.moveTo(x + r.tl, y);
-    ctx.lineTo(x + w - r.tr, y);
-    if (r.tr) ctx.arcTo(x + w, y, x + w, y + r.tr, r.tr);
-    ctx.lineTo(x + w, y + h - r.br);
-    if (r.br) ctx.arcTo(x + w, y + h, x + w - r.br, y + h, r.br);
-    ctx.lineTo(x + r.bl, y + h);
-    if (r.bl) ctx.arcTo(x, y + h, x, y + h - r.bl, r.bl);
-    ctx.lineTo(x, y + r.tl);
-    if (r.tl) ctx.arcTo(x, y, x + r.tl, y, r.tl);
+    ctx.moveTo(x + off.tl, y);
+    ctx.lineTo(x + w - off.tr, y);
+    if (c.tr) {
+        ctx.lineTo(x + w, y + c.tr);
+    } else if (r.tr) {
+        ctx.arcTo(x + w, y, x + w, y + r.tr, r.tr);
+    }
+    ctx.lineTo(x + w, y + h - off.br);
+    if (c.br) {
+        ctx.lineTo(x + w - c.br, y + h);
+    } else if (r.br) {
+        ctx.arcTo(x + w, y + h, x + w - r.br, y + h, r.br);
+    }
+    ctx.lineTo(x + off.bl, y + h);
+    if (c.bl) {
+        ctx.lineTo(x, y + h - c.bl);
+    } else if (r.bl) {
+        ctx.arcTo(x, y + h, x, y + h - r.bl, r.bl);
+    }
+    ctx.lineTo(x, y + off.tl);
+    if (c.tl) {
+        ctx.lineTo(x + c.tl, y);
+    } else if (r.tl) {
+        ctx.arcTo(x, y, x + r.tl, y, r.tl);
+    }
     ctx.closePath();
 }
 

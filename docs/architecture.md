@@ -12,7 +12,7 @@
 
 ## 项目为什么存在
 
-x 是私人游戏平台，不是对外 SaaS。只做一件事：把 Flash、HTML5 与 8/16-bit 主机（NES/SNES/GB/GBA/MD/GG/SMS）游戏收进自己的库里，在浏览器里即开即玩，并让每个账号有自己独立的模拟器配置与游戏存档。
+x 是私人游戏平台，不是对外 SaaS。只做一件事：把 Flash、HTML5 与 8/16/32-bit 主机（NES/SNES/GB/GBA/NDS/MD/GG/SMS）游戏收进自己的库里，在浏览器里即开即玩，并让每个账号有自己独立的模拟器配置与游戏存档。
 
 两块界面（注册表 `backend/tools/registry.py`）：
 
@@ -48,7 +48,7 @@ x 是私人游戏平台，不是对外 SaaS。只做一件事：把 Flash、HTML
 | 层 | 技术 | 原因 |
 |-------|------------|-----|
 | Web 界面 | Vue 3 + Vite + Pinia + Element Plus + vue-router | 独立 SPA；无 i18n / 无 TypeScript |
-| 播放运行 | Ruffle（Flash）+ EmulatorJS（8/16-bit 主机，构建期按固定版本打包静态资产）+ 前端 Service Worker | Flash SWF 与主机 ROM 在本站即开即玩；SW 缓存 Flash 资源 |
+| 播放运行 | Ruffle（Flash）+ EmulatorJS（8/16/32-bit 主机，构建期按固定版本打包静态资产）+ 前端 Service Worker | Flash SWF 与主机 ROM 在本站即开即玩；SW 缓存 Flash 资源 |
 | API | FastAPI + Pydantic | 应用工厂、类型校验、OpenAPI 友好 |
 | ORM | SQLModel（Pydantic + SQLAlchemy）+ SQLite | 模型与校验统一在 Pydantic |
 | 应用服务器 | Gunicorn（uvicorn worker）+ nginx | api 跑 ASGI，web 托管静态并反代 |
@@ -144,7 +144,7 @@ backend/
   一步建条目并写本体；**卡带ID 必填**，它全局唯一且是磁盘目录名；普通编辑改不动它，
   要换走 PUT /manage/{id}/cartridge-id（见下面「改卡带ID」一段）
   游戏类型由本体文件扩展名自动判定，不接受手动指定（flash←.swf；h5←.zip；nes←.nes；snes←.sfc/.smc；
-  gb←.gb/.gbc；gba←.gba；segaMD←.md/.gen；segaGG←.gg；segaMS←.sms），未收录的后缀一律 400
+  gb←.gb/.gbc；gba←.gba；nds←.nds；segaMD←.md/.gen；segaGG←.gg；segaMS←.sms），未收录的后缀一律 400
   网络上传：本体/封面也可以给 http/https 直链（建条目用 body_url+body_game_type / cover_url，
   换资源用 url[+game_type]），由服务端 backend/games/remote.py 下到临时目录再走同一条上传管线，
   单文件上限 512MB；本体走直链时类型以所选 game_type 为准——地址能认出类型就必须一致（否则 400），
@@ -190,12 +190,13 @@ backend/
   Flash  → /games/flash/{id}   Ruffle 播放，SW（game-asset-sw.js）按 key+updated_at 缓存资源
   主机   → /games/play/{id}    外层 SPA 壳内嵌 iframe /emulator-host.html → EmulatorJS；
                               ROM 直连 /api/games/{id}/play（EmulatorJS 自带 IndexedDB 缓存 core/ROM）
-                              标题栏按钮（自左向右）：加速模式 → 截图 → 保存配置 → 窗口倍率 → 显示机壳（GBA / FC / GBC 有）→ 存档管理；
+                              标题栏按钮（自左向右）：加速模式 → 截图 → 保存配置 → 窗口倍率 → 显示机壳（GBA / FC / GBC / NDS 有）→ 存档管理；
                               加速模式：持续快进开关，开关的是引擎自己的 Fast Forward 设置项（__ejsRpc.setFastForward →
                               changeSettingOption → menuOptionChanged → handleSpecialOptions），因此与引擎设置菜单里那一项同源、
                               随「保存配置」进账号，按钮亮灭由轮询读 __ejsRpc.fastForward 对齐；不碰用户自己绑的快进键；
-                              显示机壳：把机壳图按「洞宽 = 画面宽」放大后盖在画面上，洞正好露出游戏画面，
+                              显示机壳：把机壳图按「洞（多洞取外接矩形）宽 = 画面宽」放大后盖在画面上，洞正好露出游戏画面，
                               画面尺寸一变就跟着缩放。图与洞的几何按游戏类型放在 emulator-player.vue 的 SHELLS 表里，
+                              每项统一是 holes 数组（单屏机种一个、NDS 上下两个），
                               FC 还按显示比例分两套（切比例一起换）：GBA = src/assets/shells/gba-shell.png（带透明屏幕洞的
                               机身，洞 1920×1280 = 精确 3:2 且居整图正中）；GBC = src/assets/shells/gbc-shell.png
                               （GBC 正面机身，洞 1285×1156.5 = 10:9，正是 GB/GBC 的 160×144；原素材
@@ -203,14 +204,17 @@ backend/
                               src/assets/shells/nes-shell.png（CRT 电视机壳，洞 1084×948.5 = 256:224，原素材洞是 4:3，
                               入项目前把屏幕那段纵向拉长 7/6、下面带按键的控制条等比不动，再裁掉透明留白）；
                               FC 的「4:3」列 = src/assets/shells/nes-shell-43.png（原素材本身，洞 1084×813 = 4:3，
-                              只裁掉顶部留白）。机壳比画面大得多（GBA 那张宽是画面的两倍），
+                              只裁掉顶部留白）；NDS = src/assets/shells/nds-shell.png（1080×1920 的真实机壳，两个 840×630
+                              的透明洞 x=120、y=177/984，中间 177px 铰链带，外接矩形 840×1437 ≈ 256:438，
+                              对应 melonds_screen_gap=54；洞是精确 4:3，256×192 的屏幕完整铺满、不被机壳遮挡）。
+                              机壳比画面大得多（GBA 那张宽是画面的两倍），
                               故用 position: fixed 定位以免被 .game-shell__body 的 overflow 裁掉/顶出滚动条；
                               倍率调大后超出浏览器视口的部分看不见即可，不裁剪也不隐藏
                               截图 = __ejsRpc.screenshot：先要引擎自带截图（内核侧读帧缓冲 → 原生像素
                               如 256×224），拿不到/全黑则退回同一帧 rAF 里拷画布（引擎的 WebGL 上下文
                               preserveDrawingBuffer:false，合成后绘制缓冲即失效，个别浏览器会拷到全黑）；
-                              截下来不直接下载：先弹确认框（180px 方框预览 + 下方一行描述 ≤15 字，
-                              回车即确认），
+                              截下来不直接下载：先弹确认框（180px 宽的限制框预览，高度按截图真实比例，
+                              NDS 双屏是竖版；下方一行描述 ≤15 字，回车即确认），
                               点「确认」才带着描述上传进「游戏截图」图库，之后在游戏详情里看得见；
                               快捷键 Ctrl+Shift+S 同效（F12 是浏览器开发者工具的保留键，拦不住）；
                               焦点可能停在宿主 iframe 的引擎画布上，所以父页面与 iframe 的 window
@@ -218,7 +222,7 @@ backend/
                               窗口选择器（EmuWindowSelect.vue）是一张两列矩阵：行 = 倍率
                               （1×/1.5×/2×/2.5×/3×/3.5×/4×，另有「适应窗口」），列 = 显示比例，
                               基准是各平台帧缓冲分辨率（NES 256×224、SNES 256×224、GB/GBC 160×144、
-                              GBA 240×160、MD 320×224、GG 160×144、SMS 256×192），按帧缓冲高度换算窗口
+                              GBA 240×160、NDS 256×438、MD 320×224、GG 160×144、SMS 256×192），按帧缓冲高度换算窗口
                               像素高度、宽度按舞台宽高比推出（菜单里就是真实窗口尺寸）。只有 FC 画第二列：
                               左「像素完美」（8:7）、右「4:3」（真机 CRT 观感，1× = 320×240，用的是完整
                               240 行帧）。舞台长宽比取 __ejsRpc.videoInfo().aspect（引擎上报的显示宽高比，
@@ -287,9 +291,9 @@ backend/
 封面美化（游戏管理页编辑弹框「游戏封面」行的按钮，components/games/CoverBeautifyDialog.vue）
   把该游戏**当前的封面**合成成光盘 / 卡带外观后覆盖存回。**样式由游戏类型给一组、用户在这一组里选**
   （constants/coverStyles.js 的 beautifyStylesFor 返回数组，顺序即单选顺序、第一个是默认：
-  flash→DISK、gb→GB / GBC 两种、gba→GBA、nes→FC / NES 两种；
+  flash→DISK、gb→GB / GBC 两种、gba→GBA、nds→NDS、nes→FC / NES 两种；
   其余类型不显示按钮）；弹框标题右边始终有一排方框单选（走 AppDialog 的
-  可选 #header 插槽，只有一种样式的 flash / gba 也出、那一项不可选），切换只重新合成、不重新下载原封面；
+  可选 #header 插槽，只有一种样式的 flash / gba / nds 也出、那一项不可选），切换只重新合成、不重新下载原封面；
   打开时游戏当前的**封面类型**（games.cover_type，就是上次美化用的样式 id）命中哪个就默认选哪个，
   没设过（新建的游戏都是空的）就是列表第一个；
   只在编辑模式且类型支持时出现，没有封面时按钮禁用
@@ -299,7 +303,7 @@ backend/
     卡带 = 先把封面缩放到洞口长宽比（拉伸填满，object-fit: fill），再与底图合并；
            底图是一张没贴过贴纸的原始卡带（洞口已填成机身色）；
            贴之前按洞口圆角 clip，圆角外的机身像素/凹槽阴影才不会被方形封面盖掉
-           圆角可按角给（cornerRadii），目前五个样式四角都一样；nes 那张洞口顶到画布上边，
+           圆角可按角给（cornerRadii）；斜角另由 cornerChamfers 给（NDS 左下角 20px，另外三角 12/22/17）；nes 那张洞口顶到画布上边，
            底图填色时上两角是直角（那两块也是洞口），封面裁切照样四角 r=10
     光盘 = 程序化绘制（无底图）：圆形裁切 + 盘面贴封面（居中方形裁切）+ 盘心 Flash 标志
            + 三层反光（由底到顶：斜向高光 → 外圈暗调与塑料边 → 盘心积层环）
@@ -307,6 +311,7 @@ backend/
     gb-cart.png  426×500、洞口 (53,151) 322×287、圆角 8
     gbc-cart.png 438×503、洞口 (58,163) 322×287、圆角 8
     gba-cart.png 640×370、洞口 (88,86) 464×235、圆角 12
+    nds-cart.png 260×270、洞口 (33,28) 205×197、圆角 tl 12 / tr 22 / br 17、左下斜角 20
     fc-cart.png 700×460、洞口 (56,54) 592×290、圆角 10
     nes-cart.png 700×779、洞口 (283,0) 323×527、圆角 10（底图填色时上两角是直角）
   **要贴同一张画的多个样式洞口尺寸必须相同**（同一张封面贴进哪个样式都占同样大的区域）：
@@ -317,8 +322,9 @@ backend/
   没有现成底图时用 .claude/skills/cartridge-clear-scene 把卡带成品图的贴纸窗清掉并补上机身色
   产物是 PNG（必须带 Alpha：光盘圆外与卡带轮廓外靠它），确认后走 uploadAsset(id,"cover",{file,coverType})
   即 POST /api/games/manage/{id}/assets（多带一个 cover_type 表单字段）；**覆盖不可逆**，后端会把原封面文件删掉
-游戏详情的图片栏把封面（全站共享的一张，第一格显示原图）与本人的截图排成一行 4 个 180px 正方形框
-  （框内 object-fit: contain，长边到上限为止），放不下时左右翻页（封面固定第一页第一格）
+游戏详情的图片栏把封面（全站共享的一张，第一格显示原图）与本人的截图排成一行 4 个 180px 限制框
+  （封面/图集保持 1:1，截图按机种比例，NDS 是竖版；框内 object-fit: contain，长边到上限为止），
+  放不下时左右翻页（封面固定第一页第一格）
   删除游戏：所有账号在该游戏上的截图行、文件与 image/…/{卡带ID}/ 目录一并清掉
 模拟器设置（登录用户，按平台）：GET/PUT /api/games/emulator-settings?game_type=…
   内容 = 引擎 localStorage 那块 {controlSettings, settings, cheats}，整块 JSON 存 SQLite（不落文件）
@@ -492,7 +498,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 - 写操作（除 register/login/csrf/health 外）校验 `X-CSRFToken`。
 - 免登录面只有注册/登录接口、`/health` 与 H5 资源（见上节）；攻略资源**需登录**（同源顶层导航，见决策 8）。
 - H5 游戏内容按不可信处理：资源响应强制 CSP `sandbox`（不含 `allow-same-origin`）+ `nosniff` + `Referrer-Policy: no-referrer`，播放页 iframe 再加 `sandbox` 属性，双重保证游戏无法访问本站 cookie/DOM/接口或注册 Service Worker。
-- 上传有大小上限（web nginx `client_max_body_size` 128m 为上传网关；游戏本体走直链另有 `MAX_REMOTE_BYTES` = 512MB）与每类型扩展名白名单；H5 与 ZIP 攻略共用同一套校验（`backend/games/archive.py`）：zip ≤128MB、条目 ≤2000、单条 ≤64MB、解压后 ≤256MB、压缩比 ≤200、拒绝绝对路径/`..`/重名/加密条目/缺 `index.html`；**解压那一步会再校验一次**（数据根是宿主可写的普通目录）。PDF 攻略只校验后缀、大小（≤128MB）与前 1024 字节含 `%PDF-`，原样存储、不解包。上传内容不执行（H5 在沙箱 iframe 内运行；攻略是登录用户上传的同源资源，见决策 8 的取舍说明）。
+- 上传有大小上限（web nginx `client_max_body_size` 512m 为上传网关，给 NDS 本体留余量；游戏本体走直链另有 `MAX_REMOTE_BYTES` = 512MB）与每类型扩展名白名单；H5 与 ZIP 攻略共用同一套校验（`backend/games/archive.py`）：zip ≤128MB、条目 ≤2000、单条 ≤64MB、解压后 ≤256MB、压缩比 ≤200、拒绝绝对路径/`..`/重名/加密条目/缺 `index.html`；**解压那一步会再校验一次**（数据根是宿主可写的普通目录）。PDF 攻略只校验后缀、大小（≤128MB）与前 1024 字节含 `%PDF-`，原样存储、不解包。上传内容不执行（H5 在沙箱 iframe 内运行；攻略是登录用户上传的同源资源，见决策 8 的取舍说明）。
 - **所有落盘路径都经 `LocalStorage._resolve()` 校验**：拒绝绝对路径与含 `..` 的相对路径；卡带ID（`^[0-9A-Z_-]+$`）与用户名（`^[0-9A-Za-z_-]+$`）的字符集本身就是文件系统安全的，H5 包内路径与攻略内路径另有 `normalize_h5_path()` / `normalize_guide_path()` 归一化（同一套规则）。
 - **搬运会发起服务端出站请求**：入口地址只接受 7k7k.com / 4399.com / flash.homes 域名（`importer.detect_site` 按 host 校验），避免被当作任意 URL 代理（SSRF）；H5 镜像会跟随被信任游戏页里引用的外部资源域名（抓的是静态资源，不跟着外链网页乱爬），并受文件数/单文件体积上限约束。
 - 本应用只给主人与（游戏的）访客使用，不加 OAuth、多租户角色、公开分享。
@@ -542,7 +548,7 @@ HTML 由 Vue 路由负责，JSON 一律在 `/api/` 下；信封 `{ "ok": true, "
 | `RUNTIME_HOST_DIR` | `./data/runtime` | **宿主侧**运行时根目录，放 SQLite 库与 H5/攻略的解包产物；容器里挂到 `/runtime`，留空则同 `STORAGE_HOST_DIR` |
 | `WEB_HTTPS_PORT` | `443` | 对外发布的 HTTPS 端口（容器内 nginx 固定听 443，见「安全架构」） |
 
-代码内固定：`SECRET_KEY`（session cookie 的签名密钥，换值让所有已登录会话失效）、`STORAGE_ROOT`（容器 `/data`，本机 `<repo>/data/storage`）、`RUNTIME_ROOT`（容器 `/runtime`，本机不设 = 同 `STORAGE_ROOT`）、`WINDOWS_MOUNT_PREFIX`（Windows 盘挂载路径前缀，默认 `/mnt`；根在它下面才要求 `.mounted` 哨兵）、SQLite 路径 `<RUNTIME_ROOT>/db/app.db`、备份间隔 1 小时、证书 `certs/cert.pem` / `certs/cert.key`、`SESSION_COOKIE_SECURE`；nginx `client_max_body_size 128m` 是上传网关（游戏 GBA 整卡 32MiB 等大文件经它放行）。
+代码内固定：`SECRET_KEY`（session cookie 的签名密钥，换值让所有已登录会话失效）、`STORAGE_ROOT`（容器 `/data`，本机 `<repo>/data/storage`）、`RUNTIME_ROOT`（容器 `/runtime`，本机不设 = 同 `STORAGE_ROOT`）、`WINDOWS_MOUNT_PREFIX`（Windows 盘挂载路径前缀，默认 `/mnt`；根在它下面才要求 `.mounted` 哨兵）、SQLite 路径 `<RUNTIME_ROOT>/db/app.db`、备份间隔 1 小时、证书 `certs/cert.pem` / `certs/cert.key`、`SESSION_COOKIE_SECURE`；nginx `client_max_body_size 512m` 是上传网关（游戏 GBA 整卡 32MiB、NDS 本体可达数百 MB，经它放行）。
 
 ## 性能
 

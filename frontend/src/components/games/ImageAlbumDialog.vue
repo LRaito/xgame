@@ -56,8 +56,9 @@
                     @dragend="onDragEnd"
                     @click="onTileClick(item)"
                 >
-                    <!-- 上面图片（不加底色、不做圆角，整个方块都能拖） -->
-                    <div class="album__frame">
+                    <!-- 上面图片（不加底色、不做圆角，整个方块都能拖）；
+                         截图管理传入竖版比例，图集管理保持 1:1 -->
+                    <div class="album__frame" :style="frameStyle">
                         <img
                             :src="imageUrl(item)"
                             :alt="item.description || altText"
@@ -110,7 +111,7 @@
 </template>
 
 <script setup>
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import AppButton from "@components/common/AppButton.vue";
 import AppDialog from "@components/common/AppDialog.vue";
@@ -127,6 +128,8 @@ const props = defineProps({
     uploadText: { type: String, default: "上传图片" },
     // 图片挂掉或读屏时的替代文字（描述为空时用）
     altText: { type: String, default: "图片" },
+    // 图片框宽高比（宽 / 高）：截图管理按机种传（NDS 约 0.60），图集保持 1
+    frameAspect: { type: Number, default: 1 },
     source: { type: Object, required: true },
 });
 
@@ -144,6 +147,13 @@ const selectedIds = ref(new Set());
 // 拖动排序：正在拖的那张 + 当前悬停到的那张（用来画落点提示）
 const dragId = ref(null);
 const dragOverId = ref(null);
+
+// 有比例时才内联覆盖（默认仍是样式里的 1/1），避免给图集多写一个无意义的属性
+const frameStyle = computed(() =>
+    props.frameAspect > 0 && props.frameAspect !== 1
+        ? { aspectRatio: String(props.frameAspect) }
+        : null
+);
 
 function imageUrl(item) {
     // 传整条记录而不是 id：地址函数要靠 created_at 当版本参数（主键会被复用，见 api/games.js）
@@ -409,6 +419,7 @@ watch(
 .album__grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    align-items: end;
     gap: 12px;
     max-height: 58vh;
     overflow-y: auto;

@@ -70,6 +70,16 @@ const GAME_TYPE_LIST = [
         description: "通过 EmulatorJS 在浏览器内运行；支持账号云存档。",
     },
     {
+        slug: "nds",
+        label: "任天堂 NDS",
+        kind: "emulator",
+        // 系统 key（EJS 的 nds），不是内核名 melonds——内核由引擎自己按 system key 选
+        core: "nds",
+        extensions: [".nds"],
+        icon: "🎮",
+        description: "通过 EmulatorJS（melonDS）在浏览器内运行；支持账号云存档。",
+    },
+    {
         slug: "segaMD",
         label: "世嘉 MD",
         kind: "emulator",

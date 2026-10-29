@@ -11,7 +11,9 @@ from backend.errors import ValidationError
 from backend.games.models import GameEmulatorSettings
 
 # 只有主机模拟器有这套设置：flash 走 Ruffle、h5 是沙箱 iframe，都没有 EmulatorJS 设置
-_EMULATOR_TYPES = frozenset({"nes", "snes", "gb", "gba", "segaMD", "segaGG", "segaMS"})
+_EMULATOR_TYPES = frozenset(
+    {"nes", "snes", "gb", "gba", "nds", "segaMD", "segaGG", "segaMS"}
+)
 # 引擎那块设置（键位 + 选项 + 金手指）实测几 KB，留足余量即可
 _MAX_PAYLOAD_BYTES = 64 * 1024
 

@@ -1,6 +1,6 @@
 """请求体上限：顶替 nginx 的 `client_max_body_size`。
 
-Docker 路线上，上传的唯一全局闸门是 nginx 的 `client_max_body_size 128m`。
+Docker 路线上，上传的唯一全局闸门是 nginx 的 `client_max_body_size 512m`。
 「解压即用」的 Windows 包没有 nginx（前端由 `backend/static_site.py` 托管），
 撤掉它之后请求体就没有任何上限了——Starlette 表单解析的 `max_part_size`（1MB）
 只作用于**非文件字段**，文件部分不设上限，于是局域网里任何一台设备都能一直写，
@@ -14,7 +14,7 @@ Docker 路线上，上传的唯一全局闸门是 nginx 的 `client_max_body_siz
 发多部分上传时总是带 Content-Length，nginx 反代默认也是缓冲后带 Content-Length 转发，
 所以这两条规则在实际链路上不会误伤。
 
-Docker 路线也挂它，但 nginx 的 128m 先拦，这里只是兜底（默认值比 nginx 宽松）。
+Docker 路线也挂它，但 nginx 的 512m 先拦，这里只是兜底（默认值与 nginx 一致）。
 """
 
 from starlette.datastructures import Headers

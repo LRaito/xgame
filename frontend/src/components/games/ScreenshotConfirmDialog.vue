@@ -12,7 +12,8 @@
         @confirm="onConfirm"
     >
         <div class="shot-confirm">
-            <div class="shot-confirm__frame">
+            <!-- 宽度固定 180，高度按截图真实比例（竖屏如 NDS 会变高；横屏仍限在 180 方框内） -->
+            <div class="shot-confirm__frame" :style="frameStyle">
                 <img v-if="previewUrl" class="shot-confirm__img" :src="previewUrl" alt="截图预览" />
             </div>
             <!-- 单行输入：回车即确认（描述最多 15 字，一行放得下） -->
@@ -29,13 +30,16 @@
 </template>
 
 <script setup>
-import { nextTick, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import AppDialog from "@components/common/AppDialog.vue";
 
 const props = defineProps({
     modelValue: { type: Boolean, default: false },
     // 截下来的那张图（父组件的 objectURL）
     previewUrl: { type: String, default: "" },
+    // 截图的真实像素宽高：预览框按比例变高（NDS 双屏是竖版），拿不到就退回 1:1
+    previewWidth: { type: Number, default: 0 },
+    previewHeight: { type: Number, default: 0 },
     // 上传中：确认按钮转圈，并挡掉重复提交
     saving: { type: Boolean, default: false },
 });
@@ -44,6 +48,15 @@ const emit = defineEmits(["update:modelValue", "confirm"]);
 
 const descDraft = ref("");
 const descInputRef = ref(null);
+
+// 框宽固定 180，高度 = 180 / 比例。比例大于 1（横图）时仍按 1 算，保持 180 方框。
+const frameStyle = computed(() => {
+    const ratio =
+        props.previewWidth > 0 && props.previewHeight > 0
+            ? Math.min(1, props.previewWidth / props.previewHeight)
+            : 1;
+    return { aspectRatio: String(ratio) };
+});
 
 function onConfirm() {
     if (props.saving) {
@@ -74,12 +87,12 @@ watch(
     gap: 12px;
 }
 
-/* 与游戏详情图片栏同一套限制：180×180 的方框（不加底色、不做圆角），
-   图片等比缩放到长边到上限为止 */
+/* 与游戏详情图片栏同一套限制：宽 180（不加底色、不做圆角），高度按截图的
+   aspect-ratio 算（竖版 NDS 会变成 180 × 约 308），图片等比缩放到框内 */
 .shot-confirm__frame {
     flex: 0 0 auto;
     width: 180px;
-    height: 180px;
+    height: auto;
     display: flex;
     align-items: center;
     justify-content: center;

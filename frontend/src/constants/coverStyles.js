@@ -19,12 +19,14 @@
  * 卡带底图与洞口几何
  * ---------------------------------------------------------------
  * 底图是成品素材——一张**没贴过贴纸的原始卡带**，中间那块贴纸窗已经填成机身色，
- * 三个数字一组：整图尺寸、洞口矩形、洞口圆角。**换素材必须同步改这三组数字**，
- * 否则封面会错位；下面的值已逐像素核对过：
+ * 几组数字：整图尺寸、洞口矩形、洞口圆角（个别样式还有斜角）。**换素材必须同步改这些
+ * 数字**，否则封面会错位；下面的值已逐像素核对过：
  *
  *   gb-cart.png    426 × 500  洞口 (53, 151) 322 × 287   圆角 8   （洞口 322:287 ≈ 1.12:1）
  *   gbc-cart.png   438 × 503  洞口 (58, 163) 322 × 287   圆角 8   （洞口同上）
  *   gba-cart.png   640 × 370  洞口 (88,  86) 464 × 235   圆角 12  （洞口 464:235 ≈ 1.97:1）
+ *   nds-cart.png   260 × 270  洞口 (33,  28) 205 × 197   圆角 tl 12 / tr 22 / br 17，左下斜角 20
+ *                                                         （洞口 205:197 ≈ 1.04:1）
  *   fc-cart.png    700 × 460  洞口 (56,  54) 592 × 290   圆角 10  （洞口 592:290 ≈ 2.04:1）
  *   nes-cart.png   700 × 779  洞口 (283,  0) 323 × 527   圆角 10  （洞口 323:527 ≈ 0.61:1）
  *                                                         ↑ 洞口上边就是画布顶边，见下
@@ -41,6 +43,12 @@
  * 按角指定，没写的角按直角算，见 `cornerRadii()` 与 utils/coverCompose.js 的 `roundRectPath()`）。
  * 合成时按它 `clip()` 一刀，**圆角之外那圈底图像素要留着**（GBA 是机身灰、GB/GBC 是贴纸
  * 凹槽的阴影），不能被方形封面盖掉。
+ *
+ * `chamfer` 是**斜角**（直线切角），NDS 卡带左下角就是这种：写一个数字 = 四角都切，
+ * 也可以写成 `{ tl, tr, br, bl }`，见 `cornerChamfers()`。同一个角给了 `chamfer` 就不再走
+ * 圆角，`roundRectPath()` 里画直线；目前只有 NDS 用，且只切左下角。NDS 底图是用
+ * `.claude/skills/cartridge-clear-scene` 的圆角 mask 再在左下切一个 20px 三角形生成的，
+ * 换卡带素材时同步改这里的 `hole` / `radius` / `chamfer`。
  *
  * **注意「底图填色」与「封面裁切」是两件事，`nes-cart.png` 那张上最容易搞混**：它的洞口上边就是
  * 画布顶边（源图顶部被裁掉了，标签上边缘不在画面里），所以**底图填色时上面两角是直角**
@@ -64,6 +72,7 @@ import flashLogoUrl from "@/assets/flash-logo.png";
 import gbCartUrl from "@/assets/carts/gb-cart.png";
 import gbcCartUrl from "@/assets/carts/gbc-cart.png";
 import gbaCartUrl from "@/assets/carts/gba-cart.png";
+import ndsCartUrl from "@/assets/carts/nds-cart.png";
 import fcCartUrl from "@/assets/carts/fc-cart.png";
 import nesCartUrl from "@/assets/carts/nes-cart.png";
 
@@ -94,6 +103,20 @@ export function cornerRadii(radius) {
     return { tl: 0, tr: 0, br: 0, bl: 0, ...radius };
 }
 
+/**
+ * 四角的**斜角**切边长度，形状与 `cornerRadii()` 相同：数字 = 四角相同，
+ * `{ tl, tr, br, bl }` 按角给，没写的角为 0。与圆角冲突时以斜角为准。
+ */
+export function cornerChamfers(chamfer) {
+    if (!chamfer) {
+        return { tl: 0, tr: 0, br: 0, bl: 0 };
+    }
+    if (typeof chamfer === "number") {
+        return { tl: chamfer, tr: chamfer, br: chamfer, bl: chamfer };
+    }
+    return { tl: 0, tr: 0, br: 0, bl: 0, ...chamfer };
+}
+
 /** 卡带底图配置，按样式 id 索引（id 与 STYLE_META、STYLE_BY_GAME_TYPE 里的键一一对应）。 */
 export const CART_STYLES = {
     gb: {
@@ -116,6 +139,15 @@ export const CART_STYLES = {
         image: { width: 640, height: 370 },
         hole: { x: 88, y: 86, width: 464, height: 235 },
         radius: 12,
+    },
+    nds: {
+        label: "NDS",
+        url: ndsCartUrl,
+        image: { width: 260, height: 270 },
+        // 贴纸窗：左上/右上/右下是圆角，左下是斜角（NDS 卡带的缺口）
+        hole: { x: 33, y: 28, width: 205, height: 197 },
+        radius: { tl: 12, tr: 22, br: 17, bl: 0 },
+        chamfer: { bl: 20 },
     },
     fc: {
         label: "FC",
@@ -140,6 +172,7 @@ const STYLE_BY_GAME_TYPE = {
     flash: ["flash"],
     gb: ["gb", "gbc"],
     gba: ["gba"],
+    nds: ["nds"],
     nes: ["fc", "nes"],
 };
 
@@ -174,6 +207,12 @@ const STYLE_META = {
         label: CART_STYLES.gba.label,
         output: { ...CART_STYLES.gba.image },
         hint: "建议 464 : 235（约 1.97:1），至少 464×235。比例不符会拉伸填满卡带贴纸窗。",
+    },
+    nds: {
+        id: "nds",
+        label: CART_STYLES.nds.label,
+        output: { ...CART_STYLES.nds.image },
+        hint: "建议 205 : 197（约 1.04:1），至少 205×197。比例不符会拉伸填满卡带贴纸窗。",
     },
     fc: {
         id: "fc",

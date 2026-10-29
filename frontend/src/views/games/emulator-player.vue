@@ -56,7 +56,7 @@
                 :aspect="stageAspect"
                 :wide="wideMode"
             />
-            <!-- 有洞对齐图的平台（GBA、FC、GBC）：把机壳图盖在画面上，中间那个洞正好露出游戏画面 -->
+            <!-- 有洞对齐图的平台（GBA、FC、GBC、NDS）：把机壳图盖在画面上，洞正好露出游戏画面 -->
             <app-button
                 v-if="supportsShell"
                 class="emulator-player__action"
@@ -133,6 +133,8 @@
         <screenshot-confirm-dialog
             v-model="shotDialogVisible"
             :preview-url="shotPreviewUrl"
+            :preview-width="shotWidth"
+            :preview-height="shotHeight"
             :saving="shooting"
             @confirm="confirmScreenshot"
         />
@@ -152,6 +154,7 @@ import {
     uploadCloudSaveAPI,
     uploadScreenshotAPI,
 } from "@/api/games";
+import { EMU_NATIVE } from "@/constants/emulatorScreens";
 import { gameTypeMeta } from "@/constants/gameTypes";
 import {
     EMU_SAVE_FILENAME,
@@ -164,6 +167,7 @@ import {
 import {
     engineSettingsKey,
     readEngineSettingsRaw,
+    stripNdsDisplayOptions,
     writeEngineSettings,
 } from "@/utils/emulatorSettings";
 import GameShell from "@components/games/GameShell.vue";
@@ -179,37 +183,29 @@ import gbaShellUrl from "@/assets/shells/gba-shell.png";
 import gbcShellUrl from "@/assets/shells/gbc-shell.png";
 import nesShellUrl from "@/assets/shells/nes-shell.png";
 import nesShell43Url from "@/assets/shells/nes-shell-43.png";
+import ndsShellUrl from "@/assets/shells/nds-shell.png";
 
 const ENGINE_LOADER = "/emulatorjs/data/loader.js";
 
-// 各主机平台的原始帧缓冲分辨率（像素）：窗口倍率按它换算，也是引擎就绪前的舞台比例兜底。
-// 帧缓冲比例 ≠ 显示比例——内核会按像素宽高比（PAR）校正，舞台长宽比最终以引擎上报的
-// aspect 为准（见 stageAspect）。
-// NES 是 256 × 224：fceumm 默认裁掉上下各 8 行过扫描（Crop Vertical Top/Bottom Overscan = 8，
-// 内核选项 fceumm_overscan_v_top/_bottom），宿主页默认把显示比例设成像素完美（见
-// emulator-host.html），于是 1× 就是 256 × 224 个方像素。FC 还可以切到 4:3 那一列，
-// 那用的是另一套帧缓冲（完整 240 行），见下面的 WIDE_MODE。
-const EMU_NATIVE = {
-    nes: { width: 256, height: 224 },
-    snes: { width: 256, height: 224 },
-    gb: { width: 160, height: 144 },
-    gba: { width: 240, height: 160 },
-    segaMD: { width: 320, height: 224 },
-    segaGG: { width: 160, height: 144 },
-    segaMS: { width: 256, height: 192 },
-};
-
 // 机壳图（frontend/src/assets/shells/ 下、**用 import 取 URL**，见下面的 import 区）：
-// 一张画好的机器外形图，中间是**全透明的屏幕洞**。把图按「洞宽 = 画面宽」放大后盖在画面上，
-// 就是真机在玩。**必须 import、不要写回 "/xxx-shell.png"**：import 出来的 URL 带内容哈希，
+// 一张画好的机器外形图，中间是**全透明的屏幕洞**。把图按「洞（多洞取外接矩形）宽 = 画面宽」
+// 放大后盖在画面上，就是真机在玩。**必须 import、不要写回 "/xxx-shell.png"**：import 出来的 URL 带内容哈希，
 // 重跑机壳图后缓存自动失效；放 public/ 下文件名固定，而 nginx 的 location /（与 Windows 包的
 // static_site.py）对这些文件不带 Cache-Control，浏览器会一直用启发式缓存里的旧图。
-// 每项里的两组数字是这张图与洞的像素几何，换图必须同步改（洞的位置变了就会错位）。
-// 洞的比例还必须与画面比例一致，否则洞与画面会错开：
+// 每项里的数字是这张图与洞的像素几何，换图必须同步改（洞的位置变了就会错位）。
+// **洞统一用 `holes` 数组**：单屏机种只有一个元素，NDS 有两个（上下屏，两洞之间留出
+// 屏幕间隙）。机壳只按所有洞的**外接矩形**对齐舞台，洞内部怎么排它不关心。
+// 洞的比例（NDS 是外接矩形的比例）还必须与画面比例一致，否则洞与画面会错开：
 //   GBA 洞 1920×1280 = 3:2，正是 GBA 原生 240×160；
 //   GBC 洞 1285×1156.5 = 10:9，正是 GB/GBC 原生 160×144（gambatte 上报的比例就是 160/144）；
 //     原素材洞是 1285×1157、左右留白差 17px，入项目前从左边裁掉 17px 让屏幕左右对称，
 //     剩下的半个像素差（10/9 的理论洞高 1156.5）按小数声明即可，不必真去拉伸图画；
+//   NDS 是真实机壳 1080×1920：两个 840×630 的透明洞（x=120，上屏 y=177、下屏 y=984），
+//     中间 177px 铰链带；外接矩形 840×1437 = 256:438，对应双屏帧缓冲（192 + 54 gap + 192）。
+//     840×630 正好 4:3，所以 256×192 能精确铺满每个洞；54 是按外接矩形比例反推的
+//     melonds_screen_gap（256×1437/840 − 384 ≈ 53.94，取 54），最大误差约 0.06px。
+//     原素材每块屏幕左右各有 8px 被补成了机身色（洞从 856 宽收到 840），洞才变成 4:3。
+//     素材已换成真实机壳，换图时同步改这里与 EMU_NATIVE.nds；
 //   FC 的电视机壳有两套，正好对应窗口选择器里的两列显示比例（见 WIDE_MODE）：
 //   `pp`（像素完美 8:7）那套是原素材把**屏幕那段纵向拉长 7/6 倍**（原素材洞 1084×813 = 4:3，
 //   拉长后 1084×948.5 = 8:7）得到的，下面 121 行的控制条（扬声器 / 按键）保持等比不变，
@@ -220,7 +216,7 @@ const SHELLS = {
         pp: {
             url: gbaShellUrl,
             image: { width: 3840, height: 2160 },
-            hole: { x: 960, y: 440, width: 1920, height: 1280 },
+            holes: [{ x: 960, y: 440, width: 1920, height: 1280 }],
         },
     },
     gb: {
@@ -228,7 +224,18 @@ const SHELLS = {
             url: gbcShellUrl,
             image: { width: 2131, height: 1996 },
             // 带小数：10/9 × 1285 = 1156.5，比画出来的洞矮半个像素（见上面的说明）
-            hole: { x: 423, y: 338, width: 1285, height: 1156.5 },
+            holes: [{ x: 423, y: 338, width: 1285, height: 1156.5 }],
+        },
+    },
+    nds: {
+        pp: {
+            url: ndsShellUrl,
+            image: { width: 1080, height: 1920 },
+            // 上洞底边 807、下洞顶边 984：中间 177px 正好是铰链带；840×630 = 精确 4:3
+            holes: [
+                { x: 120, y: 177, width: 840, height: 630 },
+                { x: 120, y: 984, width: 840, height: 630 },
+            ],
         },
     },
     nes: {
@@ -237,16 +244,28 @@ const SHELLS = {
             url: nesShellUrl,
             image: { width: 1326, height: 1237 },
             // 带小数：这两个值来自原素材的洞坐标 × 7/6（纵向拉伸倍率）再减去裁掉的那 10 行
-            hole: { x: 121, y: 146.3333, width: 1084, height: 948.5 },
+            holes: [{ x: 121, y: 146.3333, width: 1084, height: 948.5 }],
         },
         // 4:3：用**未拉伸的原素材**，洞本来就是 4:3，只裁掉了顶部 9 行透明留白
         wide: {
             url: nesShell43Url,
             image: { width: 1326, height: 1077 },
-            hole: { x: 121, y: 125, width: 1084, height: 813 },
+            holes: [{ x: 121, y: 125, width: 1084, height: 813 }],
         },
     },
 };
+
+/**
+ * 所有洞的外接矩形。单洞条目的结果就等于那个洞本身，所以 GBA/GBC/FC 的行为逐像素不变；
+ * NDS 用它把「两屏 + 中间的铰链带」当成一整块对齐舞台。
+ */
+function shellBounds(spec) {
+    const left = Math.min(...spec.holes.map((hole) => hole.x));
+    const top = Math.min(...spec.holes.map((hole) => hole.y));
+    const right = Math.max(...spec.holes.map((hole) => hole.x + hole.width));
+    const bottom = Math.max(...spec.holes.map((hole) => hole.y + hole.height));
+    return { x: left, y: top, width: right - left, height: bottom - top };
+}
 
 const WINDOW_STORAGE_KEY = "games.emu.window";
 // 机壳开关也是本地偏好（纯观赏层，不随账号走），下次进有对应机壳的游戏沿用上次的选择
@@ -316,6 +335,9 @@ const shooting = ref(false);
 const shotDialogVisible = ref(false);
 const shotPreviewUrl = ref("");
 const shotSizeText = ref("");
+// 这张截图的真实像素尺寸：确认框按它决定预览框是横版还是竖版（NDS 双屏）
+const shotWidth = ref(0);
+const shotHeight = ref(0);
 const isFullscreen = ref(false);
 // 无用户手势（刷新/直链进入）时先展示「开始游戏」，由一次点击后再启动引擎
 const needsGesture = ref(false);
@@ -427,12 +449,12 @@ const supportsShell = computed(() => Boolean(shell.value));
 const shellOn = computed(() => supportsShell.value && shellVisible.value);
 
 /**
- * 机壳在屏幕上的尺寸与位置：**洞宽 = 画面宽**定出比例，整张图按它放大，
- * 再按图里洞的偏移把整图挪到画面左上角，于是洞正好盖住画面。
+ * 机壳在屏幕上的尺寸与位置：**外接矩形宽 = 画面宽**定出比例，整张图按它放大，
+ * 再按外接矩形的偏移把整图挪到画面左上角，于是洞正好盖住画面。
  *
- * 洞本身的比例与舞台一致（GBA 3:2、FC 的电视机壳做成 8:7），所以只要舞台按引擎上报的
- * aspect 摆放，洞的上下左右会同时严丝合缝地对齐画面；画面一小（换倍率、缩窗口、全屏）
- * 这里就跟着重算，所以任何画面尺寸都适配。
+ * 外接矩形的比例与舞台一致（GBA 3:2、FC 的电视机壳做成 8:7、NDS 双屏 256:438），所以只要
+ * 舞台按引擎上报的 aspect 摆放，洞的上下左右会同时严丝合缝地对齐画面；画面一小（换倍率、
+ * 缩窗口、全屏）这里就跟着重算，所以任何画面尺寸都适配。
  *
  * 机壳比浏览器窗口大就照大——同比放大、超出视口的部分看不见，不做裁剪也不弹提示。
  */
@@ -443,10 +465,11 @@ const shellStyle = computed(() => {
     if (!shellOn.value || !spec || !stage?.width || !rect) {
         return null;
     }
-    const scale = stage.width / spec.hole.width;
+    const bounds = shellBounds(spec);
+    const scale = stage.width / bounds.width;
     return {
-        left: `${rect.left - spec.hole.x * scale}px`,
-        top: `${rect.top - spec.hole.y * scale}px`,
+        left: `${rect.left - bounds.x * scale}px`,
+        top: `${rect.top - bounds.y * scale}px`,
         width: `${spec.image.width * scale}px`,
         height: `${spec.image.height * scale}px`,
     };
@@ -567,13 +590,15 @@ function fitInArea(areaWidth, areaHeight) {
     const spec = shellOn.value ? shell.value : null;
     if (spec) {
         // 开了机壳时，要塞进可用空间的是**整张机壳**而不是画面：机壳比例固定（就是图的比例），
-        // 由它反推出中间的洞该多大，舞台取洞的尺寸。否则按画面算出来的舞台会让机壳顶着屏幕边缘溢出。
+        // 由它反推出洞的外接矩形该多大，舞台取外接矩形的尺寸。否则按画面算出来的舞台会让
+        // 机壳顶着屏幕边缘溢出。NDS 是两个洞 + 铰链带，取外接矩形才能把整块双屏放进窗口。
         const shellRatio = spec.image.width / spec.image.height;
         const shellHeight = Math.min(areaHeight, areaWidth / shellRatio);
         const scale = shellHeight / spec.image.height;
+        const bounds = shellBounds(spec);
         return {
-            width: Math.max(1, Math.floor(spec.hole.width * scale)),
-            height: Math.max(1, Math.floor(spec.hole.height * scale)),
+            width: Math.max(1, Math.floor(bounds.width * scale)),
+            height: Math.max(1, Math.floor(bounds.height * scale)),
         };
     }
     const height = Math.min(areaHeight, areaWidth / aspect);
@@ -685,10 +710,33 @@ function prefetchCloudSettings(gameType) {
  * 把云端配置写进引擎要读的那个键。必须赶在 iframe 设 src 之前完成——
  * 引擎只在启动流程里读一次设置，之后再写不会被采纳。
  */
-async function applyCloudSettings() {
+async function applyCloudSettings(gameType) {
     const remote = settingsPrefetch ? await settingsPrefetch : null;
     if (remote?.settings) {
-        writeEngineSettings(engineSettingsKeyValue, remote.settings);
+        // NDS 的双屏布局固定，云端旧值不能盖掉宿主页的默认值
+        const settings = gameType === "nds"
+            ? stripNdsDisplayOptions(remote.settings)
+            : remote.settings;
+        writeEngineSettings(engineSettingsKeyValue, settings);
+    }
+}
+
+/**
+ * NDS：本机 localStorage 里已存的设置块同样剔除双屏布局选项后写回。
+ * 云端没有配置时引擎会直接读这份本机值，不剔除就带回旧布局。
+ */
+function sanitizeLocalNdsOptions(gameType) {
+    if (gameType !== "nds" || !engineSettingsKeyValue) {
+        return;
+    }
+    const raw = readEngineSettingsRaw(engineSettingsKeyValue);
+    if (!raw) {
+        return;
+    }
+    try {
+        writeEngineSettings(engineSettingsKeyValue, stripNdsDisplayOptions(JSON.parse(raw)));
+    } catch {
+        // 坏 JSON 交给引擎自己判定，不在这里覆盖
     }
 }
 
@@ -751,6 +799,8 @@ function releaseShot() {
     }
     shotPreviewUrl.value = "";
     shotSizeText.value = "";
+    shotWidth.value = 0;
+    shotHeight.value = 0;
     shotBlob = null;
 }
 
@@ -770,6 +820,8 @@ async function onScreenshot() {
         shotBlob = emuBase64ToBlob(result.base64, "image/png");
         shotPreviewUrl.value = URL.createObjectURL(shotBlob);
         shotSizeText.value = `${result.width} × ${result.height}`;
+        shotWidth.value = Number(result.width) || 0;
+        shotHeight.value = Number(result.height) || 0;
         shotDialogVisible.value = true;
     } catch {
         ElMessage.error("截图失败，请重试。");
@@ -1210,7 +1262,8 @@ async function launchEngine() {
         const item = game.value;
         // 引擎只在启动时读一次设置：先把云端的写进 localStorage，再拉起 iframe
         engineSettingsKeyValue = engineSettingsKey(item.id, meta.value.core, item.name || "");
-        await applyCloudSettings();
+        await applyCloudSettings(item.category);
+        sanitizeLocalNdsOptions(item.category);
         // ROM 直连后端流式接口；带 updated_at 参数，重传本体后可让 EmulatorJS 缓存失效
         const params = new URLSearchParams({
             id: String(item.id),

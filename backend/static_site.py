@@ -45,6 +45,9 @@ _INDEX = "index.html"
 # 免得它落进 SPA 回落——nginx 那边 `try_files $uri $uri/ =404` 是直接 404 的。
 _IMMUTABLE_PREFIXES = ("assets/", "ruffle/", "emulatorjs/")
 _IMMUTABLE_NAMES = tuple(prefix.rstrip("/") for prefix in _IMMUTABLE_PREFIXES)
+# 比 immutable 前缀更具体的 no-cache 前缀：长缓存的前缀下也有「文件名固定、内容随时会被
+# 用户替换」的文件（NDS BIOS 包）。顺序无关，判断时先看这个集合再看 immutable。
+_NO_CACHE_PREFIXES = ("emulatorjs/bios/",)
 # 文件名固定、不带内容哈希，一旦被启发式缓存就会与换名的新产物错配
 _NO_CACHE_FILES = frozenset({_INDEX, "emulator-host.html", "version.txt"})
 
@@ -76,6 +79,7 @@ _MIME_TYPES: dict[str, str] = {
     ".woff2": "font/woff2",
     ".ttf": "font/ttf",
     ".swf": "application/x-shockwave-flash",
+    ".zip": "application/zip",
 }
 _DEFAULT_MIME = "application/octet-stream"
 
@@ -120,10 +124,11 @@ def mount_static_site(app: FastAPI, settings: Settings) -> None:
 def _file_response(path: Path, rel: str) -> FileResponse:
     """带缓存策略的静态响应。显式传 media_type，绕开 mimetypes 对注册表的依赖（第 6 条）。"""
     headers: dict[str, str] = {}
-    if rel.startswith(_IMMUTABLE_PREFIXES):
-        headers["Cache-Control"] = _IMMUTABLE_CACHE
-    elif rel in _NO_CACHE_FILES:
+    # 更具体的 no-cache 前缀必须先判：emulatorjs/bios/ 同时命中下面的 immutable 前缀
+    if rel.startswith(_NO_CACHE_PREFIXES) or rel in _NO_CACHE_FILES:
         headers["Cache-Control"] = _NO_CACHE
+    elif rel.startswith(_IMMUTABLE_PREFIXES):
+        headers["Cache-Control"] = _IMMUTABLE_CACHE
     return FileResponse(
         path,
         media_type=_mime_for(rel),

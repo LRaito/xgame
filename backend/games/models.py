@@ -36,6 +36,7 @@ COVER_TYPES_BY_GAME_TYPE = {
     "flash": ("flash",),
     "gb": ("gb", "gbc"),
     "gba": ("gba",),
+    "nds": ("nds",),
     "nes": ("fc", "nes"),
 }
 # 只用于中文报错文案；与前端 STYLE_META 里各样式的 label 同义
@@ -44,6 +45,7 @@ COVER_TYPE_LABELS = {
     "gb": "GB",
     "gbc": "GBC",
     "gba": "GBA",
+    "nds": "NDS",
     "fc": "FC",
     "nes": "NES",
 }

@@ -6,18 +6,20 @@
 
 本次把 NDS 做成第 8 个可玩机种，目标是与现有主机一致的完整体验：**melonDS 核、固定竖排双屏、BIOS、机壳、美化封面、双屏截图、云存档、Docker/Windows 打包、文档与测试**。
 
+> **实施状态（2026-10-29）：** 除阶段 3「实机标定」外均已落地——代码、Docker/Windows 打包、文档与测试已完成。机壳已换成用户提供的真实素材（1080×1920），并把每块屏幕左右各 8px 补成机身色，使两个洞成为 **840×630 的精确 4:3**；按它的外接矩形把帧缓冲定为 **256×438、gap 54**（不再是本文最初的 256×408 / 24 假设）。BIOS 已由用户提供的 `bios7.bin` / `bios9.bin` / `firmware.bin` 打成 `frontend/public/emulatorjs/bios/nds.zip`。阶段 3 仍需要一盘 `.nds` 在浏览器里实测，确认引擎上报的帧缓冲是否包含 gap；标定结论出来前，`EMU_NATIVE.nds` 与 `SHELLS.nds.holes` 两处的几何必须一起改。
+
 ### 已确定的决策
 
 | 项 | 决策 |
 |---|---|
 | 内核 | 只用 `melonds`（EJS 的 `nds` 默认核） |
 | 屏幕布局 | 固定 `Top/Bottom`，不提供用户切换 |
-| 屏幕间隙 | `melonds_screen_gap = 24`（实现时按实际帧缓冲标定） |
+| 屏幕间隙 | `melonds_screen_gap = 54`（按真实机壳外接矩形 840×1437 反推：256×1437/840 − 384 ≈ 53.94） |
 | BIOS | **前端静态文件**：`frontend/public/emulatorjs/bios/nds.zip`，用户自备、不进 git |
 | 上传上限 | nginx `client_max_body_size` 128m → **512m** |
 | 机壳 | **多洞结构 + 屏幕间隙**，铰链落在两屏之间的黑边上 |
-| 截图 | **整屏双屏截图**（如 256×408），三处预览改为竖版/按比例适配 |
-| 素材 | 先用 Pillow 生成占位框图提交，几何写死并在注释里说明，后续替换真实素材 |
+| 截图 | **整屏双屏截图**（如 256×438），三处预览改为竖版/按比例适配 |
+| 素材 | 机壳已换成真实素材（1080×1920）；卡带底图仍是 Pillow 占位图 |
 
 ### 不做
 
@@ -25,7 +27,7 @@
 - 不做屏幕布局切换 UI（`Left/Right`、单屏等）。
 - 不做 BIOS 上传界面；BIOS 只认静态文件。
 - 不新增截图表字段/接口，不改 NDS 存档格式。
-- 不画真实机壳/卡带美术，只提交占位图。
+- 不画真实机壳/卡带美术：机壳用用户提供的真实素材，卡带底图仍是占位图。
 
 ---
 
@@ -167,7 +169,7 @@ fi
 | BIOS 是否必需 | 临时移走 `nds.zip` 启动 | 预检是硬拦截还是警告 |
 | 实际内核 | Network 过滤 `melonds` | 确认不是 desmume |
 
-**假设值**：`256×408`、`aspect = 256/408 ≈ 0.62745`。若实测不是（例如 gap 不计入、高度 384），以截图 PNG 为准同时改 `EMU_NATIVE.nds`、`SHELLS.nds.holes` 和生成脚本，**不能只改一边**。
+**当前值**：`256×438`、`aspect = 256/438 ≈ 0.58447`（按真实机壳外接矩形 840×1437 反推的 gap 54）。若实测不是（例如 gap 不计入、高度 384），以截图 PNG 为准同时改 `EMU_NATIVE.nds` 与 `SHELLS.nds.holes`，**不能只改一边**。
 
 ---
 
@@ -175,17 +177,19 @@ fi
 
 **素材**
 
-- `frontend/src/assets/shells/nds-shell.png`（Pillow 生成占位图）。
-- 初始几何（与 256×408 对应，整体 2.5 倍）：
+- `frontend/src/assets/shells/nds-shell.png`（**真实机壳素材**，1080×1920）。
+- 几何（与 256×438 对应）：
 
   | 项 | 值 |
   |---|---|
-  | 整图 | `800 × 1220` |
-  | 上洞 | `(80, 100) 640 × 480` |
-  | 下洞 | `(80, 640) 640 × 480` |
-  | 铰链带 | `y = 580..640`，高 60 |
-  | bounds | `(80, 100) 640 × 1020` |
-  | 比例 | `640/1020 = 256/408`；`60/2.5 = 24` |
+  | 整图 | `1080 × 1920` |
+  | 上洞 | `(120, 177) 840 × 630` |
+  | 下洞 | `(120, 984) 840 × 630` |
+  | 铰链带 | `y = 807..984`，高 177 |
+  | bounds | `(120, 177) 840 × 1437` |
+  | 比例 | `840/1437 ≈ 256/438`；gap 54（`256×1437/840 − 384 ≈ 53.94`） |
+
+  洞是全透明的；机身不透明。840×630 是精确 4:3，256×192 的屏幕能完整铺满洞；原素材左右各补了 8px 机身色才从 856 收到 840。
 
   洞必须**全透明**；机身不透明；铰链画在两洞之间。
 
@@ -233,19 +237,21 @@ fi
   nds: {
       label: "NDS",
       url: ndsCartUrl,
-      image: { width: 640, height: 480 },
-      hole: { x: 70, y: 80, width: 500, height: 357 },
-      radius: 10,
+      image: { width: 260, height: 270 },
+      // 贴纸窗：左上/右上/右下是圆角，左下是斜角
+      hole: { x: 33, y: 28, width: 205, height: 197 },
+      radius: { tl: 12, tr: 22, br: 17, bl: 0 },
+      chamfer: { bl: 20 },
   },
   ```
 
 - `STYLE_BY_GAME_TYPE`（`:139`）加 `nds: ["nds"]`。
-- `STYLE_META`（`:153`）加 NDS 条目（`output` 展开 `CART_STYLES.nds.image`；`hint` 写「建议 500 : 357（约 1.40:1）」）。
-- 文件头几何表补一行：`nds-cart.png 640×480 洞口 (70,80) 500×357 圆角 10`。
+- `STYLE_META`（`:153`）加 NDS 条目（`output` 展开 `CART_STYLES.nds.image`；`hint` 写「建议 205 : 197（约 1.04:1）」）。
+- 文件头几何表补一行：`nds-cart.png 260×270 洞口 (33,28) 205×197 圆角 tl 12 / tr 22 / br 17，左下斜角 20`。
 
-**素材**：`frontend/src/assets/carts/nds-cart.png`，640×480 RGBA；洞口区域**填机身色、不透明**（与机壳洞相反），轮廓外透明。
+**素材**：`frontend/src/assets/carts/nds-cart.png`，260×270 RGBA；洞口区域**填机身色、不透明**（与机壳洞相反），轮廓外透明；左下角是斜角，另外三角是圆角。
 
-`coverCompose.js`、`CoverBeautifyDialog.vue`、管理页都按表通用，不需要改。
+`coverCompose.js` 需要给 `roundRectPath()` 加**斜角**支持（`cornerChamfers()`，同一个角有斜角就不再走圆角）；`CoverBeautifyDialog.vue`、管理页仍按表通用。
 
 ---
 
@@ -312,11 +318,7 @@ export function screenshotAspect(gameType) {
 
 **占位素材**
 
-- 新增 `scripts/make_nds_placeholders.py`（Pillow 12 可用），提交脚本与两张 PNG：
-  - `frontend/src/assets/shells/nds-shell.png`：800×1220，圆角机身、两个 640×480 全透明洞、60px 铰链带，可加简单按钮/扬声器装饰。
-  - `frontend/src/assets/carts/nds-cart.png`：640×480，洞口 (70,80) 500×357 填机身色、轮廓外透明，可加顶部缺口。
-- 脚本顶部写死几何常量，并断言 `640/1020 == 256/408`、`60/2.5 == 24`、`500/357 ≈ 1.4`。
-- docstring 写明：**替换真实素材后不要再跑脚本**，否则会覆盖。
+- 占位素材生成脚本已在真实机壳替换后删除；`frontend/src/assets/carts/nds-cart.png` 已换成真实卡带清空贴纸窗后的底图（260×270，洞口 (33,28) 205×197，圆角 tl 12 / tr 22 / br 17，左下斜角 20）。
 
 **文档同步**
 
@@ -380,8 +382,8 @@ export function stripNdsDisplayOptions(value) { ... }  // 返回新对象，不�
 
 | 素材 | 整图 | 洞 | 备注 |
 |---|---|---|---|
-| `nds-shell.png` | 800×1220 | 上 `(80,100) 640×480`；下 `(80,640) 640×480` | 洞全透明；铰链带 60px；换图必须同步 `SHELLS.nds` 与 `EMU_NATIVE.nds` |
-| `nds-cart.png` | 640×480 | `(70,80) 500×357`，圆角 10 | 洞口填机身色、不透明；换图必须同步 `CART_STYLES.nds` |
+| `nds-shell.png` | 1080×1920 | 上 `(120,177) 840×630`；下 `(120,984) 840×630` | 真实素材；洞全透明且精确 4:3；铰链带 177px；换图必须同步 `SHELLS.nds` 与 `EMU_NATIVE.nds` |
+| `nds-cart.png` | 260×270 | `(33,28) 205×197`，圆角 tl 12 / tr 22 / br 17，左下斜角 20 | 洞口填机身色、不透明；换图必须同步 `CART_STYLES.nds` |
 
 ---
 
@@ -456,7 +458,6 @@ export function stripNdsDisplayOptions(value) { ... }  // 返回新对象，不�
 - `frontend/scripts/fetch-emulatorjs.mjs`
 - `frontend/nginx.conf.template`
 - `packaging/windows/build-win-dist.sh`
-- `scripts/make_nds_placeholders.py`（新增）
 - 测试：`tests/test_games.py`、`tests/test_game_emulator_settings.py`、`tests/test_static_site.py`
 
 ---
@@ -465,12 +466,12 @@ export function stripNdsDisplayOptions(value) { ... }  // 返回新对象，不�
 
 以下事项无法只靠仓库静态确认，实施时按顺序记录结论；有结论后回填本文件并修正相关常量。
 
-1. **gap 是否计入帧缓冲**：`melonds_screen_gap = 24` 后，`__ejsRpc.videoInfo()` 的高度是 408 还是 384；截图 PNG 的真实宽高是多少。以实测为准同时改 `EMU_NATIVE.nds`、`SHELLS.nds.holes` 与生成脚本。
-2. **核心选项键名与取值**：EJS 4.2.3 里 `melonds_screen_layout` / `melonds_screen_gap` 是否就是设置块里的键名，`Top/Bottom` 与 `24` 是否被接受；`setVariable` 修改后是否需要重启内核才生效。
+1. **gap 是否计入帧缓冲**：`melonds_screen_gap = 54` 后，`__ejsRpc.videoInfo()` 的高度是 438 还是 384；截图 PNG 的真实宽高是多少。以实测为准同时改 `EMU_NATIVE.nds` 与 `SHELLS.nds.holes`。
+2. **核心选项键名与取值**：EJS 4.2.3 里 `melonds_screen_layout` / `melonds_screen_gap` 是否就是设置块里的键名，`Top/Bottom` 与 `54` 是否被接受；`setVariable` 修改后是否需要重启内核才生效。
 3. **BIOS 是否真的必需**：移走 `nds.zip` 后 melonDS 是否回退 FreeBIOS。若可回退，把启动预检从硬拦截改为警告。
 4. **BIOS zip 结构**：三个文件必须在 zip 根目录；EJS 的 `downloadBios()` 解压后写入虚拟 FS 根目录。若引擎报找不到，检查压缩包层级与文件名。
 5. **即时存档大小**：`capture().size` 实测是否落在 19–32MB；64MB 上限是否足够。若超过，调高 `_SAVE_MAX_FILE_SIZE` 并确认 512m 网关余量。
 6. **双屏截图范围**：`__ejsRpc.screenshot()` 是否同时截到上下两屏，还是只截上屏；若只截上屏，改用 canvas 路径并在宿主页组合画布。
 7. **设置块结构**：云端/本机设置里的核心选项是否确实位于 `settings` 对象下（`{controlSettings, settings, cheats}`）。`stripNdsDisplayOptions()` 按此实现；若层级不同，先改实现再联调。
 8. **512m 上传**：nginx 会把大请求体缓冲到临时文件，需实测磁盘空间与上传耗时；Windows 包的 `request_limit.py` 默认已是 512MB，不需要改。
-9. **真实素材替换**：替换 `nds-shell.png` / `nds-cart.png` 后，必须同步 `SHELLS.nds`、`EMU_NATIVE.nds`、`CART_STYLES.nds` 与 `scripts/make_nds_placeholders.py` 的几何；替换后不要再运行生成脚本，否则会覆盖。
+9. **真实素材替换**：机壳与卡带都已替换为真实素材（卡带的贴纸窗已清空、补成机身色）。再换图必须同步 `SHELLS.nds`、`EMU_NATIVE.nds` 与 `CART_STYLES.nds` 的几何。

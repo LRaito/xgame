@@ -51,7 +51,7 @@ GAME_TYPE_H5 = "h5"
 #
 # **机种那部分从 `backend/games/platforms.py` 的机种词表派生**（id 就是 EJS 的 system key，
 # 也就是 game_type 的值），所以「哪些机种能上传」只需要改那张表——但 `extensions` 非空的
-# 机种才会出现在这里：词表里还有 29 个 EJS 支持、本项目还没打包 core 的机种（n64/psx/nds…），
+# 机种才会出现在这里：词表里还有 28 个 EJS 支持、本项目还没打包 core 的机种（n64/psx…），
 # 它们只用来给游戏发现的外部名录「对上号」，不开放上传。
 #
 # flash 与 h5 **不是机种**（是载体类型），所以不来自词表、写在这里，永远排在最前。
@@ -104,7 +104,7 @@ _IMPORT_CARTRIDGE_PREFIX = "F-"
 # 同一个游戏同时只保留一种，上传一种会删掉另一种。
 GUIDE_KIND_ZIP = "zip"
 GUIDE_KIND_PDF = "pdf"
-# PDF 与 ZIP 共用 nginx `client_max_body_size`（128m）这条网关上限。
+# PDF 与 ZIP 一样是应用层 128MB 上限（网关已放宽到 512m，给 NDS 本体留余量）。
 GUIDE_PDF_MAX_SIZE = 128 * 1024 * 1024
 _GUIDE_PDF_MAGIC = b"%PDF-"
 # PDF 规范允许 `%PDF-` 前有少量垃圾字节，按 1024 字节内出现即认可。

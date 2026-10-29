@@ -94,6 +94,14 @@ test -s "$REPO/frontend/dist/version.txt" || {
 }
 mkdir -p "$PKG/web"
 cp -a "$REPO/frontend/dist/." "$PKG/web/"
+# NDS BIOS 是用户自备的静态包，不在 dist 里（构建环境的预置资产也没有它）：
+# 有就带进包，没有就让 NDS 在启动预检时提示缺 BIOS。
+if [ -d "$REPO/frontend/public/emulatorjs/bios" ]; then
+    mkdir -p "$PKG/web/emulatorjs/bios"
+    cp -a "$REPO/frontend/public/emulatorjs/bios/." "$PKG/web/emulatorjs/bios/"
+else
+    say "提示：宿主机没有 NDS BIOS 包，Windows 包的 NDS 会提示缺少 BIOS。"
+fi
 say "前端产物：$(du -sh "$PKG/web" | cut -f1)，版本 $(cat "$PKG/web/version.txt")"
 
 # ---------- 2. Windows 版 Python ----------

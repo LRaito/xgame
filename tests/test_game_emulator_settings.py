@@ -42,6 +42,18 @@ def test_settings_roundtrip(logged_in):
     assert fetched.json()["data"]["settings"] == settings
 
 
+def test_settings_roundtrip_nds(logged_in):
+    """NDS 与其它主机一样按平台存整套设置（键位/选项/金手指）。"""
+    settings = sample_settings()
+    saved = logged_in.put(URL, json={"game_type": "nds", "settings": settings})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["data"]["settings"] == settings
+
+    fetched = logged_in.get(URL, params={"game_type": "nds"})
+    assert fetched.status_code == 200
+    assert fetched.json()["data"]["settings"] == settings
+
+
 def test_settings_save_overwrites_same_row(logged_in, app):
     logged_in.put(URL, json={"game_type": "gba", "settings": sample_settings()})
     changed = sample_settings()

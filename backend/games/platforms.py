@@ -15,10 +15,10 @@ EJS 4.2.3 的 `EmulatorJS.getCores()`
 
 1. **`id` 就是 `game_type` 的值**（对已收录可玩的机种而言），所以磁盘目录名、库里已有的
    `games.game_type`、EJS 的 `EJS_core` 天然一致，改这张表**不会**挪动任何文件。
-2. **`label` 是三处共用的显示名**（中文，厂商 + 型号），前端 `constants/gameTypes.js` 里那 7 个
+2. **`label` 是三处共用的显示名**（中文，厂商 + 型号），前端 `constants/gameTypes.js` 里那 8 个
    可玩机种的 label 是它的镜像，`tests/test_platforms.py` 钉住两边逐字一致。
-3. **`extensions` 非空才代表本项目已收录、可上传可玩**——只有 7 个机种有；其余机种（含 EJS 支持
-   但本项目还没打包 core 的 n64/psx/nds 等）只用来给外部名录「对上号」，不开放上传。
+3. **`extensions` 非空才代表本项目已收录、可上传可玩**——只有 8 个机种有；其余机种（含 EJS 支持
+   但本项目还没打包 core 的 n64/psx 等）只用来给外部名录「对上号」，不开放上传。
 
 `flash` / `h5` **不是机种**（它们是载体类型：Ruffle 播的 SWF 与上传 ZIP 解包的网页游戏），
 所以不在这张表里，它们的 `game_type` 与显示名仍由 `service.py` 自己管。
@@ -46,9 +46,9 @@ class Platform:
 # 顺序即下拉展示顺序：按厂商分组。
 #
 # **这一列的顺序是有约束的**：`service.GAME_TYPES` 直接从 `playable_platforms()` 派生，
-# 所以可玩机种在表里的先后 = 管理页下拉与游戏中心分组的先后。前七个可玩机种刻意保持
-# 项目既有顺序（`nes` `snes` `gb` `gba` `segaMD` `segaGG` `segaMS`，世嘉那三个 GG 在 SMS 前），
-# 免得这次统一顺手把界面顺序也改了。
+# 所以可玩机种在表里的先后 = 管理页下拉与游戏中心分组的先后。可玩机种刻意保持
+# 项目既有顺序（`nes` `snes` `gb` `gba` `nds` `segaMD` `segaGG` `segaMS`，世嘉那三个 GG 在 SMS 前），
+# NDS 插在 GBA 之后，免得这次统一顺手把界面顺序也改了。
 #
 # **加机种只改这里**：id 必须是 EJS 的 system key，cores 照抄 EJS，别名要覆盖外部名录的写法。
 PLATFORMS: tuple[Platform, ...] = (
@@ -96,6 +96,9 @@ PLATFORMS: tuple[Platform, ...] = (
         label="任天堂 NDS",
         cores=("melonds", "desmume", "desmume2015"),
         aliases=("任天堂NDS", "NDS", "DS"),
+        # 只打包 melonds 核（EJS 的 nds 默认核），desmume / desmume2015 不在资产清单里
+        extensions=(".nds",),
+        default_extension=".nds",
     ),
     Platform(
         id="vb",

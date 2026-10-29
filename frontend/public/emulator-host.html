@@ -93,6 +93,15 @@
             // 显示比例（父页面「窗口」选择器里选的那一列）：wide = 4:3，其余 = 像素完美 PP
             const wide = params.get("ratio") === "wide";
 
+            // NDS BIOS：用户自备的静态包（zip 根目录放 bios7.bin / bios9.bin / firmware.bin），
+            // 不进 git；/emulatorjs/ 整体 immutable，bios/ 单独 no-cache（见 nginx 与 static_site.py）。
+            const NDS_BIOS_URL = "/emulatorjs/bios/nds.zip";
+            // 双屏固定竖排，两屏之间留 54px 黑边（按真实机壳的外接矩形 840×1437 反推，
+            // 与 256×438 的帧缓冲对齐）。这里只是启动前的默认值；用户云端保存的旧设置会
+            // 覆盖它，所以父页面写设置前会剔除这两个键
+            // （见 frontend/src/utils/emulatorSettings.js 的 stripNdsDisplayOptions）。
+            const NDS_LAYOUT = { layout: "Top/Bottom", gap: "54" };
+
             const statusEl = document.getElementById("status");
 
             function showError(message) {
@@ -597,9 +606,28 @@
                     window.EJS_defaultOptions.fceumm_overscan_v_top = wide ? "0" : "8";
                     window.EJS_defaultOptions.fceumm_overscan_v_bottom = wide ? "0" : "8";
                 }
+                // NDS（melonDS）：BIOS 由引擎解压到虚拟文件系统；双屏固定竖排 + 54px 间隙。
+                // 布局不提供用户切换，父页面也会在写云端设置前剔除这两个键，保证这里一定生效。
+                if (core === "nds") {
+                    window.EJS_biosUrl = NDS_BIOS_URL;
+                    window.EJS_defaultOptions.melonds_screen_layout = NDS_LAYOUT.layout;
+                    window.EJS_defaultOptions.melonds_screen_gap = NDS_LAYOUT.gap;
+                }
                 // 引擎开始运行后标记就绪，并接管底部控制条显隐
                 window.EJS_onGameStart = () => {
                     window.__ejsReady = true;
+                    // 兜底：引擎自己写回的旧值若把布局带偏，就在这次启动后再强制一次。
+                    // 个别内核没有 setVariable，或这一项要重启才生效——失败了也不能挡住
+                    // 后面的 initControlBar，所以整段包在 try 里。
+                    if (core === "nds") {
+                        try {
+                            const manager = window.EJS_emulator?.gameManager;
+                            manager?.setVariable?.("melonds_screen_layout", NDS_LAYOUT.layout);
+                            manager?.setVariable?.("melonds_screen_gap", NDS_LAYOUT.gap);
+                        } catch {
+                            // 以启动前的 EJS_defaultOptions 为准
+                        }
+                    }
                     initControlBar();
                 };
 
@@ -612,17 +640,36 @@
                 document.body.appendChild(script);
             }
 
-            // 引擎就绪检查；缺失时给出可执行的修复提示而非白屏
-            fetch("/emulatorjs/data/loader.js", { method: "HEAD" })
-                .then((response) => {
-                    if (!response.ok) {
-                        throw new Error("loader missing");
+            // 引擎与（NDS 的）BIOS 就绪检查；缺失时给出可执行的修复提示而非白屏
+            async function preflight() {
+                const loaderOk = await fetch("/emulatorjs/data/loader.js", { method: "HEAD" })
+                    .then((response) => response.ok)
+                    .catch(() => false);
+                if (!loaderOk) {
+                    showError("模拟器引擎缺失：请先运行 npm run fetch:emulatorjs（Docker 镜像会自动拉取）后重试。");
+                    return false;
+                }
+                if (core === "nds") {
+                    const biosOk = await fetch(NDS_BIOS_URL, { method: "HEAD" })
+                        .then((response) => response.ok)
+                        .catch(() => false);
+                    if (!biosOk) {
+                        showError(
+                            "NDS BIOS 缺失：请把 bios7.bin、bios9.bin、firmware.bin 打包成 nds.zip，" +
+                                "放到 frontend/public/emulatorjs/bios/（Docker 需重建 web 镜像；" +
+                                "Windows 包放到 web/emulatorjs/bios/）后重试。",
+                        );
+                        return false;
                     }
+                }
+                return true;
+            }
+
+            preflight().then((ready) => {
+                if (ready) {
                     start();
-                })
-                .catch(() =>
-                    showError("模拟器引擎缺失：请先运行 npm run fetch:emulatorjs（Docker 镜像会自动拉取）后重试。"),
-                );
+                }
+            });
         })();
     </script>
 </body>

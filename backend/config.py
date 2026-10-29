@@ -105,8 +105,7 @@ class Settings(BaseSettings):
 
     # 请求体上限，替代 nginx 的 client_max_body_size（撤掉 nginx 后没有任何全局闸门：
     # Starlette 的 max_part_size 只管非文件字段，文件部分是不设上限的）。
-    # 默认取得比 nginx 的 128MB 宽松，是为了让「攻略 256MB 总量」这个应用层上限真正可达——
-    # nginx 那条 128m 本来就和它对不上。Docker 路线上 nginx 先拦，这个值只是兜底。
+    # 与 nginx 的 512m 对齐（NDS 本体可达数百 MB）；Docker 路线上 nginx 先拦，这里只是兜底。
     MAX_REQUEST_BODY_BYTES: int = 512 * 1024 * 1024
 
     @property

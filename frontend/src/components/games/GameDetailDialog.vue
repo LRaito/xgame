@@ -14,6 +14,7 @@
                 :cover-alt="detail.name"
                 :gallery="galleryImages"
                 :screenshots="screenshots"
+                :screenshot-aspect="detailAspect"
             />
             <dl>
                 <div><dt>名称</dt><dd>{{ detail.name }}</dd></div>
@@ -113,12 +114,13 @@
     <screenshot-manager-dialog
         v-model="screenshotManagerVisible"
         :game-id="props.gameId"
+        :frame-aspect="detailAspect"
         @changed="reloadScreenshots"
     />
 </template>
 
 <script setup>
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import {
     coverDownloadPath,
@@ -129,6 +131,7 @@ import {
     uploadScreenshotAPI,
 } from "@/api/games";
 import { coverTypeLabel } from "@/constants/coverStyles";
+import { screenshotAspect } from "@/constants/emulatorScreens";
 import { gameTypeLabel as typeLabel } from "@/constants/gameTypes";
 import AppDialog from "@components/common/AppDialog.vue";
 import GameScreenshotGallery from "@components/games/GameScreenshotGallery.vue";
@@ -148,6 +151,8 @@ const props = defineProps({
 const emit = defineEmits(["update:modelValue"]);
 
 const detail = ref(null);
+// 截图格子的宽高比：NDS 双屏是竖版；详情还没到或未知类型按 1:1
+const detailAspect = computed(() => screenshotAspect(detail.value?.game_type));
 
 // 本人该游戏的截图与共享图集（图片栏用；封面是共享的，走 gameCoverUrl）
 const screenshots = ref([]);
