@@ -55,6 +55,10 @@
                 :native-size="baseNativeSize"
                 :aspect="stageAspect"
                 :wide="wideMode"
+                :modes="ndsModeColumns"
+                :mode-scales="ndsModeScales"
+                :active-mode="ndsScreenMode"
+                @pick-mode="onPickNdsWindowMode"
             />
             <!-- 有洞对齐图的平台（GBA、FC、GBC、NDS）：把机壳图盖在画面上，洞正好露出游戏画面 -->
             <app-button
@@ -91,7 +95,13 @@
         >
             <!-- 舞台按所选窗口模式定宽高；EmulatorJS 引擎铺满 iframe 画布，
                 因此舞台长宽比需与平台原始分辨率一致，否则画面会被拉伸变形。 -->
-            <div v-if="iframeSrc" ref="stageEl" class="emulator-player__stage" :style="stageStyle">
+            <div
+                v-if="iframeSrc"
+                ref="stageEl"
+                class="emulator-player__stage"
+                :class="{ 'emulator-player__stage--nds': isNds }"
+                :style="stageStyle"
+            >
                 <iframe
                     ref="frameRef"
                     class="emulator-player__frame"
@@ -103,15 +113,24 @@
                     @load="onFrameLoad"
                 />
                 <!-- 机壳盖在游戏画面上：洞外的部分是外壳本体，正好落在画面之外，
-                     所以它不会挡住引擎自己的任何 UI；pointer-events: none 保证仍然能玩 -->
-                <img
-                    v-if="shellStyle"
-                    class="emulator-player__shell"
-                    :style="shellStyle"
-                    :src="shell.url"
-                    alt=""
-                    draggable="false"
-                />
+                     所以它不会挡住引擎自己的任何 UI；pointer-events: none 保证仍然能玩。
+                     NDS 例外：iframe 被抬到机壳之上、只把画布的两块屏幕遮出来（见样式与
+                     emulator-host.html），这样引擎的设置弹框跨过铰链时显示在机壳上面。
+                     每块机壳用外层 div（overflow:hidden）+ 内层 img 裁出 part 的 crop 区域。 -->
+                <div
+                    v-for="part in shellLayers"
+                    :key="part.key"
+                    class="emulator-player__shell-part"
+                    :style="part.layerStyle"
+                >
+                    <img
+                        class="emulator-player__shell-image"
+                        :style="part.imageStyle"
+                        :src="part.src"
+                        alt=""
+                        draggable="false"
+                    />
+                </div>
             </div>
             <div v-else-if="!loading" class="emulator-player__empty">
                 <app-empty :description="errorText || '未找到该游戏'" />
@@ -154,7 +173,7 @@ import {
     uploadCloudSaveAPI,
     uploadScreenshotAPI,
 } from "@/api/games";
-import { EMU_NATIVE } from "@/constants/emulatorScreens";
+import { EMU_NATIVE, NDS_NATIVE, NDS_SCREEN_MODES } from "@/constants/emulatorScreens";
 import { gameTypeMeta } from "@/constants/gameTypes";
 import {
     EMU_SAVE_FILENAME,
@@ -227,15 +246,52 @@ const SHELLS = {
             holes: [{ x: 423, y: 338, width: 1285, height: 1156.5 }],
         },
     },
+    // NDS 有三种屏幕布局（- / = 循环，见 NDS_NATIVE / ndsScreenMode），机壳跟着换：
+    //   dual = 现状（上下两屏 + 中间铰链带，两洞都在）；
+    //   top  = 只显示上屏：只取机壳上半部分（y 0..807，铰链及以下全部不要）；
+    //   side = 左右双屏：上半与下半各一块，左右紧靠（x=1080 处相接），B 往下 177px
+    //          让两洞顶部对齐；铰链带（y 807..984）完全不出现在任何一块里。
+    // 每块都用 parts 的 crop/offset 描述：
+    //   crop  = 原图里要显示的那块矩形；offset = 这块的左上角在合成坐标系里的位置。
+    // 合成坐标系（canvas）只用于「适应窗口」时把整张机壳塞进可用区域；holes 写在合成坐标里。
     nds: {
-        pp: {
-            url: ndsShellUrl,
-            image: { width: 1080, height: 1920 },
-            // 上洞底边 807、下洞顶边 984：中间 177px 正好是铰链带；840×630 = 精确 4:3
-            holes: [
-                { x: 120, y: 177, width: 840, height: 630 },
-                { x: 120, y: 984, width: 840, height: 630 },
-            ],
+        modes: {
+            dual: {
+                url: ndsShellUrl,
+                image: { width: 1080, height: 1920 },
+                canvas: { width: 1080, height: 1920 },
+                // 上洞底边 807、下洞顶边 984：中间 177px 正好是铰链带；840×630 = 精确 4:3
+                holes: [
+                    { x: 120, y: 177, width: 840, height: 630 },
+                    { x: 120, y: 984, width: 840, height: 630 },
+                ],
+                parts: [
+                    { crop: { x: 0, y: 0, width: 1080, height: 1920 }, offset: { x: 0, y: 0 } },
+                ],
+            },
+            top: {
+                url: ndsShellUrl,
+                image: { width: 1080, height: 1920 },
+                canvas: { width: 1080, height: 807 },
+                holes: [{ x: 120, y: 177, width: 840, height: 630 }],
+                parts: [
+                    { crop: { x: 0, y: 0, width: 1080, height: 807 }, offset: { x: 0, y: 0 } },
+                ],
+            },
+            side: {
+                url: ndsShellUrl,
+                image: { width: 1080, height: 1920 },
+                canvas: { width: 2160, height: 1113 },
+                // 两洞水平间距 240px（左右各 120px 机身），对应 585 宽的帧缓冲里的 73px 间隙
+                holes: [
+                    { x: 120, y: 177, width: 840, height: 630 },
+                    { x: 1200, y: 177, width: 840, height: 630 },
+                ],
+                parts: [
+                    { crop: { x: 0, y: 0, width: 1080, height: 807 }, offset: { x: 0, y: 0 } },
+                    { crop: { x: 0, y: 984, width: 1080, height: 936 }, offset: { x: 1080, y: 177 } },
+                ],
+            },
         },
     },
     nes: {
@@ -270,6 +326,10 @@ function shellBounds(spec) {
 const WINDOW_STORAGE_KEY = "games.emu.window";
 // 机壳开关也是本地偏好（纯观赏层，不随账号走），下次进有对应机壳的游戏沿用上次的选择
 const SHELL_STORAGE_KEY = "games.emu.shell";
+// NDS 屏幕布局（dual / top / side）同样是本地偏好，- / = 切换后记住
+const NDS_SCREEN_STORAGE_KEY = "games.emu.nds.screen";
+// NDS 三种布局各自的窗口倍率（互相独立）：{ dual: "fit"|"1.5"|…, top: …, side: … }
+const NDS_WINDOW_STORAGE_KEY = "games.emu.nds.window";
 
 // 显示比例模式（窗口选择器里那一列）：pp = 像素完美（1:1 方像素，画面比例 = 帧缓冲比例）；
 // wide = 4:3（真机 CRT 观感，把画面横向拉宽填满 4:3）。只有 FC 两种都提供
@@ -315,6 +375,48 @@ function loadStoredShell() {
     }
 }
 
+function loadStoredNdsScreen() {
+    try {
+        const value = localStorage.getItem(NDS_SCREEN_STORAGE_KEY);
+        return NDS_SCREEN_MODES.includes(value) ? value : "dual";
+    } catch {
+        return "dual";
+    }
+}
+
+function persistNdsScreenMode(mode) {
+    try {
+        localStorage.setItem(NDS_SCREEN_STORAGE_KEY, mode);
+    } catch {
+        // 隐私模式等写失败场景忽略即可
+    }
+}
+
+/** 三种布局各自的倍率；缺省/非法值一律回落到「适应窗口」。 */
+function loadStoredNdsWindowScales() {
+    const defaults = { dual: "fit", top: "fit", side: "fit" };
+    try {
+        const raw = JSON.parse(localStorage.getItem(NDS_WINDOW_STORAGE_KEY) || "{}");
+        for (const mode of NDS_SCREEN_MODES) {
+            const value = raw?.[mode];
+            if (value === "fit" || (value !== undefined && Number(value) > 0)) {
+                defaults[mode] = String(value);
+            }
+        }
+    } catch {
+        // 坏 JSON / 无痕模式：用默认值
+    }
+    return defaults;
+}
+
+function persistNdsWindowScales(value) {
+    try {
+        localStorage.setItem(NDS_WINDOW_STORAGE_KEY, JSON.stringify(value));
+    } catch {
+        // 隐私模式等写失败场景忽略即可
+    }
+}
+
 const route = useRoute();
 const router = useRouter();
 
@@ -345,6 +447,12 @@ const windowMode = ref(loadStoredWindow());
 const stageSize = ref(null);
 // 是否盖上机壳：本地记住的偏好，进游戏时按它恢复
 const shellVisible = ref(loadStoredShell());
+// NDS 屏幕布局（dual / top / side）：- / = 循环切换，本地记住；
+// switchingNdsMode 挡住切换过程中重复按键
+const ndsScreenMode = ref(loadStoredNdsScreen());
+const switchingNdsMode = ref(false);
+// NDS 三种布局各自的窗口倍率（互相独立，见窗口选择器的三列矩阵）
+const ndsModeScales = ref(loadStoredNdsWindowScales());
 // 是否处于持续加速（引擎自己的 Fast Forward 设置项）。真相在引擎里，这里只是它的镜像：
 // 进游戏时按引擎读到的值点亮，用户在引擎设置菜单里改过也会在下一秒跟上
 const fastForwardOn = ref(false);
@@ -380,18 +488,42 @@ let frameCursorHidden = false;
 
 const gameTitle = computed(() => game.value?.name || "模拟器游戏");
 const currentGameId = computed(() => (game.value?.id ? Number(game.value.id) : 0));
-// 像素完美那一列的帧缓冲基准（机种固有）
+const isNds = computed(() => game.value?.category === "nds");
+// 像素完美那一列的帧缓冲基准（机种固有；NDS 按当前屏幕布局取）
 const baseNativeSize = computed(() => {
     if (!game.value) {
         return null;
+    }
+    if (game.value.category === "nds") {
+        return NDS_NATIVE[ndsScreenMode.value] || NDS_NATIVE.dual;
     }
     return EMU_NATIVE[game.value.category] || null;
 });
 const platformHint = computed(() =>
     meta.value?.label ? `（${meta.value.label}）` : "",
 );
-// 窗口取值拆成「倍率」与「显示比例」两部分（见 parseWindowValue）
-const windowScale = computed(() => parseWindowValue(windowMode.value).scale);
+// 窗口选择器的 NDS 三列（列 = 屏幕布局，每列独立倍率），顺序与 NDS_SCREEN_MODES 一致。
+// 非 NDS 返回 null，选择器维持原来的「倍率 × 显示比例」矩阵。
+const ndsModeColumns = computed(() => {
+    if (!isNds.value) {
+        return null;
+    }
+    return [
+        { id: "dual", label: "双屏", native: NDS_NATIVE.dual },
+        { id: "top", label: "单屏", native: NDS_NATIVE.top },
+        { id: "side", label: "左右", native: NDS_NATIVE.side },
+    ];
+});
+// 窗口取值拆成「倍率」与「显示比例」两部分（见 parseWindowValue）。
+// NDS 例外：倍率按**当前屏幕布局**从三份独立设置里取（窗口选择器的三列矩阵），
+// 显示比例仍只有 pp（NDS 没有 4:3 那一列）。
+const windowScale = computed(() => {
+    if (isNds.value) {
+        const value = ndsModeScales.value[ndsScreenMode.value];
+        return value && value !== "" ? String(value) : "fit";
+    }
+    return parseWindowValue(windowMode.value).scale;
+});
 // 该机种是否提供 4:3 那一列（null = 只能像素完美）；给出的是它那套配置
 const wideMode = computed(() => WIDE_MODE[game.value?.category] || null);
 const aspectMode = computed(() => {
@@ -436,10 +568,14 @@ const stageStyle = computed(() => {
 // 机壳只有画过洞对齐图的平台有（其余类型没有这张图）。
 // 每套比例一张素材（FC 是 pp / wide 两套），按当前显示比例取——洞的比例必须与画面一致，
 // 所以切比例时机壳也跟着换图，否则洞会与画面错开。
+// NDS 不再按比例分，而是按屏幕布局（dual / top / side）分三套，见 SHELLS.nds.modes。
 const shell = computed(() => {
     const entry = SHELLS[game.value?.category];
     if (!entry) {
         return null;
+    }
+    if (game.value.category === "nds") {
+        return entry.modes[ndsScreenMode.value] || entry.modes.dual;
     }
     return entry[aspectMode.value] || entry[ASPECT_PP] || null;
 });
@@ -449,30 +585,54 @@ const supportsShell = computed(() => Boolean(shell.value));
 const shellOn = computed(() => supportsShell.value && shellVisible.value);
 
 /**
- * 机壳在屏幕上的尺寸与位置：**外接矩形宽 = 画面宽**定出比例，整张图按它放大，
- * 再按外接矩形的偏移把整图挪到画面左上角，于是洞正好盖住画面。
+ * 机壳的每一块（parts）：**外接矩形（所有 holes 的并集）宽 = 画面宽**定出比例，
+ * 整张图按同一比例放大，再按每块的 crop/offset 摆放；外层 overflow:hidden 把 crop
+ * 之外的部分裁掉。
  *
- * 外接矩形的比例与舞台一致（GBA 3:2、FC 的电视机壳做成 8:7、NDS 双屏 256:438），所以只要
+ * 没有 parts 的机种（GBA/GBC/FC）就是「整图一块」，布局与旧版单个 img 完全一致；
+ * NDS dual 是一块整图、top 只取上半身、side 是上下两半左右紧靠。
+ *
+ * 外接矩形的比例与舞台一致（GBA 3:2、FC 8:7、NDS 256:438 / 4:3 / 585:192），所以只要
  * 舞台按引擎上报的 aspect 摆放，洞的上下左右会同时严丝合缝地对齐画面；画面一小（换倍率、
  * 缩窗口、全屏）这里就跟着重算，所以任何画面尺寸都适配。
  *
- * 机壳比浏览器窗口大就照大——同比放大、超出视口的部分看不见，不做裁剪也不弹提示。
+ * 定位必须用 position: fixed（坐标是视口坐标）：机壳比舞台大得多，absolute 会被
+ * .game-shell__body 的 overflow: auto 裁掉并顶出滚动条。
  */
-const shellStyle = computed(() => {
+const shellLayers = computed(() => {
     const spec = shell.value;
     const stage = stageSize.value;
     const rect = stageRect.value;
     if (!shellOn.value || !spec || !stage?.width || !rect) {
-        return null;
+        return [];
     }
     const bounds = shellBounds(spec);
     const scale = stage.width / bounds.width;
-    return {
-        left: `${rect.left - bounds.x * scale}px`,
-        top: `${rect.top - bounds.y * scale}px`,
-        width: `${spec.image.width * scale}px`,
-        height: `${spec.image.height * scale}px`,
-    };
+    const parts = spec.parts || [
+        {
+            crop: { x: 0, y: 0, width: spec.image.width, height: spec.image.height },
+            offset: { x: 0, y: 0 },
+        },
+    ];
+    return parts.map((part, index) => {
+        const { crop, offset } = part;
+        return {
+            key: index,
+            src: spec.url,
+            layerStyle: {
+                left: `${rect.left + (offset.x - crop.x - bounds.x) * scale}px`,
+                top: `${rect.top + (offset.y - crop.y - bounds.y) * scale}px`,
+                width: `${crop.width * scale}px`,
+                height: `${crop.height * scale}px`,
+            },
+            imageStyle: {
+                left: `${-crop.x * scale}px`,
+                top: `${-crop.y * scale}px`,
+                width: `${spec.image.width * scale}px`,
+                height: `${spec.image.height * scale}px`,
+            },
+        };
+    });
 });
 
 function toggleShell() {
@@ -522,7 +682,9 @@ function refreshEngineReady() {
     }
     // 就绪时（以及之后每隔 1 秒）取一次引擎的显示宽高比：内核加载完才有值，
     // 用户在引擎设置里改了 aspect 也能跟着变；变了就重算舞台。
-    const aspect = readEngineAspect(rpc);
+    // NDS 切换屏幕布局的过程中跳过：这时引擎可能还没换完，先按新模式的比例摆着，
+    // 由 setNdsLayout 返回的真实几何收尾（否则会把旧比例又写回来）。
+    const aspect = switchingNdsMode.value ? null : readEngineAspect(rpc);
     if (aspect && aspect !== engineAspect.value) {
         engineAspect.value = aspect;
         scheduleApplyStage();
@@ -591,10 +753,12 @@ function fitInArea(areaWidth, areaHeight) {
     if (spec) {
         // 开了机壳时，要塞进可用空间的是**整张机壳**而不是画面：机壳比例固定（就是图的比例），
         // 由它反推出洞的外接矩形该多大，舞台取外接矩形的尺寸。否则按画面算出来的舞台会让
-        // 机壳顶着屏幕边缘溢出。NDS 是两个洞 + 铰链带，取外接矩形才能把整块双屏放进窗口。
-        const shellRatio = spec.image.width / spec.image.height;
+        // 机壳顶着屏幕边缘溢出。NDS 的两个洞 + 铰链带取外接矩形；top/side 模式用合成后的
+        // canvas（NDS top 只有上半身、side 是两半左右拼起来，整图尺寸不再是可见范围）。
+        const canvas = spec.canvas || spec.image;
+        const shellRatio = canvas.width / canvas.height;
         const shellHeight = Math.min(areaHeight, areaWidth / shellRatio);
-        const scale = shellHeight / spec.image.height;
+        const scale = shellHeight / canvas.height;
         const bounds = shellBounds(spec);
         return {
             width: Math.max(1, Math.floor(bounds.width * scale)),
@@ -988,6 +1152,136 @@ async function syncCloudNow() {
     }
 }
 
+// ---------- NDS 屏幕布局（- / = 循环） ----------
+
+function isTypingTarget(target) {
+    const tag = String(target?.tagName || "").toUpperCase();
+    return (
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        Boolean(target?.isContentEditable)
+    );
+}
+
+/** 引擎自己的菜单/设置面板/弹层里不抢键（那里有自己的键盘操作）。 */
+function isEngineChromeTarget(target) {
+    return Boolean(
+        target?.closest?.(
+            ".ejs_menu_bar, .ejs_settings_parent, .ejs_popup_container, " +
+                ".ejs_context_menu, .ejs_control_body, .ejs_control_player_bar",
+        ),
+    );
+}
+
+function stepNdsScreenMode(mode, step) {
+    const index = NDS_SCREEN_MODES.indexOf(mode);
+    const length = NDS_SCREEN_MODES.length;
+    return NDS_SCREEN_MODES[(index + step + length) % length];
+}
+
+/**
+ * 点窗口选择器三列里的格子：记下**这一列布局自己的**倍率；点的是别的布局就顺便切过去。
+ * 三种布局的倍率互相独立，切换布局时各用各的。
+ */
+function onPickNdsWindowMode({ mode, scale: value }) {
+    if (!NDS_SCREEN_MODES.includes(mode)) {
+        return;
+    }
+    if (value !== "fit" && !(Number(value) > 0)) {
+        return;
+    }
+    ndsModeScales.value = { ...ndsModeScales.value, [mode]: String(value) };
+    if (mode !== ndsScreenMode.value) {
+        void switchNdsScreenMode(mode);
+        return;
+    }
+    scheduleApplyStage();
+    syncStageRect();
+}
+
+/**
+ * 切换 NDS 屏幕布局。先本地切（舞台/机壳立刻按新比例摆好），再让宿主页改内核变量；
+ * 宿主页会等到引擎真的上报新几何才返回成功，失败就回滚到原来的模式。
+ *
+ * **不自动重启内核**：万一 melonDS 的布局选项要重启才生效，宿主页返回 needsRestart，
+ * 这里只提示、不重建 iframe——重启会丢当前进度。
+ */
+async function switchNdsScreenMode(next) {
+    if (switchingNdsMode.value || !isNds.value || !engineReady.value) {
+        return;
+    }
+    if (!NDS_SCREEN_MODES.includes(next) || next === ndsScreenMode.value) {
+        return;
+    }
+    switchingNdsMode.value = true;
+    const previous = ndsScreenMode.value;
+    ndsScreenMode.value = next;
+    persistNdsScreenMode(next);
+    // 立刻按新模式的比例重排（不等引擎下一秒的轮询；引擎上报后还会再校一次）
+    engineAspect.value = null;
+    scheduleApplyStage();
+    try {
+        const result = await callRpc("setNdsLayout", next);
+        if (!result?.ok) {
+            ndsScreenMode.value = previous;
+            persistNdsScreenMode(previous);
+            engineAspect.value = null;
+            scheduleApplyStage();
+            ElMessage.warning(result?.message || "切换屏幕布局失败。");
+            return;
+        }
+        if (result.videoInfo?.aspect) {
+            engineAspect.value = result.videoInfo.aspect;
+        }
+        scheduleApplyStage();
+        window.setTimeout(() => {
+            refreshEngineReady();
+            syncStageRect();
+        }, 120);
+    } catch {
+        ndsScreenMode.value = previous;
+        persistNdsScreenMode(previous);
+        engineAspect.value = null;
+        scheduleApplyStage();
+        ElMessage.error("切换屏幕布局失败。");
+    } finally {
+        switchingNdsMode.value = false;
+    }
+}
+
+/**
+ * 快捷键 - / =：NDS 屏幕布局循环（- 上一个、= 下一个：dual → top → side → dual）。
+ *
+ * 认的是 **Backspace 左边那两个物理键**（event.code 的 Minus / Equal），不是主键盘
+ * 字符、也不是小键盘（NumpadSubtract / NumpadAdd）：`+` 就是 Shift+=，按不按 Shift
+ * 都算下一个。不带 Ctrl/Alt/Meta 才生效；焦点在输入框、引擎菜单/设置面板里时不抢。
+ */
+function onNdsScreenHotkey(event) {
+    const isPrevious = event.code === "Minus";
+    const isNext = event.code === "Equal";
+    if (!isPrevious && !isNext) {
+        return;
+    }
+    if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) {
+        return;
+    }
+    if (!isNds.value || switchingNdsMode.value) {
+        return;
+    }
+    if (isTypingTarget(event.target) || isEngineChromeTarget(event.target)) {
+        return;
+    }
+    if (!hotkeyUsable(event, () => true)) {
+        return;
+    }
+    event.preventDefault();
+    // 捕获阶段拦下：引擎自己也监听 keydown，这两个键不该同时进游戏
+    event.stopPropagation();
+    const step = isNext ? 1 : -1;
+    void switchNdsScreenMode(stepNdsScreenMode(ndsScreenMode.value, step));
+}
+
 /**
  * 快捷键共用的守卫：连发、焦点在输入框里、引擎未就绪、弹框开着、或这一下对当前状态没意义时不接管。
  */
@@ -1128,6 +1422,7 @@ function bindFrameHotkey() {
     frameWindow.addEventListener("keydown", onLoadLocalHotkey, true);
     frameWindow.addEventListener("keydown", onSyncCloudHotkey, true);
     frameWindow.addEventListener("keydown", onSaveManagerHotkey, true);
+    frameWindow.addEventListener("keydown", onNdsScreenHotkey, true);
 }
 
 function unbindFrameHotkey() {
@@ -1139,6 +1434,7 @@ function unbindFrameHotkey() {
         hotkeyFrameWindow.removeEventListener("keydown", onLoadLocalHotkey, true);
         hotkeyFrameWindow.removeEventListener("keydown", onSyncCloudHotkey, true);
         hotkeyFrameWindow.removeEventListener("keydown", onSaveManagerHotkey, true);
+        hotkeyFrameWindow.removeEventListener("keydown", onNdsScreenHotkey, true);
     } catch {
         // 页面已经换过 iframe / 窗口已销毁，忽略即可
     }
@@ -1273,6 +1569,10 @@ async function launchEngine() {
             // 显示比例：宿主页据此设内核选项（只有 FC 认这个参数），与标题栏窗口选择器里选的那列一致
             ratio: aspectMode.value,
         });
+        // NDS 屏幕布局：宿主页据此在启动前写 melonds_screen_layout / melonds_screen_gap
+        if (item.category === "nds") {
+            params.set("nds", ndsScreenMode.value);
+        }
         iframeSrc.value = `/emulator-host.html?${params.toString()}`;
         reportGamePlayed(item.id);
         startGamePlaytime(item.id);
@@ -1387,6 +1687,9 @@ watch(windowMode, (value) => {
     scheduleApplyStage();
 });
 
+// 生效倍率变了就重排舞台：NDS 的三份独立倍率、切换布局都经由它
+watch(windowScale, () => scheduleApplyStage());
+
 // 切显示比例：立刻按新比例摆舞台（不等下一秒的轮询），并让宿主页把内核选项改掉——
 // 引擎只在启动时读一次设置，所以运行中改只能走这条路；下次进游戏由 iframe 的 ratio 参数兜住。
 watch(aspectMode, (mode) => {
@@ -1405,6 +1708,9 @@ watch(shellVisible, (value) => {
     }
 });
 
+// NDS 三种布局各自的倍率：改了就记下来（点窗口选择器的格子 / 以后扩展都走这里）
+watch(ndsModeScales, (value) => persistNdsWindowScales(value), { deep: true });
+
 // 关掉截图确认框（确认或取消）就把那张预览 URL 收掉，不留内存里的孤儿图
 watch(shotDialogVisible, (visible) => {
     if (!visible) {
@@ -1422,6 +1728,8 @@ onMounted(() => {
     window.addEventListener("keydown", onLoadLocalHotkey);
     window.addEventListener("keydown", onSyncCloudHotkey);
     window.addEventListener("keydown", onSaveManagerHotkey);
+    // 捕获阶段：标题栏/弹框里若有元素停止冒泡，- / = 也要能切布局
+    window.addEventListener("keydown", onNdsScreenHotkey, true);
     loadGame();
 });
 watch(() => route.params.gameId, loadGame);
@@ -1432,6 +1740,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("keydown", onLoadLocalHotkey);
     window.removeEventListener("keydown", onSyncCloudHotkey);
     window.removeEventListener("keydown", onSaveManagerHotkey);
+    window.removeEventListener("keydown", onNdsScreenHotkey, true);
     unbindFrameHotkey();
     unbindFramePointerActivity();
     releaseShot();
@@ -1464,16 +1773,37 @@ onBeforeUnmount(() => {
     margin: auto;
 }
 
-/* 机壳：一张带透明洞的 PNG 盖在 iframe 上，尺寸/位置由 shellStyle 算，
-   洞外的部分落在舞台之外，不遮引擎 UI；pointer-events: none 保证照常能玩。
-   定位必须用 fixed 而不是 absolute：机壳比舞台大得多（宽是画面的两倍），absolute 会被
-   .game-shell__body 的 overflow: auto 裁掉、还会顶出滚动条；fixed 不参与任何滚动容器的
-   溢出计算，也不会被祖先裁剪——放不进浏览器窗口的情况在 JS 里已经直接不画了。
-   z-index 压在标题栏(20)与侧栏(60)之下，盖着机壳也点得到按钮 */
-.emulator-player__shell {
+/* NDS：iframe 抬到机壳之上（z-index 6 > 机壳 5），并把 iframe 背景交给宿主页做成透明、
+   由宿主页把引擎画布遮成两块屏幕区域。这样引擎的设置弹框（iframe 里的 z-index 9999）
+   跨过铰链时显示在机壳上面；机壳仍留在父页面，洞外的机身照常可见、不会被 iframe 视口裁掉。
+   只对 NDS 生效：其他机种的 iframe 保持不透明、照旧被机壳盖住。 */
+.emulator-player__stage--nds {
+    background: #000;
+}
+
+.emulator-player__stage--nds .emulator-player__frame {
+    position: relative;
+    z-index: 6;
+    background: transparent;
+}
+
+/* 机壳：每块一个 fixed 外层 + overflow:hidden，内层 img 负偏移裁出 crop 区域，
+   尺寸/位置由 shellLayers 算。定位必须用 fixed 而不是 absolute：机壳比舞台大得多
+   （宽是画面的两倍），absolute 会被 .game-shell__body 的 overflow: auto 裁掉、
+   还会顶出滚动条；fixed 不参与任何滚动容器的溢出计算，也不会被祖先裁剪。
+   z-index 压在标题栏(20)与侧栏(60)之下，盖着机壳也点得到按钮。 */
+.emulator-player__shell-part {
     position: fixed;
     z-index: 5;
+    overflow: hidden;
     pointer-events: none;
+    user-select: none;
+}
+
+.emulator-player__shell-image {
+    position: absolute;
+    display: block;
+    max-width: none;
     user-select: none;
     -webkit-user-drag: none;
 }

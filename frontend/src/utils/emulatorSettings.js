@@ -62,15 +62,16 @@ export function writeEngineSettings(key, value) {
     }
 }
 
-// NDS 的双屏布局是平台固定行为（固定 Top/Bottom + 54px 间隙），不提供用户切换。
+// NDS 的屏幕布局由播放页的布局模式（- / =）和 iframe 的 ?nds= 参数控制，
+// 引擎设置菜单里也已经隐藏这两项；这里仍要剔除，防止历史云端/本机设置把它们带回来。
 const NDS_DISPLAY_OPTIONS = ["melonds_screen_layout", "melonds_screen_gap"];
 
 /**
- * 剔除 NDS 的双屏布局选项，返回**新对象**（不改入参）。
+ * 剔除 NDS 的布局选项，返回**新对象**（不改入参）。
  *
- * 引擎只在启动前读一次设置块，而云端/本机存过的旧值优先级高于宿主页的
- * `EJS_defaultOptions`——不剔除的话，用户以前在引擎设置菜单里改过的布局会盖掉固定值，
- * 机壳的铰链就对不上两屏之间的黑边。非 NDS 或结构不完整的值原样返回。
+ * 引擎在启动流程里会读设置块，而云端/本机存过的旧值优先级高于宿主页的
+ * `EJS_defaultOptions`——不剔除的话，用户以前在引擎设置菜单里改过的布局会盖掉
+ * 当前 `?nds=` 选定的模式，机壳、遮罩就对不上屏幕几何。非 NDS 或结构不完整的值原样返回。
  */
 export function stripNdsDisplayOptions(value) {
     if (!isValidEngineSettings(value)) {

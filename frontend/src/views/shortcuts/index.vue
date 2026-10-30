@@ -124,6 +124,11 @@ const SHORTCUT_PAGES = [
                 desc: "打开存档管理面板",
             },
             {
+                feature: "屏幕布局",
+                keys: [["-"], ["+"]],
+                desc: "Backspace 左边两个键：减号上一个 / 加号（=）下一个，NDS 循环切换屏幕布局",
+            },
+            {
                 feature: "截图",
                 keys: [["Ctrl", "Shift", "S"]],
                 desc: "截取当前画面并保存到截图图库",

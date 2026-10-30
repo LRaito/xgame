@@ -45,6 +45,22 @@
         html.x-cursor-hidden * {
             cursor: none !important;
         }
+        /* NDS：画布只保留两块屏幕（遮罩在 applyNdsMask 里写），其余区域透明，
+           露出父页面盖在 iframe 后面的机壳。透明链路必须从文档根一路打通到引擎容器；
+           #status、菜单栏、设置下拉、弹层保持原样——它们要在机壳之上。
+           这个类在 EJS_onGameStart 之后才挂，加载阶段的 UI 仍然压在黑底上。 */
+        html.x-nds-passthrough,
+        html.x-nds-passthrough body,
+        html.x-nds-passthrough #ejs,
+        html.x-nds-passthrough #ejs .ejs_parent,
+        html.x-nds-passthrough #ejs .ejs_game,
+        html.x-nds-passthrough #ejs .ejs_canvas_parent,
+        html.x-nds-passthrough #ejs .ejs_game_background,
+        html.x-nds-passthrough #ejs .ejs_game_background_blur::before,
+        html.x-nds-passthrough #ejs .ejs_game_background_blur::after {
+            background: transparent !important;
+            background-image: none !important;
+        }
         /* 右上角那个三横线“菜单栏开关”是引擎的 .ejs_virtualGamepad_open（即
            menu-bar-button），在触屏/设置了“可见”时会常驻挡画面，直接隐藏。 */
         .ejs_virtualGamepad_open {
@@ -96,11 +112,19 @@
             // NDS BIOS：用户自备的静态包（zip 根目录放 bios7.bin / bios9.bin / firmware.bin），
             // 不进 git；/emulatorjs/ 整体 immutable，bios/ 单独 no-cache（见 nginx 与 static_site.py）。
             const NDS_BIOS_URL = "/emulatorjs/bios/nds.zip";
-            // 双屏固定竖排，两屏之间留 54px 黑边（按真实机壳的外接矩形 840×1437 反推，
-            // 与 256×438 的帧缓冲对齐）。这里只是启动前的默认值；用户云端保存的旧设置会
-            // 覆盖它，所以父页面写设置前会剔除这两个键
-            // （见 frontend/src/utils/emulatorSettings.js 的 stripNdsDisplayOptions）。
-            const NDS_LAYOUT = { layout: "Top/Bottom", gap: "54" };
+            // NDS 三种屏幕布局（父页面 - / = 循环切换，模式经 ?nds= 传进来）。
+            // 与 frontend/src/constants/emulatorScreens.js 的 NDS_NATIVE 一一对应，必须同步：
+            //   dual = 上下双屏 + gap 54（帧缓冲 256×438）
+            //   top  = 只显示上屏（256×192），gap 无意义
+            //   side = 左右双屏 + gap 73（帧缓冲 585×192）。73 由机壳两半紧靠时
+            //          240 图像 px 的洞间距反推：240×256/840 ≈ 73.14。
+            const NDS_LAYOUTS = {
+                dual: { layout: "Top/Bottom", gap: "54" },
+                top: { layout: "Top Only", gap: "54" },
+                side: { layout: "Left/Right", gap: "73" },
+            };
+            const ndsParam = params.get("nds");
+            let ndsMode = NDS_LAYOUTS[ndsParam] ? ndsParam : "dual";
 
             const statusEl = document.getElementById("status");
 
@@ -259,6 +283,94 @@
                 } catch {
                     return false; // 判不出来就当它不黑，免得把好图丢掉
                 }
+            }
+
+            // ---------- NDS 屏幕遮罩 ----------
+            // 把引擎主画布按内核**实际**帧缓冲几何遮成屏幕区域：被遮掉的部分透明，
+            // 露出父页面放在 iframe 后面的机壳（铰链 / 边框）。只动主画布，不动菜单与弹层
+            // ——设置下拉、菜单栏、右键菜单都是 iframe 内的 HTML，自然在机壳之上。
+            //   dual：竖直方向保留上下各 192 行（高 h，中间间隙 = h-384）；
+            //   side：水平方向保留左右各 256 列（宽 w，中间间隙 = w-512）；
+            //   top / 尺寸不含间隙：不遮（画布全是上屏）。
+            function readVideoSize(manager) {
+                try {
+                    const width = Number(manager?.getVideoDimensions("width"));
+                    const height = Number(manager?.getVideoDimensions("height"));
+                    if (!(width > 0) || !(height > 0)) {
+                        return null;
+                    }
+                    return { width, height };
+                } catch {
+                    return null;
+                }
+            }
+
+            function maskImageFor(mode, size) {
+                if (!size) {
+                    return "";
+                }
+                const { width, height } = size;
+                if (mode === "dual" && height > 384) {
+                    const a = (192 / height) * 100;
+                    const b = ((height - 192) / height) * 100;
+                    return `linear-gradient(to bottom, #000 0 ${a}%, transparent ${a}% ${b}%, #000 ${b}% 100%)`;
+                }
+                if (mode === "side" && width > 512) {
+                    const a = (256 / width) * 100;
+                    const b = ((width - 256) / width) * 100;
+                    return `linear-gradient(to right, #000 0 ${a}%, transparent ${a}% ${b}%, #000 ${b}% 100%)`;
+                }
+                return "";
+            }
+
+            /** 按当前模式重算画布遮罩；值没变也重写（属性很便宜，省掉比较的边界情况）。 */
+            function applyNdsMask() {
+                if (core !== "nds") {
+                    return;
+                }
+                const inst = window.EJS_emulator;
+                const canvas = inst?.canvas || document.querySelector("#ejs canvas.ejs_canvas");
+                if (!canvas) {
+                    return;
+                }
+                const mask = maskImageFor(ndsMode, readVideoSize(inst?.gameManager));
+                canvas.style.webkitMaskImage = mask;
+                canvas.style.maskImage = mask;
+                canvas.style.maskRepeat = "no-repeat";
+                canvas.style.webkitMaskRepeat = "no-repeat";
+                canvas.style.maskSize = "100% 100%";
+                canvas.style.webkitMaskSize = "100% 100%";
+            }
+
+            /** 把布局/间隙写进引擎内核变量（运行中改与引擎设置菜单走同一条路）。 */
+            function applyNdsLayoutVariables(mode) {
+                const conf = NDS_LAYOUTS[mode];
+                const manager = window.EJS_emulator?.gameManager;
+                if (!conf || typeof manager?.setVariable !== "function") {
+                    return false;
+                }
+                manager.setVariable("melonds_screen_layout", conf.layout);
+                manager.setVariable("melonds_screen_gap", conf.gap);
+                return true;
+            }
+
+            /** 引擎上报的几何是否已经是目标模式的特征尺寸（留 1px 容差，别被小数卡住）。 */
+            function matchesNdsMode(mode, size) {
+                if (!size) {
+                    return false;
+                }
+                const { width, height } = size;
+                const near = (value, target) => Math.abs(value - target) <= 1;
+                if (mode === "top") {
+                    return near(width, 256) && near(height, 192);
+                }
+                if (mode === "side") {
+                    return near(height, 192) && width > 256;
+                }
+                if (mode === "dual") {
+                    return near(width, 256) && height > 192;
+                }
+                return false;
             }
 
             window.__ejsRpc = {
@@ -444,6 +556,61 @@
                     return { ok: true };
                 },
 
+                /** 当前 NDS 屏幕布局（非 NDS 返回 null），供父页面/调试读取。 */
+                get ndsMode() {
+                    return core === "nds" ? ndsMode : null;
+                },
+
+                /**
+                 * 切 NDS 屏幕布局（父页面 - / = 循环）：dual → top → side。
+                 * 改内核变量后轮询最多 2 秒，等引擎真的上报目标几何才返回成功并重算遮罩；
+                 * 超时就恢复原布局、返回 needsRestart——父页面**不重启内核**（会丢当前进度），
+                 * 只提示「重新进入游戏后生效」。
+                 */
+                async setNdsLayout(mode) {
+                    if (core !== "nds" || !NDS_LAYOUTS[mode]) {
+                        return { ok: false, message: "不支持的屏幕布局。" };
+                    }
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再切换屏幕布局。" };
+                    }
+                    if (mode === ndsMode) {
+                        applyNdsMask();
+                        return { ok: true, mode, videoInfo: window.__ejsRpc.videoInfo };
+                    }
+                    const previous = ndsMode;
+                    try {
+                        applyNdsLayoutVariables(mode);
+                    } catch {
+                        return { ok: false, message: "切换屏幕布局失败。" };
+                    }
+                    for (let i = 0; i < 40; i += 1) {
+                        await wait(50);
+                        if (matchesNdsMode(mode, readVideoSize(inst.gameManager))) {
+                            ndsMode = mode;
+                            applyNdsMask();
+                            return { ok: true, mode, videoInfo: window.__ejsRpc.videoInfo };
+                        }
+                    }
+                    // 引擎没有即时响应：恢复原布局，父页面会把模式也回滚
+                    try {
+                        applyNdsLayoutVariables(previous);
+                    } catch {
+                        // 恢复失败也只能返回失败
+                    }
+                    applyNdsMask();
+                    return {
+                        ok: false,
+                        needsRestart: true,
+                        message: "当前内核需要重新进入游戏后才能切换屏幕布局。",
+                        videoInfo: window.__ejsRpc.videoInfo,
+                    };
+                },
+
                 /**
                  * 截图：先走引擎自带截图（内核侧读帧缓冲，得到的是**原生像素**，如 FC 256×224），
                  * 拿不到或是全黑时退回拷画布（尺寸 = 画布显示尺寸）。
@@ -606,12 +773,18 @@
                     window.EJS_defaultOptions.fceumm_overscan_v_top = wide ? "0" : "8";
                     window.EJS_defaultOptions.fceumm_overscan_v_bottom = wide ? "0" : "8";
                 }
-                // NDS（melonDS）：BIOS 由引擎解压到虚拟文件系统；双屏固定竖排 + 54px 间隙。
-                // 布局不提供用户切换，父页面也会在写云端设置前剔除这两个键，保证这里一定生效。
+                // NDS（melonDS）：BIOS 由引擎解压到虚拟文件系统；屏幕布局由父页面 ?nds= 决定
+                // （dual / top / side，见上面的 NDS_LAYOUTS）。布局的两项内核选项从引擎设置
+                // 菜单里隐藏——布局只能由父页面 - / = / setNdsLayout 控制，避免用户从菜单
+                // 改出与机壳、遮罩不一致的几何。父页面写云端设置前也会剔除这两个键。
                 if (core === "nds") {
                     window.EJS_biosUrl = NDS_BIOS_URL;
-                    window.EJS_defaultOptions.melonds_screen_layout = NDS_LAYOUT.layout;
-                    window.EJS_defaultOptions.melonds_screen_gap = NDS_LAYOUT.gap;
+                    window.EJS_hideSettings = [
+                        "melonds_screen_layout",
+                        "melonds_screen_gap",
+                    ];
+                    window.EJS_defaultOptions.melonds_screen_layout = NDS_LAYOUTS[ndsMode].layout;
+                    window.EJS_defaultOptions.melonds_screen_gap = NDS_LAYOUTS[ndsMode].gap;
                 }
                 // 引擎开始运行后标记就绪，并接管底部控制条显隐
                 window.EJS_onGameStart = () => {
@@ -621,12 +794,15 @@
                     // 后面的 initControlBar，所以整段包在 try 里。
                     if (core === "nds") {
                         try {
-                            const manager = window.EJS_emulator?.gameManager;
-                            manager?.setVariable?.("melonds_screen_layout", NDS_LAYOUT.layout);
-                            manager?.setVariable?.("melonds_screen_gap", NDS_LAYOUT.gap);
+                            applyNdsLayoutVariables(ndsMode);
                         } catch {
                             // 以启动前的 EJS_defaultOptions 为准
                         }
+                        // 画布与机壳的「上/下层」关系：透明类 + 遮罩晚一拍再挂，
+                        // 加载阶段的 UI 仍然压在黑底上，不会提前透出机壳。
+                        document.documentElement.classList.add("x-nds-passthrough");
+                        window.requestAnimationFrame(applyNdsMask);
+                        window.setTimeout(applyNdsMask, 300);
                     }
                     initControlBar();
                 };
