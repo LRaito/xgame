@@ -1,16 +1,33 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+> 给 Claude Code 的会话入口：只放结论与硬规则。
+> 实现细节在 `docs/specs/`，写代码前读 [`AGENTS.md`](AGENTS.md)。
 
-## 本仓库是什么
+## 一分钟了解本仓库
 
-个人自托管的**游戏平台**。Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`），ORM 用 SQLModel + SQLite。两条交付路线并存：**Docker**（正式运行，nginx + gunicorn + HTTPS）与 **Windows「解压即用」包**（`packaging/windows/`，后端自己托管前端 + 单进程 uvicorn + http，解压后双击即玩、局域网可访问）。两条路的数据格式一致，但**不能同时打开同一份数据目录**。三块内容：**游戏中心**（Flash 用 Ruffle、HTML5 上传 ZIP（按需解包）后用沙箱 iframe、8/16/32-bit 主机 ROM 用 EmulatorJS 浏览器内游玩；Flash 与模拟器含本地与云端存档，主机另有按账号的游玩截图图库，H5 仅游玩）、**游戏管理**（上传/直链/搬运、卡带 ID 与元数据、上传**攻略**（ZIP 或 PDF））与**游戏发现**（外部中英文名录的只读全文检索 + 按机种的游戏榜单，数据由 `make index` 构建）。账号开放注册，只用于隔离各人的模拟器配置与存档。
+- 个人自托管游戏平台：Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`）。
+- ORM 用 SQLModel + SQLite。
+- 两条交付路线：Docker（正式运行）与 Windows「解压即用」包。
+- 两条路数据格式一致，但**不能同时打开同一份数据目录**。
+- 三块功能：游戏中心、游戏管理、游戏发现。
+- 账号开放注册，只用于隔离各人的模拟器配置与存档。
 
-**编码约定以 [`AGENTS.md`](AGENTS.md) 为准**——写代码、改代码前先读它。人读的设计文档在 [`docs/architecture.md`](docs/architecture.md)；SQLite 表与文件路径规则的完整结构在 [`docs/data_dict.md`](docs/data_dict.md)。
+## 先读哪份文档
 
-## 语言约定（重要）
+| 你要做的事 | 先读 |
+|---|---|
+| 写代码、改代码 | [`AGENTS.md`](AGENTS.md) |
+| 理解设计取舍 | [`docs/architecture.md`](docs/architecture.md) |
+| 查表结构、磁盘路径 | [`docs/data_dict.md`](docs/data_dict.md) |
+| 查某个功能的实现细节 | [`docs/specs/README.md`](docs/specs/README.md) |
+| 用户怎么操作 | [`README.md`](README.md) |
+| 开发、部署、排障 | [`DEVELOP.md`](DEVELOP.md) |
 
-项目默认**中文**：界面文案、Markdown 文档、注释、提交说明、API 错误 `message` 全用中文。代码标识符、路由 path、环境变量名保持英文。**不加 i18n / 多语言切换**。
+## 语言约定
+
+- 界面文案、Markdown 文档、注释、提交说明、API 错误 `message` 一律中文。
+- 代码标识符、路由 path、环境变量名保持英文。
+- 不加 i18n / 多语言切换。
 
 ## 常用命令
 
@@ -21,98 +38,89 @@ python -m backend.cli init-db
 uvicorn backend.asgi:app --reload --port 8910
 ```
 
-本机默认的数据根 `data/storage` 不在 Windows 盘挂载前缀（`/mnt`）下，**不需要**哨兵文件；把数据根（或单独放的运行时根）放到 WSL 的 Windows 盘（如 `/mnt/x/xgame/storage`）时才要在那个目录里手建 `.mounted`，否则服务起来就打一条日志、等 5 秒退出（见下面「根目录哨兵」）。
-
 前端（另开终端）：
 
 ```bash
 cd frontend
 npm install
-npm run dev        # Vite :5173，/api 与 /health 代理到 :8910
+npm run dev
 ```
 
-测试与 lint：
+测试与构建：
 
 ```bash
-make test                   # 等价于 python -m pytest + cd frontend && npm run lint，本机跑，不动 Docker
-make win                    # 组装 Windows「解压即用」包：dist-win/xgame_v<版本>.zip
-                            #   在容器里跑（构建环境镜像没有就先建一次），宿主机只要有 Docker；
-                            #   依赖（Windows 运行时 / win 轮子 / 前端依赖 / 引擎资产）都预置在镜像里，
-                            #   所以只有建镜像那次要联网；版本号取 git tag（见 scripts/version.sh）
-make win-image              # 只构建/更新那个构建环境镜像，不出包
-make index                  # 构建「游戏发现」的只读索引 <数据根>/db/game.db（检索 + 榜单；可重复执行、直接覆盖；
-                            #   服务启动时会自动补建（不存在才建）、榜单 CSV 变了会就地补一次，
-                            #   这个命令用于手动重建/更新索引。数据根是 Docker 以 root 建的时先 sudo chown）
-pytest                      # 后端（用临时 SQLite + 临时 STORAGE_ROOT，直接打真实文件系统）
-cd frontend && npm run lint
+make test        # pytest + 前端 lint
+make win         # Windows 解压即用包
+make index       # 重建游戏发现索引
 ```
 
-**平时只跑改动涉及的用例**（`python -m pytest tests/test_games.py -k "guide or h5"` 这种），不要每改完一处就全量跑；
-全量 `make test` 由用户定期执行。**只改文档（含 CLAUDE.md / AGENTS.md / docs/ / 技能说明）时不用跑测试**。
+- 平时只跑改动涉及的用例，全量 `make test` 由用户定期执行。
+- **只改文档（含本文件、`AGENTS.md`、`docs/`、技能说明）不跑测试。**
 
-Docker（正式运行方式）：
+## 架构速览
 
-```bash
-cp .env.example .env        # 可选：只放 STORAGE_HOST_DIR（数据放宿主哪里）、RUNTIME_HOST_DIR（库单独放哪，可留空）与 WEB_HTTPS_PORT
-make all                    # 等价 docker compose build && up -d
-# 浏览器 https://localhost，进站点直接点「注册一个」建号（没有命令行建号）
+- 应用工厂：`backend/__init__.py::create_app()` 是唯一入口。
+- 一个功能一块：`router.py` 只管 HTTP，`service.py` 管领域逻辑。
+- 前端分层：`views/` → `api/*` → `utils/request.js` → FastAPI。
+- 响应信封：成功 `{ok:true,data}`；失败 `{ok:false,message:"中文"}`。
+- 配置写死在 `backend/config.py`；`.env` 只有三个键且只给 compose 读。
+- 数据分两个根：数据根放原始素材，运行时根放 SQLite 与解包产物。
+- 全站需登录，唯一业务例外是 H5 资源接口。
+- 详细设计见 [`docs/architecture.md`](docs/architecture.md)。
+
+## 必须遵守的硬规则
+
+1. **应用工厂。** 唯一入口是 `create_app()`，不要另起入口。
+2. **功能模块 = router + service。**
+   `service.py` 里禁止使用 FastAPI `Request` / `session`。
+3. **前端分层。** 新增接口只改 `api/` 与后端 router，不碰 `request.js`。
+4. **两个根。** 数据根放会被备份的原始素材；运行时根放 SQLite 与解包产物。
+   没有对象存储，没有 docker 具名卷。
+5. **路径只经 `paths.py` / `LocalStorage`。** 不要在别处手拼磁盘路径。
+6. **卡带 ID。** 手动新建与网络上传时必填、全局唯一、落库前转大写；
+   搬运由服务端按 CRC32 自动生成；它同时是目录名，改名走显式迁移。
+7. **封面类型。** 可空，只有编辑弹框与「美化封面」两条写入路径。
+8. **机种词表。** `backend/games/platforms.py` 是唯一权威；
+   加机种只改这张表。
+9. **H5 / 攻略 ZIP 只校验不解压。** 播放或查看时才解到运行时根。
+10. **云端存档是整体快照。** 快照之间是同一 (用户, 游戏) 内的父子森林。
+11. **登录。** 除注册/登录/CSRF/健康检查与 H5 资源外，所有接口都要登录。
+12. **配置写死。** `.env` 只有 `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` / `WEB_HTTPS_PORT`；
+    后端不读 `.env` 文件。
+13. **`.mounted` 哨兵。** 只拦启动、绝不代建；
+    只在 Windows 盘挂载前缀下要求。
+14. **Gunicorn 必须 `--workers 1`。** SQLite 单写者，多进程会冲突。
+15. **明确不做。** React、TypeScript、i18n、OAuth、对象存储、JWT、
+    Redis/PostgreSQL/Celery；Windows 包不做自动升级。
+
+细节链接：
+
+- 文件存储 / 卡带 ID / 封面类型 → [`game-storage.md`](docs/specs/game-storage.md)
+- 机种词表 → [`platforms.md`](docs/specs/platforms.md)
+- 播放器 / 机壳 / NDS → [`game-center-playback.md`](docs/specs/game-center-playback.md)
+- 截图 / 图集 / 封面美化 → [`game-assets.md`](docs/specs/game-assets.md)
+- 存档 / 设置 / 统计 → [`game-saves-stats.md`](docs/specs/game-saves-stats.md)
+- H5 / 攻略 → [`guide-and-h5.md`](docs/specs/guide-and-h5.md)
+- 游戏发现 → [`game-discover.md`](docs/specs/game-discover.md)
+- 账号与会话 → [`auth.md`](docs/specs/auth.md)
+- Docker → [`delivery-docker.md`](docs/specs/delivery-docker.md)
+- Windows 包 → [`delivery-windows.md`](docs/specs/delivery-windows.md)
+
+## 目录速查
+
+```
+frontend/        Vue 3 SPA
+backend/         FastAPI API（auth / games / tools / storage）
+docs/            architecture.md / data_dict.md / specs/
+packaging/       windows/
+tests/           pytest
 ```
 
-镜像与编排：`backend/Dockerfile`（api）、`frontend/Dockerfile`（web），由根目录 `docker-compose.yml` 编排（web + api，**没有对象存储**）。**基础镜像全部固定到补丁版本 + 发行版代号**（`python:3.12.15-slim-trixie`、`node:22.23.3-alpine3.24`、`nginx:1.27.5-alpine3.21`），加新镜像或升级都别用浮动标签。**两个服务镜像都固定 `TZ=Asia/Shanghai`**（日志时间与月度备份文件名按北京时间；库里的 `created_at` 等时间戳仍存 UTC，不受影响）。**接口返回的时间没有时区后缀**（SQLite 不保留 tzinfo），前端一律经 `utils/fileDisplay.js` 的 `parseApiDate()` 按 UTC 解析、再按浏览器本地时区展示。
-
-## 架构要点
-
-- **应用工厂。** `backend/__init__.py` 的 `create_app()` 是唯一入口；生产 ASGI 入口 `backend/asgi.py`。配置来自环境变量（Pydantic Settings，`backend/config.py`）。
-- **一个功能一块。** 每块含 `router.py`（只管 HTTP，只返回 JSON）+ `service.py`（领域逻辑）。`service.py` 是以后拆微服务的边界：**禁止在里面使用 FastAPI `Request` / `session`**；存储后端等依赖由构造函数传入。跨模块的流式下载响应收敛在 `backend/storage/access.py`。
-- **前端分层。** 页面 `views/` → `api/*`（导出 `xxxAPI`）→ `src/utils/request.js`（唯一 axios 实例）→ FastAPI。新增接口只改 api 层和后端 router，不碰 `request.js`。跨模块 UI 组件放 `src/components/common/`（AppDialog、AppButton、AppSegmented、AppPagination、AppEmpty、CopyButton），游戏专用组件放 `src/components/games/`。**按钮统一走 `AppButton`（只有 `secondary` 白底蓝框 / `danger` 白底红框两种类型，`text` 是无框形态；size × tone）**，分段/标签统一走 `AppSegmented`，token 在 `styles/index.css`，页面里不再手写原生 `<button>` 或按钮 CSS。
-- **导航与浮层。** 首页即游戏中心（`/` 重定向到 `/games`，无导航中心页）；侧栏菜单项与顺序由 `router/index.js` 的子路由声明顺序 + `meta.title` 生成（游戏中心、游戏管理、游戏发现、按键管理）。左侧侧栏与游戏播放页的 `GameShell` 标题栏都是**浮层**：常驻收起、鼠标靠近屏幕边缘时滑出，展开时盖在页面之上，不占位、不引起内容缩放。游玩页**全屏时鼠标静止 3 秒隐藏光标并收起标题栏**（原生全屏或 F11 都算），任何鼠标活动立即恢复。侧栏第 4 项「按键管理」（`/shortcuts`）是纯前端静态页：博客式单栏文档，左侧大纲按页面滚动高亮 + 平滑跳转；一个页面一张表（第一列「功能」按相同功能合并单元格，后两列是按键与说明，键帽样式）；**表内顺序按键帽从短到长**（如 `` ` `` 在 `Enter` 之上），相同功能的行保持相邻以便合并单元格，数据写在 `views/shortcuts/index.vue`，没有接口，改键位时同步更新那张表。
-- **登录态。** 开放注册（账号 + 密码，`POST /api/register`），登录失败锁定；无游客模式，除注册/登录接口与 H5 资源外全部接口与页面都要登录（H5 是沙箱不透明源的浏览器约束，拿不到 cookie；**攻略资源是新标签页顶层打开的普通静态页，照常带 cookie，要登录**）。session cookie（HttpOnly、SameSite=Lax），axios `withCredentials`；写操作带 `X-CSRFToken`。路由守卫在 `frontend/src/permission.js`。**不把 token 写进 localStorage**。
-- **响应信封。** 成功 `{ "ok": true, "data": ... }`；失败 `{ "ok": false, "message": "中文" }`。
-- **配置。** 配置写死在代码里（`backend/config.py`，含 `SECRET_KEY`、`WINDOWS_MOUNT_PREFIX`、`BACKUP_INTERVAL_SECONDS`）；`.env` 只有三个键、且**只给 compose 读**（后端不读 `.env` 文件）：`STORAGE_HOST_DIR`（宿主数据目录，默认 `./data/storage`）、`RUNTIME_HOST_DIR`（宿主运行时目录，放 SQLite 库与 H5/攻略解包产物，默认 `./data/runtime`，留空则同 `STORAGE_HOST_DIR`）、`WEB_HTTPS_PORT`（对外端口，默认 443），不建 `.env` 也能跑。其中两个 `*_HOST_DIR` 由 compose 作为**环境变量**传给 api 容器，后端只拿它们做启动时的哨兵前缀判断（见下条）。证书随仓库提交在 `certs/`（`cert.pem` / `cert.key`），compose 只读挂到 web 的 `/etc/nginx/certs`。
-- **数据。** **不使用任何 docker 具名卷**：compose 里数据是两个宿主目录——数据根 `STORAGE_HOST_DIR`（默认 `./data/storage` → 容器 `/data`，后端读 `STORAGE_ROOT`）装游戏文件、检索索引与备份；运行时根 `RUNTIME_HOST_DIR`（默认 `./data/runtime` → 容器 `/runtime`，后端读 `RUNTIME_ROOT`）装 SQLite 库与 H5/攻略的**解包产物**（派生物，删掉会自动重建）。**SQLite 路径在代码里写死为 `<运行时根>/db/app.db`**（`backend/config.py` 的 `DB_SUBDIR` / `DB_FILENAME`，没有 `DATABASE_URL` 可配）；库单独放是为了让数据根整个能交给网盘备份（外部客户端拷不动一个一直被写着的库文件）。SQLite 里只存游戏文件相对根目录的路径。Gunicorn 必须 `--workers 1`（单进程避免 SQLite 写冲突），多线程处理并发。
-
-## 必须遵守的关键规则
-
-- **文件存储。** **两个根**：数据根（`STORAGE_ROOT`）放会被整体拷走备份的原始素材，运行时根（`RUNTIME_ROOT`，不配时等于数据根）放 SQLite 库与解包产物。**没有对象存储**：两边都是普通文件，相对路径规则集中在 `backend/games/paths.py`、**两个根下逐字一致**，别在别处手拼字符串。数据根：本体 `game/{game_type}/{卡带ID}/game.{后缀}`（H5 就是 `game.zip`）、封面 `game/{game_type}/{卡带ID}/cover.{后缀}`、攻略包 `game/{game_type}/{卡带ID}/guide.zip` 或攻略 PDF `.../guide.pdf`、图集 `game/{game_type}/{卡带ID}/image/{uuid}.{后缀}`、存档 `save/{用户名}/{game_type}/{卡带ID}/{uuid}.state`、截图 `image/{用户名}/{game_type}/{卡带ID}/{uuid}.png`。运行时根：H5 解包产物 `game/{game_type}/{卡带ID}/h5/{包内相对路径}`、攻略解包产物 `game/{game_type}/{卡带ID}/guide/{包内相对路径}`（类型那层用 `game_type` 的**键值**，不是中文显示名）。读写一律经 `backend/storage/local.py` 的 `LocalStorage`（`upload/delete/stat/open_download` + 目录级的 `remove_tree/replace_tree/move`；`create_app()` 各建一个实例挂在 `app.state.storage` / `app.state.runtime_storage`），它负责拼根路径并挡掉绝对路径与 `..`；写入先落同目录临时文件再 `os.replace` 改名。`StorageBackend` 协议在 `backend/storage/types.py`。**没有「待配置」状态**：根目录不存在会自己建出来，storage 永远可用（唯一的前提是数据根或运行时根落在 `/mnt` 这类 Windows 盘路径下时，启动前要在那个目录里有手建的 `.mounted` 哨兵，见下面的哨兵那条——哨兵只拦启动，不表示存储不可用）。
-- **卡带ID。** `games.cartridge_id`：创建时必填（新建、网络上传建条目、搬运都要）、全局唯一（唯一索引 `uq_games_cartridge_id`）、只允许数字/字母/中划线/下划线且**落库前转大写**（`validate_cartridge_id()`）。它同时是磁盘目录名，所以**改游戏名不会挪动任何文件**。普通编辑（`PUT /manage/{id}`）**不接受**该字段；要换走管理页编辑弹框里的「修改 ID」→ `PUT /manage/{id}/cartridge-id`（`GameService.rename_cartridge_id()`，一次显式迁移：先把 `game/{类型}/{旧ID}`、各账号的 `save/{用户名}/{类型}/{旧ID}` 与 `image/{用户名}/{类型}/{旧ID}` 三类目录搬过去，再在同一个事务里改写 `games.cartridge_id`/`game_path`/`cover_path` 与四张子表的 `file_path`；存档与截图那两类的类型是**写入当时的**，只能从 `file_path` 反推目录，**绝不用当前类型拼**——与删游戏同一条规矩；搬目录失败会把已搬的搬回去、库一个字节不动；新旧相同当空操作）。管理页详情里展示它；管理页删除该游戏时要**手打一次卡带ID**才能确认（删除会连磁盘文件与所有账号在该游戏上的云端存档一起清掉）。
-- **封面类型。** `games.cover_type`：这盘封面被「美化」成了哪种外观，值就是封面样式 id（`flash` DISK / `gb` GB / `gbc` GBC / `gba` GBA / `nds` NDS / `fc` FC / `nes` NES）。**可空**，空 = 没有封面类型：**新建（手动上传 / 网络上传 / 搬运）一律留空**，只有**管理页编辑弹框手动选**（`PUT /manage/{id}`，`None` = 不改、空串 = 清空）与**「美化封面」**（`POST /manage/{id}/assets` 的 `cover_type` 表单字段，与封面文件同一次提交，只在 `kind=cover` 时认）两条写入路径。可选集合按游戏类型给，在 `backend/games/models.py`（`COVER_TYPES_BY_GAME_TYPE` / `cover_types_for()`——不支持美化封面的 `h5`/`snes`/`sega*` 返回空元组、永远为空），校验入口 `validate_cover_type()`（空值合法、非法值中文 400），前端展示层镜像在 `frontend/src/constants/coverStyles.js` 的 `coverTypesFor()`（**两边 id 集合与顺序必须逐字一致**）。编辑弹框里用**单选（文字，不是下拉）**，新建弹框没有这一行，游戏中心右键菜单也没有；游戏类型创建后不可变，封面类型不会随换本体变化。游戏中心「全部游戏」在游戏类型分组内**再按封面类型分子网格**，同一种封面严格同一行（空的自成一组、排在该类型最后），**卡片封面框规则见 `constants/gameCardAspect.js` + `components/games/GameCover.vue`：卡片宽就是**正方形限制框**的边长，封面按类型渲染后等比缩放到长或宽触到框边（rail 传 `CARD_ASPECT_RAIL` 正方形框、整行高低一致；「全部游戏」不传 aspect = 卡片高随封面高，同类型整行仍齐平）。**封面渲染集中在 `components/games/GameCover.vue`，只有游戏中心的卡片用**（「全部游戏」网格与「最近游玩」rail；详情弹框图片栏、游戏管理缩略图与表单预览都显示封面原图）（**所有游戏类型一律普通封面图，渲染层不按类型分支**；光盘 / 卡带的观感由管理页编辑弹框的「美化封面」合成进封面文件本身：`components/games/CoverBeautifyDialog.vue` + `constants/coverStyles.js` + `utils/coverCompose.js`，样式按游戏类型给**一组**（`flash`→DISK、`gb`→GB/GBC两种、`gba`→GBA、`nds`→NDS、`nes`→FC/NES两种），列表首个是默认（打开时按游戏当前的 `cover_type` 默认选中，没设过就是第一个），**弹框标题右边始终有一排方框单选**（只有一种样式的 `flash`/`gba`/`nds` 也出，那一项不可选），其余类型不显示按钮，合成图经 `POST /api/games/manage/{id}/assets` 覆盖原封面且**不可逆**，**所选样式 id 随同一次调用写进 `cover_type`**）；**详情弹框显示封面类型文字（没设过是「—」），编辑弹框用文字单选**，两边都不再用图片。老库由 `backend/database.py` 的 `_ensure_columns()` 启动时补列（无迁移框架；`cover_type` 是**可空**列）。
-- **机种词表。** `backend/games/platforms.py` 是「这是哪台机器」的**唯一权威**：机种 id 就是 **EmulatorJS 的 system key**（游戏最终在 EJS 里跑，能玩不能玩由引擎决定），36 个机种，每条含 `label`（统一中文显示名）/ `aliases`（外部名录的各种写法）/ `cores` / `extensions`（非空才代表本项目已收录可玩，值即 `game_type`）。**游戏管理、游戏检索、游戏榜单三处共用同一套名字**（`任天堂 FC`、`任天堂 GB/GBC`、`世嘉 MD`…），前端 `constants/gameTypes.js` 的 label 是它的镜像（两边逐字一致由 `tests/test_platforms.py` 钉住）。`GAME_TYPES` / 扩展名白名单 / 显示名都从它派生，**加机种只改这一张表**，别在别处手写机种名对照表。
-- **游戏中心。** 元数据在 SQLite，文件按上面的相对路径落盘。**游戏类型不用手动选，按上传的本体扩展名自动判定**（`backend/games/service.py` 的 `detect_game_type()`：`flash`←`.swf`、`h5`←`.zip`、主机 `nes/snes/gb/gba/nds/segaMD/segaGG/segaMS`←`.nes/.sfc/.smc/.gb/.gbc/.gba/.nds/.md/.gen/.gg/.sms`；未收录后缀 400）。**游戏类型创建后不可变**：换本体只接受与当前类型相同的本体（按扩展名判定；同类型内可换后缀 `.gb↔.gbc`、`.sfc↔.smc`、`.md↔.gen`），跨类型中文 400 且旧档不动；上传时算好 CRC32 落 `games.crc32`（8 位大写十六进制），换同类型本体时重算并覆盖，它只是当前本体摘要、**不再作为锁定凭据**；**同类型下游戏名唯一**（联合唯一索引 `uq_games_game_type_name`）、**名字须是合法的 Windows 与百度网盘文件名**（`validate_game_name()`；搬运标题自动无害化）。**H5** 上传 `.zip`（根目录含 `index.html`，整包套单层目录会自动剥前缀）时**只校验、不解压**：`backend/games/archive.py` 读中央目录做全量校验（路径/重名/条目数/单条与总量/压缩比/加密条目），zip 本体原样存数据根的 `game/{类型}/{卡带ID}/game.zip`（就是 `games.game_path`），**不落任何清单表**。播放时 `backend/games/runtime_assets.py` 的 `RuntimeAssets.ensure()` 按需把整包解到**运行时根**的 `h5/`（同层暂存目录 `.h5-{随机}` + `replace_tree` 原子替换），**入口文件在就不再解**；同一 (类型, 卡带ID) 用进程内锁串行。重传 zip / 改卡带ID / 删游戏时由写路径显式作废运行时根那份。播放经 `GET /api/games/{id}/h5/{资源路径}`（唯一免登录业务接口——沙箱里带不上 cookie；响应强制 CSP `sandbox` 不含 `allow-same-origin`），首次访问会触发解包写盘；前端 `views/games/h5-player.vue` 用嵌套 sandbox iframe 呈现；沙箱下无 localStorage/Worker，H5 不接入云存档。**攻略**：一个游戏可挂一份攻略，交付形态是 **ZIP 静态站包或单个 PDF**（二者互斥；数据根 `game/{类型}/{卡带ID}/guide.zip` / `guide.pdf`）。ZIP 的入口固定包内根目录 `index.html`，整包套单层目录会自动剥掉；攻略形态存在 `games.guide_kind`（`""` / `"zip"` / `"pdf"`），列表载荷的 `has_guide` 由它派生、`guide_kind` 原样给前端，**列表接口不再 stat 磁盘**；上传写值、删除清空，宿主手动增删文件不会自动反映（手动删掉文件后打开会 404）。上传只在管理页编辑弹框「上传封面」下方的「上传攻略」（新建弹框没有）：multipart 里只有一个 `file`（`POST /api/games/manage/{id}/guide`），ZIP 与 H5 共用同一套校验、**只校验不解压**；PDF 只查后缀、大小（≤128MB）与文件头含 `%PDF-`，原样存数据根。**上传一种会删掉另一种**，并作废运行时根的旧解包产物；**不动本体路径与 CRC32**。右边的「删除攻略」二次确认后立即删除（`DELETE /api/games/manage/{id}/guide`，文件、解包产物与 `guide_kind` 一起清掉，幂等）。查看 ZIP 时才解到运行时根的 `game/{类型}/{卡带ID}/guide/`（同一套 `RuntimeAssets.ensure()`，入口在就不再解），读取走 `GET|HEAD /api/games/{id}/guide/{资源路径}`；PDF 直接从数据根流式返回 `GET|HEAD /api/games/{id}/guide.pdf`（`application/pdf` inline，交给浏览器内置查看器）。两条读取接口都**需登录**（与 H5 免登录不同；只加 `nosniff` + `no-cache`，**不加 CSP sandbox**——它们是新标签页顶层导航打开的同源页面），文件不存在或形态不符即 404。入口在游戏中心卡片右键菜单「详情」下方的「攻略」（**没有攻略就不显示这一项**），`window.open(..., "_blank", "noopener")` 开新标签页：`guide_kind=pdf` 打开 PDF 地址，否则打开 `index.html`。重传 / 改卡带ID / 删游戏都随整个游戏目录处理。**做攻略**用 `.claude/skills/make-guide`（镜像原站 → 剥站点外壳 → 转中文、专有名词在标题/词条位置写 `中文（原文）` → `check_guide.py` 自检 → 打成 zip 上传）。**搬运**：`POST /api/games/manage/import` 传 `{url, cartridge_id}`（7k7k/4399/flash.homes 游戏页地址），由 `backend/games/importer.py` 服务端解析下载后入库，前端在游戏管理页「搬运游戏」弹窗。**网络上传**：管理页本体/封面的「网络上传」按钮弹框填 http/https 直链（本体还要下拉选类型，服务端下载后走同一条上传管线，上限 512MB），实现见 `backend/games/remote.py`。播放：Flash 走 Ruffle、H5 走沙箱 iframe、主机走 EmulatorJS（引擎资产由 `frontend/scripts/fetch-emulatorjs.mjs` 构建期按固定版本拉取到 `public/emulatorjs/`，nginx immutable 静态服务，运行时不依赖外网；NDS 用 melonDS 核，**BIOS 是用户自备的前端静态包** `frontend/public/emulatorjs/bios/nds.zip`（不进 git），该前缀在 nginx 与 `static_site.py` 里单独 no-cache，宿主页启动前先 HEAD 预检、缺失给中文提示；NDS 屏幕布局由播放页 **- / =** 循环切换：竖屏双屏（`Top/Bottom` + gap 54）/ 单屏上屏（`Top Only`）/ 左右双屏（`Left/Right` + gap 73），这两项内核选项已从引擎设置菜单隐藏（`EJS_hideSettings`））。`GET /api/games/{id}/play`（附件下载，content-type 按扩展：`.swf` 保持 Flash 值、ROM/H5 ZIP 为 `octet-stream`）、`GET /api/games/{id}/cover`（inline 预览，`?download=1` 附件下载）。模拟器播放页标题栏按钮自左向右为**加速模式**、**截图**、保存配置、窗口倍率、**显示机壳**（GBA / FC / GBC / NDS 有）、存档管理；**加速模式**是持续快进开关（固定文案 + 点亮高亮，与「显示机壳」同一套写法），开关的就是引擎自己的 `Fast Forward` 设置项（宿主页 `__ejsRpc.setFastForward` → `changeSettingOption("fastForward", …)`，会经设置行监听触发 `menuOptionChanged` → `handleSpecialOptions`，改掉 `isFastForward` 与内核的 `toggle_fastforward` 并 `saveSettings()`），所以与引擎设置菜单里那一项是同一份状态、随「保存配置」整块进账号（下次进游戏直接加速），按钮亮灭由轮询读 `__ejsRpc.fastForward` 对齐；**不碰任何按键**，加速模式关着时用户自己绑的快进键（动作 27）按住即加速、松手恢复，开着时按住它临时回到正常速度；倍率用引擎默认 3.0×；「显示机壳」把机壳图（`src/assets/shells/gba-shell.png` 一块带透明屏幕洞的 GBA 机身，洞 1920×1280 = 精确 3:2 且居整图正中；`src/assets/shells/gbc-shell.png` GBC 正面机身，洞 1285×1156.5 = 10:9（= 160×144），左右留白各 423px；FC 的电视机壳按显示比例分两张：`src/assets/shells/nes-shell.png` 洞 1084×948.5 = 256:224，即入项目前把原素材的屏幕那段纵向拉长 7/6、下面 121 行控制条等比不动再裁掉透明留白；`src/assets/shells/nes-shell-43.png` 是原素材本身，洞 1084×813 = 4:3；NDS 是 `src/assets/shells/nds-shell.png`（1080×1920 的真实机壳，两个 840×630 透明洞 x=120、y=177/984，中间 177px 铰链带，外接矩形 840×1437 = 256:438，对应 gap 54；洞是精确 4:3，原素材左右各补了 8px 机身色；NDS 机壳按布局取三套：`dual` 整图、`top` 只取上图 y=0..807、`side` 上下两半 crop 后左右紧靠（下半 offset x=1080、下移 177，合成画布 2160×1113））盖在画面上，按「洞（多洞取外接矩形）宽 = 画面宽」放大并偏移，洞就严丝合缝露出游戏画面，任何画面尺寸都跟着缩放；`SHELLS` 表里每项统一是 `holes` 数组（单洞机种一个元素、NDS 两个），渲染走 `parts`（crop/offset）+ 外层 `overflow:hidden` 裁剪，单 part 的机种输出与旧版逐像素一致，几何在 `views/games/emulator-player.vue` 里按游戏类型取（换图必须同步改洞的几何，NDS 还要同步改 `EMU_NATIVE.nds`）；机壳比画面大得多（GBA 那张宽是画面的两倍、电视机壳 1.22 倍），所以用 `position: fixed` 定位（absolute 会被 `.game-shell__body` 的 `overflow: auto` 裁掉并顶出滚动条），倍率调大后超出浏览器视口的部分看不见即可、不做裁剪也不隐藏；「适应窗口」模式下要塞进可用空间的从画面换成整张机壳（NDS top/side 用合成后的 `canvas` 尺寸）。**NDS 例外**：iframe 抬到机壳之上（`z-index: 6` > 机壳 5）、iframe 文档与引擎容器透明、引擎主画布用 `mask-image` 只保留屏幕区域，这样引擎设置弹框跨过铰链时显示在机壳上面（宿主页在 `EJS_onGameStart` 后挂 `x-nds-passthrough`）；其他机种的 iframe 仍不透明、机壳照旧盖在上面。截图（按钮或快捷键 **Ctrl+Shift+S**）截下后**不再下载**：先弹确认框（180px 宽的限制框预览，高度按截图真实比例——NDS 双屏是竖版；+ 可选描述 ≤15 字），点「确认」才带描述上传进**按账号隔离的截图图库**（`/api/games/screenshots`，内容落 `image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀}`，只本人可见可改；格式按内容 magic 认，PNG/JPG/WebP/GIF，单张 ≤16MB）；详情弹框顶部是一条图片栏（一行 4 个 180px 限制框，封面/图集保持 1:1、截图按机种比例，NDS 是竖版；无底色无圆角、与信息区之间无分隔线，封面共享且恒占第一格，其后本人的截图，可左右翻页——格子排在一条轨道上水平滑动，按钮与滚轮都能翻，截图下方居中显示描述），右栏「截图 [管理]」打开的是**相册式平铺管理页**：可上传本地图片、单击描述就地改（同高同字号，回车/失焦存、ESC 放弃，无按钮无计数，≤15 字）、工具条右上角固定的「删除」进多选删除、整块拖动排序（后端分数排序：只改被拖那一行，间隙不足才整份重排）。图片栏支持滚轮翻页（上滚前翻、下滚后翻）。截图优先要引擎自带截图（内核侧读帧缓冲 → 原生像素），拿不到或全黑则退回同帧拷贝画布（引擎上下文 `preserveDrawingBuffer: false`，个别浏览器会拷到全黑），窗口选择器（`EmuWindowSelect.vue`，按钮 + 就地弹出的**两列矩阵**：行 = 倍率、「适应窗口」，列 = 显示比例；**NDS 是三列 = 三种屏幕布局**，每列独立记住自己的倍率/适应窗口，存 `games.emu.nds.window`，点某列的格子还会切到那个布局）以各平台**帧缓冲分辨率**为基准（`constants/emulatorScreens.js` 的 `EMU_NATIVE`：NES 256×224——fceumm 默认裁掉上下各 8 行过扫描，宿主页把显示比例设成像素完美，见下；SNES 256×224；GB/GBC 160×144；GBA 240×160；NDS 默认 256×438（双屏 192 + 54 gap + 192；`NDS_NATIVE` 另给 `top` 256×192、`side` 585×192）；MD 320×224；GG 160×144；SMS 256×192），倍率 1×–4× 含 .5 档，按帧缓冲高度换算、宽度按舞台宽高比推出（菜单里显示真实窗口尺寸）；**只有 FC 有第二列「4:3」**（真机 CRT 观感：内核改 `fceumm_aspect = 4:3` 并关掉过扫描裁切 → 帧缓冲 256×240、1× 窗口 320×240，机壳换成原素材那张），默认仍是左列「像素完美」（8:7，1× = 256×224）；**舞台长宽比取引擎上报的显示宽高比**（`__ejsRpc.videoInfo().aspect`），不是帧缓冲比例——引擎按内核上报的 aspect（含像素宽高比校正；FC 由宿主页 `emulator-host.html` 按 `?ratio=`（运行中切换走 `__ejsRpc.setDisplayMode`）设成像素完美或 4:3）等比摆放画面，画布填不满处即黑边。云端存档（`/api/games/saves`，需登录）把某(用户,游戏)此刻全部本地存档文件（Flash `.sol` / 模拟器 `.state`）存为整体快照：元数据在 `game_cloud_snapshots(_files)`，内容按 `save/{用户名}/{game_type}/{卡带ID}/{uuid}.state` 落盘；**快照之间可有父子关系**（`game_cloud_snapshots.parent_id`：可空、NULL=顶层、允许多个顶层、**无物理外键**，归属/同游戏/防环由 service 校验），`PUT /api/games/saves/{id}/parent`（body `{parent_id}`，null=顶层）设置或清除，**删除快照时直接子级改回顶层**（不级联、不接续祖父）；两个播放页共用一套 `components/games/SaveManager.vue`：一个弹框，上半本地、下半云端；云端左侧列默认全部节点（只有标题），「只看起点」过滤顶层，右侧画布按 `parent_id` 自动布局、**不存坐标**；拖动建树、拖到空白处或右键「设为顶层」脱离、滚轮缩放、空白拖动平移、**选中节点后 `Shift + ↑/↓` 调整同级顺序**、全屏；节点只显示描述第一行，没有描述显示时间戳；右键节点弹详情 + 同步至本地/设为顶层/删除；左列与画布节点双击都在原地改描述（不弹详情），详情弹框里的描述也可双击改。展示顺序由 `game_cloud_snapshots.sort_order` 分数决定（升序，**越新越靠下**）：新建快照自动接在同 (user, game) 下最新一条后面、并追加到同级末尾（`created_at` 只决定「最新一条」是谁），同级调序走 `POST /api/games/saves/{id}/move`（body `{to_index}`，下标在同级内；只改被移动那一行的分数，间隙用尽才整份重铺）；**删游戏时会把该游戏所有账号的存档快照行、存档文件与存档目录一并清掉**（快照目录按文件路径反推，因为换过类型的游戏目录名是快照当时的类型；截图同样一并清掉，理由相同）。三个播放页都支持快捷键 **`·`（Backquote，数字 1 左边那个键）**：立刻「捕捉当前进度 → 同步至云端」，两步跑完**只**弹一句「已同步至云端」（模拟器直接复用 `onUploadCloud()`，它内部已含 `capture` 与提示；**Flash 因为落盘必须先重启游戏，要先弹二次确认**，`onUploadCloud()` 返回 boolean 决定弹不弹提示；H5 没有云存档，只弹「HTML5 游戏不支持云存档。」，且焦点在沙箱 iframe 里时父页收不到这个键）。Flash 与模拟器播放页另有快捷键 **Alt + `（Backquote）** 打开「存档管理」（H5 没有存档管理），已开着或截图确认框开着时不响应。模拟器播放页还有 **- / =**：NDS 屏幕布局循环（- 上一个 / + 下一个，dual → top → side），焦点在输入框或引擎自己的菜单/设置面板里时不响应。模拟器播放页还有**回车**：有本地存档时载入最近一份；无论有没有存档都会把键盘焦点交给模拟器（已选中时不动），之后按键直接进游戏——焦点在按钮/链接/下拉、输入框或弹框里时不抢。**三个播放页全屏时鼠标静止 3 秒隐藏光标并收起标题栏**（`GameShell` 计时；模拟器把 iframe 内的指针活动转进来、并给宿主 `<html>` 挂 `x-cursor-hidden` 同步 iframe 内光标；H5 是沙箱不透明源，画面内光标无法隐藏）。模拟器本地档固定只有一份、固定叫 `save.state`（每游戏键 `x_emusave:{gameId}:state1`，捕捉/导入/云还原都是覆盖），由前端 `utils/emulatorSaves.js`（内容存 IndexedDB）维护，播放宿主 `public/emulator-host.html` 暴露 `__ejsRpc`（capture/load/screenshot/videoInfo/fastForward/setFastForward/setNdsLayout）。登录用户的模拟器设置（键位/选项/金手指）另按平台随账号同步：存 SQLite（`game_emulator_settings`，不落文件），进游戏时自动写回 localStorage，改完点标题栏「保存配置」手动上传。**最近游玩**（`/api/games/recent`，需登录）按账号存 SQLite（`game_recent_plays`，唯一 `(user_id, game_id)`），由三个播放页在真正拉起播放器时各自调 `utils/recentGames.js` 的 `reportGamePlayed()` 上报。**游玩时长与进度**（`/api/games/stats`，需登录）存 `game_user_stats`（唯一 `(user_id, game_id)`，`play_seconds` + `progress`），`utils/gamePlaytime.js` 是模块级单例，三个播放页在与 `reportGamePlayed()` 完全相同的时机起停表、每 30 秒心跳累加（单次上报在 service 里收敛到 0..300 秒），`document.hidden` 期间不累计；进度只由用户手动设置，不随游玩自动变。游戏中心页**只在游戏卡上接管右键**，可设置进度与时长（覆盖式）；类型下拉**左边**有进度下拉可联合筛选；卡片封面下方是居中一行**进度标签 + 总时长**，**进度还是「未开始」就不画内容，但状态行容器仍占住一行高度（`min-height: 14px`），好让同排卡片的标题不受有没有状态影响、始终水平对齐**。
-- **游戏图集。** `game_gallery_images`：一个游戏一套的展示图（宣传图、说明书扫描件之类），**按游戏共享**——不记上传者，任何登录用户都能传、改描述、删、拖动排序（`/api/games/gallery`，与截图的 `/api/games/screenshots` 共用同一套相册实现，只少了「用户」这一维）。内容落**游戏目录内**的 `game/{类型}/{卡带ID}/image/{uuid}.{后缀}`，游戏类型创建后不可变，所以目录不会跨类型迁移；删游戏时行与文件一并清掉。管理入口在**游戏管理页的编辑弹框**（「图集 → 管理」，新建弹框没有），详情弹框的图片栏只读展示，顺序是封面 → 图集 → 本人的截图。
-- **SQLite 滚动备份。** `create_app()` 启动时调一次 `backend/backup.py::backup_database()`，之后每 `BACKUP_INTERVAL_SECONDS`（1 小时）由一个守护线程再备一次。**当月只有一份** `<YYYY-MM>.db`，写在**数据根**的 `db/` 里（`Settings.backup_dir`，不是库所在目录），**每次整份重写**（先写 `.tmp` 再 `os.replace`，读的人永远看到完整文件），所以快照最多落后一小时。用 `sqlite3` 的 backup API 而不是拷文件（服务一直在写，裸拷会撕裂），失败只记 warning、**绝不拦住启动**。不做还原功能，回滚靠手工替换 `app.db`。
-- **根目录哨兵（`.mounted`）。** **只当那个根的宿主路径落在 Windows 盘挂载前缀下**（`backend/config.py` 的 `WINDOWS_MOUNT_PREFIX`，可改，默认 `/mnt`；设成 `/` = 对所有路径都要求）才检查：`create_app()` 在 `ensure_data_dir()` **之前**调 `backend/mount_guard.py::require_mounted()`，**数据根与运行时根逐个查**，某个根的挂载点里没有**人工创建**的空文件 `.mounted`（代码只检查、绝不代建）就只 stat 一下、不建目录不建库，打一条中文日志（含该 `touch` 哪个宿主路径）→ 等 5 秒 → `sys.exit(3)`；**不在这个前缀下的根（普通 Linux 目录，含本机默认的 `data/storage`）直接放行**，`TESTING` 下同样跳过。判断用的是「宿主路径」：容器里两个根固定是 bind 目标 `/data` 与 `/runtime`、看不出宿主路径，所以 compose 把 `.env` 的 `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` 也传进 api 容器（`Settings.STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR`，**只给这一处判断用**，业务代码不碰），本机直跑退回 `STORAGE_ROOT` / `RUNTIME_ROOT`；两个根相同时按挂载点去重只查一次。容器里的退出由入口脚本 `backend/entrypoint.sh`（`backend/Dockerfile` 的 `ENTRYPOINT`，CMD 仍是那条 gunicorn）在 `exec gunicorn` 之前触发——退出的是**容器主进程**，compose 的 `api.restart: unless-stopped` 随即把容器重新拉起，循环到哨兵出现（退出码 3 = gunicorn 的 `WORKER_BOOT_ERROR`，万一有人绕过入口脚本直接跑 gunicorn，master 也会跟着退出；换别的码只会 fork 新 worker 重试、容器不重启）。**它不是「待配置」开关**：storage 照旧永远可用，哨兵只拦启动。运行时根现在装的不只是库、还有 H5/攻略的解包产物，哨兵的价值不变（它保护的是库），派生文件丢了只是重新解压一次。
-- **游戏发现（游戏检索 + 游戏榜单）。** 第三个页面（`/games/discover`，侧栏第 3 项；旧路径 `/games/search` 重定向过来并保留 query）。页内是单选栏「游戏检索 / 游戏榜单」，标签写在 URL（默认检索，`?tab=ranking` 是榜单），两块都只读。数据是**与平台游戏库无关**的外部中英文名录：`backend/search/csv/` 下 37 个 `机种,中文,英文` 三列 CSV（5 万余行、36 个机种），**索引构建期不与 `games` 表比对/联动**（榜单表结构与 CSV 格式都不变、不需要 `make index`）；但**接口运行期**会按卡带 ID 把榜单行与库存**只读地**关联一次（见下面「游戏榜单」那条）。**机种名与游戏管理页的类型名是同一套**：两份 CSV 的机种列都经 `backend/games/platforms.py` 的**机种词表**（机种 id = EmulatorJS system key，见下面「游戏类型」那条）归一，认不出机种的保留原文并归为「未收录」；检索侧同一个机种的多个原始名在建库时**合并成一行 console**（36 → 32 项），所以下拉不会出现两个同名项。索引是**独立的只读库** `<STORAGE_ROOT>/db/game.db`（`config.py` 的 `GAME_INDEX_FILENAME`），写入方**只有 `backend/games/search_index.py` 这一个模块**，两条写路径：① `build_index()` 整库重建——**服务启动自动补建**（`create_app()` 调 `ensure_game_index()`，不存在才建、`TESTING` 跳过、失败只记 warning 不拦启动）与 `make index`（手动重建/更新；`backend/cli.py` 的 `index` 命令；`Makefile` 的 `index` 目标）；② `ensure_ranking_loaded()` 启动时把榜单 CSV 就地补进已存在的库。运行期经 `search_service.py` 的 `GameSearchService` 与 `ranking_service.py` 的 `GameRankingService` 以 `Path.as_uri()` + `?mode=ro` + `PRAGMA query_only=1` 打开、每请求一条短连接、**绝不写**；**不参与备份**（可从 CSV 重建）。构建是整库重建 + 原子替换（`os.replace`，**不开 WAL**），所以重建后**不用重启 api**。CSV 随 `backend/` 进 api 镜像，所以容器里启动时也能自动补建（两边写的是同一个 bind 进来的数据目录）。索引缺失时接口返回 `indexed:false` + 空列表（200，页面给「执行 make index」的中文引导）；坏库/`meta.schema_version` 不符 → 503 中文。**分词**：FTS5 `unicode61 remove_diacritics 2` + 汉字逐字拆 token（裸 `unicode61` 搜不到中文子串、`trigram` 少于 3 字全废），查询把词包成短语、词间 AND；**索引期与查询期共用 `search_text.py` 的 `index_text()` 一份实现**，任一处漏调中文就搜不到。**中英文名结尾的地区/语言/版本标签不进索引**（`(Japan)`、`（日版）`、`[PS2]` …，`strip_tags()` 剥掉，落库与展示仍是原文），**按 `(机种,中文,英文)` 三元组去重**。SQL 四条硬约束：**FTS 表不能起别名**（`f MATCH` 报 `no such column`）、`bm25()` 权重顺序 = 列顺序、**不能用 `COUNT(*) OVER ()` 配 bm25 排序**（报错，total 单独查）、`ORDER BY` 末尾必须有 `g.id` 兜排序（否则翻页重复/丢行）；机种过滤按有无拼 `AND g.console_id = :cid`，**不写 `:cid IS NULL OR`**（会让 SQLite 弃用索引）。高亮在前端把片段切成数组渲染 `<mark>`（contentless 表没有 `snippet()`，**不用 `v-html`**）。接口 `GET /api/games/search`（`q`/`console_id`/`page`/`page_size`）与 `GET /api/games/search/consoles`，都要登录。**游戏榜单**：数据源 `backend/search/ranking/ranking.csv`（四列 `序号,机种名称,游戏名称,游戏卡带ID`，单独目录，格式契约见该目录 README），落进 game.db 的单表 `ranking(platform, console, rank, title, cartridge_ids)`（`PRIMARY KEY (platform, rank) WITHOUT ROWID`；`platform` 是归一后的机种键、认不出机种时是 `raw:{原文}`，`console` 留 CSV 原文；`cartridge_ids` 是 JSON 数组文本、0~2 个，可为空数组），meta 记 `ranking_schema_version`（**独立于检索的 `SCHEMA_VERSION`，不 bump 它**）、`ranking_fingerprint`（CSV 原始字节 SHA-256）等；`ensure_ranking_loaded()` 先用只读连接比对指纹，一致就**连读写连接都不打开**，需要更新时 `BEGIN IMMEDIATE` 事务内 DROP/建表/全量插入/upsert meta，失败回滚、CSV 缺失保留旧榜单；启动加载 best-effort，失败只记 warning。接口 `GET /api/games/search/ranking?console=` 与 `/ranking/consoles`（都要登录，**不分页**；榜单没加载返回 `has_ranking:false` + 空列表，`ranking_schema_version` 存在但不符才 503）。**与平台库存的关联在请求期做**（`GameRankingService` 构造函数注入 `GameService.map_for_cartridge_ids`，整份榜单的卡带 ID 一次批量查 `games` 表，只认 `game_path != ""` 的条目；比对是 `normalize_cartridge_id()` 的「去首尾空白 + 转大写」，**绝不能复用会抛错的 `validate_cartridge_id()`**；一行任意一个 ID 命中即算、取第一个命中的），命中的行载荷多 `game_id` / `path`（`play_path()` 按类型给，与 `GameItem.path` 同一份实现），**不落库、不进索引、不缓存**，所以增删游戏立刻生效、不需要 `make index`。前端 `views/games/discover/index.vue` 一个组件装两个标签（检索区状态切标签保留；榜单区第一次切到才请求），**标签栏是一对普通按钮、只能点**（不用 `el-radio-group`：原生 radio 焦点在里面时左右键会换选中项、跟当前标签的分页条抢键），榜单的卡带 ID 是并排的可点按钮、点击复制（复用 `utils/clipboard.js`）；**命中库存的行游戏名渲染成真 `<a href>`**（`<router-link :to="item.path">`，**不加 `@click`/`custom`**，否则 Ctrl+点击、中键开新标签页就废了），榜单工具栏 = 机种下拉 + **搜索框**（与检索区同款、同位置）+ 紧挨其右的**「已入库比例」按钮**（不推到最右）（`已入库 25 / 100`，前端按整份榜单现算，加载中先隐藏）：**搜索与分页全在前端**（一个机种整份取回）——搜索是对**游戏名称**做不区分大小写的裸子串匹配、逐字即时生效、**无防抖无高亮**，与检索区那套 FTS 语法无关（关键词是两个独立的 ref）；按钮单击即按下（点亮成实心主色 + `aria-pressed`），**榜单只展示已入库的行**；两者是 **AND**（`rankingKeywordMatches` → `rankingVisibleItems`），表格与分页条按过滤后的行数算、任一条件变化页码回第一页；空态按「是谁清空的」分流（`没有匹配到名称含「xxx」的游戏。` / `匹配「xxx」的游戏都还没入库。` / `这个类型下还没有已入库的游戏。`）；按钮上的比例恒按整份榜单算，不随搜索与过滤变。
-- **会话签名密钥写死。** `SECRET_KEY` 在 `backend/config.py` 里写成一个常量（session cookie 签名用），跟仓库一起走、不从环境变量读；换值使所有已登录会话失效。
-- **Windows「解压即用」包。** 第二条路线的两块后端代码都**默认关闭、靠环境变量开关**，Docker 路线行为一字不变：`backend/static_site.py`（后端托管前端 dist，仅 `STATIC_DIR` 非空时注册，**行为规范是 `frontend/nginx.conf.template`，改一边必须改另一边**，由 `tests/test_static_site.py` 钉住七条语义：SPA 回落、`/version.txt` 缺失即 404、三个 immutable 前缀未命中即 404、两个入口文件 no-cache、**MIME 用显式表不用 `mimetypes`**（Windows 上 `mimetypes` 读注册表，`.js` 被注册成 `text/plain` 的机器会整站白屏）、路径安全）、`backend/request_limit.py`（顶替 nginx 的 `client_max_body_size`，超限 413、分块传输 411）。启动器 `packaging/windows/launcher.py` 是**进程内**跑 uvicorn（Windows 上 terminate 是硬杀、会留半截 SQLite），并把 `SESSION_COOKIE_SECURE` 设成 false（局域网走 http，否则登录静默失效）。**包里没有任何自动升级的代码**：升级 = 关窗口 → 解压新包到新目录 → 把 `data` 搬过去，停止服务就是关那个控制台窗口（硬杀不坏库，SQLite 有回滚日志）。打 zip 用 `packaging/windows/make_zip.py` 而**不是命令行的 `zip`**：条目直接躺在压缩包根上（不套一层目录），且非 ASCII 文件名必须带 UTF-8 标记位（bit 11）——Info-ZIP 不设它，Windows 资源管理器就按 OEM 代码页解释，中文文件名全成乱码（WinRAR 会自己猜 UTF-8，预解压窗口里看着正常）。包内 `.cmd`/`.bat` **内容纯 ASCII**（cmd 按 OEM 代码页解析批处理），`说明.txt` 与 `.ps1` 存 UTF-8 **带 BOM**。
-- **明确不做。** React、TypeScript、i18n、OAuth/邮箱验证码/找回密码、对象存储（MinIO/S3）、JWT、WebSocket、Redis/PostgreSQL/Celery、把密钥写进前端或 git；也**不自动创建/自动修复 `.mounted`**（必须人工建，否则它就失去了「这个目录确实已挂载」的意义）；Windows 包**不做安装向导（无 setup.exe / Inno Setup）、也不做自动升级**，只做解压即用（升级 = 关窗口 → 解压新包 → 搬 `data`）。
-
-## 目录结构（约定，只建这些）
-
-```
-frontend/                 # Vue 3 SPA（main.js / permission.js / router / layout / store / api / utils / views / components/common）
-frontend/src/components/games/  # 游戏专用组件（GameCard、GameDetailDialog、GameScreenshotGallery 图片栏、ScreenshotManagerDialog/ScreenshotConfirmDialog、GalleryManagerDialog/ImageAlbumDialog、SaveManager/SaveManagerDialog/CloudSavePanel/SaveTreeView、播放器与 GameShell）
-backend/__init__.py       # create_app() 工厂
-backend/{auth,games,tools,storage}/  # auth 与 games 各有 router.py + service.py；games 另有 platforms.py（机种词表）、paths.py、archive.py（两个包的校验/解包原语）、runtime_assets.py（按需解到运行时根）、save_*（云端存档）、screenshot_*（截图）、gallery_*（图集）、settings_*、stats_*、search_*（检索：text/index/service/router）、ranking_*（榜单：service/router）、importer.py、remote.py
-backend/search/csv/       # 游戏检索的 37 个中英文名录 CSV（纯数据目录，只被建索引读）
-backend/search/ranking/   # 游戏榜单的 ranking.csv（四列：序号/机种名称/游戏名称/游戏卡带ID；纯数据目录，只被建索引读）
-backend/storage/          # 跨模块：types（协议与 StoredObject）、local（LocalStorage）、access（流式下载响应）
-backend/cli.py            # python -m backend.cli（init-db / index / serve）
-backend/mount_guard.py    # 根目录哨兵检查（数据根与运行时根在 /mnt 这类 Windows 盘路径下、又缺 .mounted 时等 5 秒退出，让容器重启）
-backend/static_site.py    # 可选：后端托管前端 dist（只有 Windows 包设 STATIC_DIR 时生效）
-backend/request_limit.py  # 请求体上限中间件（顶替 nginx 的 client_max_body_size）
-backend/entrypoint.sh     # api 容器入口：先调上面的检查，再 exec CMD 里的 gunicorn
-packaging/windows/        # Windows「解压即用」包：Dockerfile.build（构建环境镜像，预置运行时/轮子/前端依赖/引擎资产）+
-                          #   build-in-docker.sh（make win 入口）+ build-win-dist.sh（组装）+
-                          #   runtime.env（Windows 版 CPython 钉版）+ fetch-runtime.sh（下载+校验）+
-                          #   launcher.py（启动器）+ winops.py + make_zip.py（打包，UTF-8 文件名）+
-                          #   allow-lan.ps1/允许局域网访问.bat + 启动游戏平台.cmd + 说明.txt +
-                          #   xgame.png（图标源图，换图标=替换它再跑 make_icon.py 生成 xgame.ico）
-scripts/version.sh        # 版本号唯一出处（git tag；HEAD 不在 tag 上时补提交时间戳），Docker 与 Windows 包共用
-docs/                     # architecture.md（设计源）+ data_dict.md（数据字典）
-tests/                    # pytest（test_auth / test_local_storage / test_games / test_game_saves / test_game_screenshots / test_game_emulator_settings / test_game_recent / test_game_stats / test_game_search / test_static_site / test_request_limit / test_win_launcher）
-```
+完整目录树与新增目录规则见 [`AGENTS.md`](AGENTS.md) 的「目录约定」。
 
 ## Git 约定
 
-- 分支名：`<类型>/<描述>`（小写，`-` 连接，简短）。如 `feat/cartridge-id`。
-- 提交标题：`<类型>: <中文短语>`。类型用英文小写：`feat` / `fix` / `docs` / `refactor` / `test` / `chore`。一个提交只做一件事。
+- 分支名 `<类型>/<描述>`，小写、`-` 连接，如 `feat/cartridge-id`。
+- 提交标题 `<类型>: <中文短语>`，类型 `feat` / `fix` / `docs` /
+  `refactor` / `test` / `chore`。
+- 一个提交只做一件事。

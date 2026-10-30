@@ -40,7 +40,7 @@ EmulatorJS CDN），之后每次出包都是离线的。
 Windows 的 `python.exe`；宿主机不是 WSL 就跳过。
 
 版本号由 `scripts/version.sh` 从 git tag 算（就是 `xgame_v<版本>.zip` 里那个），
-规则见 [`DEVELOP.md`](../../DEVELOP.md) 的「版本号」。
+规则见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。
 
 ## 包里是什么
 
@@ -80,36 +80,26 @@ make_zip.py               打 zip：条目不套一层目录 + 中文名带 UTF-
 make_icon.py / xgame.png  从源图生成 xgame.ico（换图标 = 替换 xgame.png 再跑它）
 ```
 
-## 与 Docker 路线的差异（都是刻意的）
+## 与 Docker 路线的差异
 
-| | Docker | 解压即用包 |
-|---|---|---|
-| 前端静态站 | nginx :443 | 后端自己托管（`backend/static_site.py`，行为对着 `frontend/nginx.conf.template` 复刻） |
-| 应用服务器 | gunicorn + uvicorn worker | 单进程 uvicorn（gunicorn 不支持 Windows） |
-| 协议 | HTTPS（自签证书） | HTTP（局域网里手机/平板不会信任自签证书） |
-| session cookie | `Secure` | 由启动器设 `SESSION_COOKIE_SECURE=false`，否则浏览器不保存 cookie |
-| 上传闸门 | nginx `client_max_body_size 512m` | `backend/request_limit.py`（默认 512MB，可配） |
-| 后端配置 | 只认 `STORAGE_ROOT`（库就在 `data/db/` 里） | 启动器额外设 `STATIC_DIR`（让后端托管前端 dist） |
+- 没有 nginx：后端自己托管前端 dist，行为对着 `frontend/nginx.conf.template` 复刻。
+- 没有 gunicorn：单进程 uvicorn。
+- 局域网走 http：启动器把 `SESSION_COOKIE_SECURE` 设成 false。
+- 上传闸门由 `backend/request_limit.py` 顶替 nginx 的 `client_max_body_size`。
 
-HTTP 的代价：非 localhost 下 Service Worker 不注册（封面缓存退化直连，只是慢）、
-剪贴板 API 不可用（「复制」按钮已加兜底）。EmulatorJS 不需要跨源隔离
-（`EJS_threads=false`），所以不用 COOP/COEP。
+完整对照、代价与原因见
+[`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。
 
-## 升级（手动，包里没有任何自动升级的代码）
+## 升级
 
-1. 关掉启动窗口（服务随之停止）；
-2. 把新 zip 解压到一个**新的空目录**（压缩包里没有多余的一层目录，所以先建目录再解压；
-   别覆盖旧目录，旧版本留下的文件会混在里面）；
-3. 把旧目录的 `data/`（或 `xgame.ini` 里 `data_dir` 指的那个目录）整个搬到新目录，
-   双击新的 `启动游戏平台.cmd`；
-4. 桌面快捷方式 / 开机自启指向的还是旧路径，重新跑一次那两个 `.bat`。
+升级是手动的：关窗口 → 解压新包到新目录 → 搬 `data`。
 
-**为什么不做自动升级**：它要停下来改自己的目录，于是每一步都得跟 Windows 的文件锁较劲
-（脚本得先复制到 `%TEMP%` 再执行、服务得先优雅退出、旧目录可能删不掉……），换来的只是
-「少点几下鼠标」。手动的三步没有一处会失败，而且出问题时用户看得见自己在做什么。
+- 没有自动升级代码。
+- 停止服务 = 关掉控制台窗口；硬杀不会坏库。
+- 桌面快捷方式与开机自启要重新跑一次对应的 `.bat`。
 
-**停止服务 = 关掉那个控制台窗口**。硬杀不会坏库（SQLite 有回滚日志，未提交的事务下次打开时
-回滚），只是可能丢掉最后几秒的写入。
+完整步骤见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)
+与包内 `说明.txt`。
 
 ## 构建细节
 
@@ -145,15 +135,11 @@ make win                                   # 重新组装
 且里面要塞 16/32/48/256 好几档尺寸），**不在每次构建时生成**。构建脚本发现源图比 `.ico` 新时
 会顺手重生成一次；本机没有 Pillow 就只提醒一声，继续用仓库里那份图标。
 
-## 还没做的事
+## 编码与 MOTW
 
-- 包里的 `.cmd` / `.bat` 内容是纯 ASCII：cmd 按 OEM 代码页解析批处理，中文混在里面是
-  乱码与解析出错的经典来源。面向用户的中文一律由 Python 或 PowerShell 输出
-  （`.ps1` 存成 UTF-8 **带 BOM**，否则 PowerShell 5.1 会按 ANSI 读）。
-- 没有代码签名，也没有安装程序，所以「从网上下载的 zip 解压出来带 MOTW」这件事只能靠
-  文档和脚本消化：带标记时**每双击一次 `.cmd`/`.bat`**，Windows 都会先弹一次
-  「打开文件 - 安全警告：无法验证发布者」（点「运行」能继续，所以不致命，但每次都要点）。
-  对付它的办法只有两个：解压**之前**右键 zip 勾「解除锁定」（`说明.txt` 第一节第 1 步，
-  最干净），或者解压后双击一次 `解除锁定.bat`。启动器启动时会探一下自己的 `.cmd` 有没有
-  那个数据流，还在就提醒一句（`launcher.py` 的 `still_locked()`）。
-- `\\wsl$` 路径不支持作为数据目录（9p 上的 SQLite 又慢又脆）。
+- `.cmd` / `.bat` 内容纯 ASCII（cmd 按 OEM 代码页解析批处理）。
+- `.ps1` 与 `说明.txt` 用 UTF-8 带 BOM。
+- 面向用户的中文由 Python 或 PowerShell 输出。
+- 从网上下载的 zip 会带 MOTW，处理办法见包内 `说明.txt` 第一节。
+
+细节与原因见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。

@@ -15,3 +15,5 @@
   EmulatorJS 的 system key）：`任天堂GB` 与 `任天堂GBC` 都落到 `gb`，页面上合并成一项
   「任天堂 GB/GBC」展示。**加了新的机种写法**（改了列里的名字）要去那张表补一条别名，
   否则它会以原文单独出现、并被归为「未收录」——`tests/test_platforms.py` 会拿这份数据提醒你。
+- 索引构建、只读连接与分词规则见
+  [`docs/specs/game-discover.md`](../../../docs/specs/game-discover.md)。
