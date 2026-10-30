@@ -4,7 +4,7 @@
         :title="title"
         width="720px"
         align-center
-        footer-mode="close-only"
+        footer-mode="none"
         @update:model-value="emit('update:modelValue', $event)"
     >
         <div class="album">

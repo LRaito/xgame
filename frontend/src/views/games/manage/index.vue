@@ -107,12 +107,15 @@
             @change="reload"
         />
 
-        <!-- 添加/编辑游戏：左右两栏——左边元数据、右边两个上传；整窗居中且一页放得下（不滚动） -->
+        <!-- 添加/编辑游戏：左右两栏——左边元数据、右边两个上传；整窗居中且一页放得下（不滚动）。
+             新建要等全部填完才建条目，底部保留「取消 / 保存」；
+             编辑时每个字段改完即存、文件选完即传，没有保存按钮，只留右上角关闭。 -->
         <app-dialog
             v-model="formVisible"
             :title="formMode === 'create' ? '添加游戏' : '编辑游戏'"
             width="880px"
             align-center
+            :footer-mode="formMode === 'create' ? 'default' : 'none'"
             :confirm-loading="saving"
             confirm-text="保存"
             @confirm="onSave"
@@ -122,7 +125,7 @@
                     <div class="game-manage__form-col">
                         <!-- 编辑时把卡带ID摆到最上面：它既是磁盘目录名、又是这盘卡的身份。
                              值旁边给一个「修改 ID」：改它会连磁盘目录与各账号的存档/截图一起搬，
-                             所以单独一次请求、保存即生效，不走下面那个「保存」按钮 -->
+                             所以单独一次请求、保存即生效 -->
                         <el-form-item v-if="formMode === 'edit'" label="卡带 ID">
                             <div class="game-manage__cartridge">
                                 <template v-if="!cartridgeEditing">
@@ -135,7 +138,7 @@
                                 </template>
                                 <template v-else>
                                     <!-- esc 上的 .stop 不能少：el-dialog 默认按 ESC 关掉整个弹框，
-                                         不拦住的话按一下就把编辑弹框连未保存的改动一起关了 -->
+                                         不拦住的话按一下就把编辑弹框关了 -->
                                     <el-input
                                         ref="cartridgeInputRef"
                                         v-model="cartridgeDraft"
@@ -165,7 +168,12 @@
                             </div>
                         </el-form-item>
                         <el-form-item label="游戏名称" required>
-                            <el-input v-model="form.name" maxlength="255" placeholder="请输入游戏名称" />
+                            <el-input
+                                v-model="form.name"
+                                maxlength="255"
+                                placeholder="请输入游戏名称"
+                                @change="onMetaFieldChange"
+                            />
                         </el-form-item>
                         <el-form-item v-if="formMode === 'create'" label="卡带 ID" required>
                             <el-input
@@ -186,6 +194,7 @@
                                 maxlength="200"
                                 show-word-limit
                                 placeholder="简要介绍玩法或来源"
+                                @change="onMetaFieldChange"
                             />
                         </el-form-item>
                         <el-form-item label="游戏类型">
@@ -199,7 +208,7 @@
                             v-if="formMode === 'edit' && coverTypeOptions.length"
                             label="封面类型"
                         >
-                            <el-radio-group v-model="form.coverType">
+                            <el-radio-group v-model="form.coverType" @change="onMetaFieldChange">
                                 <el-radio
                                     v-for="item in coverTypeOptions"
                                     :key="item.id"
@@ -229,11 +238,23 @@
                                     :accept="gameAccept"
                                     @change="onGameFileChange"
                                 />
-                                <app-button variant="secondary" @click="pickBodyFile">本地上传</app-button>
-                                <app-button variant="secondary" @click="openRemoteBody">网络上传</app-button>
+                                <app-button
+                                    variant="secondary"
+                                    :disabled="bodyUploading"
+                                    @click="pickBodyFile"
+                                >
+                                    本地上传
+                                </app-button>
+                                <app-button
+                                    variant="secondary"
+                                    :disabled="bodyUploading"
+                                    @click="openRemoteBody"
+                                >
+                                    网络上传
+                                </app-button>
                             </div>
                             <p v-if="form.gameFile" class="game-manage__file-hint">
-                                已选：{{ form.gameFile.name }}（{{ formatSize(form.gameFile.size) }}）
+                                {{ formMode === "edit" ? "正在上传：" : "已选：" }}{{ form.gameFile.name }}（{{ formatSize(form.gameFile.size) }}）
                             </p>
                             <!-- 网络来源与本地文件二选一：选了直链就把本地文件清掉（反之亦然） -->
                             <p v-else-if="form.bodyUrl" class="game-manage__file-hint">
@@ -255,21 +276,33 @@
                                     accept="image/*"
                                     @change="onCoverFileChange"
                                 />
-                                <app-button variant="secondary" @click="pickCoverFile">本地上传</app-button>
-                                <app-button variant="secondary" @click="openRemoteCover">网络上传</app-button>
+                                <app-button
+                                    variant="secondary"
+                                    :disabled="coverUploading"
+                                    @click="pickCoverFile"
+                                >
+                                    本地上传
+                                </app-button>
+                                <app-button
+                                    variant="secondary"
+                                    :disabled="coverUploading"
+                                    @click="openRemoteCover"
+                                >
+                                    网络上传
+                                </app-button>
                                 <!-- 美化封面：把当前封面合成成光盘 / 卡带的外观后存回去。
                                      只在支持美化的类型（flash / gb / gba）出现，且要已有封面 -->
                                 <app-button
                                     v-if="canShowBeautify"
                                     variant="secondary"
-                                    :disabled="!canBeautify"
+                                    :disabled="!canBeautify || coverUploading"
                                     @click="beautifyVisible = true"
                                 >
                                     美化封面
                                 </app-button>
                             </div>
                             <p v-if="form.coverFile" class="game-manage__file-hint">
-                                已选：{{ form.coverFile.name }}
+                                {{ formMode === "edit" ? "正在上传：" : "已选：" }}{{ form.coverFile.name }}
                             </p>
                             <p v-else-if="form.coverUrl" class="game-manage__file-hint">
                                 待上传：{{ form.coverUrl }}
@@ -299,7 +332,7 @@
                                 </app-button>
                             </div>
                         </el-form-item>
-                        <!-- 攻略：只在编辑时出现（新建还没有卡带目录可落）。上传 ZIP 或 PDF，保存时才发出去 -->
+                        <!-- 攻略：只在编辑时出现（新建还没有卡带目录可落）。上传 ZIP 或 PDF，选完立即上传 -->
                         <el-form-item v-if="formMode === 'edit'" label="游戏攻略">
                             <div class="game-manage__source">
                                 <input
@@ -309,22 +342,25 @@
                                     accept=".zip,.pdf,application/zip,application/pdf"
                                     @change="onGuideFileChange"
                                 />
-                                <app-button variant="secondary" @click="pickGuide">上传攻略</app-button>
+                                <app-button
+                                    variant="secondary"
+                                    :disabled="guideUploading || guideDeleting"
+                                    @click="pickGuide"
+                                >
+                                    上传攻略
+                                </app-button>
                                 <app-button
                                     v-if="editingItem?.has_guide"
                                     variant="danger"
                                     :loading="guideDeleting"
-                                    :disabled="saving || guideDeleting"
+                                    :disabled="guideUploading || guideDeleting"
                                     @click="onDeleteGuide"
                                 >
                                     删除攻略
                                 </app-button>
                             </div>
-                            <p v-if="guideFile" class="game-manage__file-hint">
-                                已选 {{ guideFile.name }}（重新上传会整体替换）
-                                <app-button text size="sm" @click="clearGuide">
-                                    清除
-                                </app-button>
+                            <p v-if="guideUploading" class="game-manage__file-hint">
+                                正在上传攻略…
                             </p>
                             <p v-else-if="editingItem?.has_guide" class="game-manage__file-hint muted">
                                 当前：已有攻略（{{ editingItem.guide_kind === "pdf" ? "PDF" : "ZIP" }}，重新上传会整体替换）
@@ -343,6 +379,7 @@
             v-model="remoteBodyVisible"
             title="网络上传本体"
             width="520px"
+            :confirm-loading="bodyUploading"
             @confirm="confirmRemoteBody"
         >
             <el-form label-width="88px" class="game-manage__form">
@@ -384,6 +421,7 @@
             v-model="remoteCoverVisible"
             title="网络上传封面"
             width="520px"
+            :confirm-loading="coverUploading"
             @confirm="confirmRemoteCover"
         >
             <el-form label-width="88px" class="game-manage__form">
@@ -395,7 +433,7 @@
                     />
                 </el-form-item>
                 <p class="game-manage__file-hint muted">
-                    支持 jpg、jpeg、png、gif、webp 图片直链。保存时才真正下载。
+                    支持 jpg、jpeg、png、gif、webp 图片直链。{{ formMode === "edit" ? "确定后立即下载。" : "保存时才真正下载。" }}
                 </p>
             </el-form>
         </app-dialog>
@@ -418,7 +456,7 @@
             v-model="importVisible"
             title="搬运游戏"
             width="560px"
-            footer-mode="close-only"
+            footer-mode="none"
         >
             <div class="game-import">
                 <div class="game-import__field">
@@ -551,9 +589,13 @@ const editingItem = ref(null);
 const gameFileRef = ref(null);
 const coverFileRef = ref(null);
 const guideFileRef = ref(null);
-// 攻略：只在编辑弹框出现；ZIP 或 PDF 选好后先存着，点「保存」才提交
-const guideFile = ref(null);
 const guideDeleting = ref(false);
+// 编辑弹框里的三个上传都是选完即传；在途时禁用对应按钮，避免同一项并发提交
+const bodyUploading = ref(false);
+const coverUploading = ref(false);
+const guideUploading = ref(false);
+// 每次打开弹框都换一代：上一只游戏的上传晚到时，不能清掉这一只刚选的文件/预览
+let uploadGen = 0;
 const form = reactive({
     name: "",
     cartridgeId: "",
@@ -562,14 +604,14 @@ const form = reactive({
     description: "",
     gameFile: null,
     coverFile: null,
-    // 网络上传：与上面的本地文件二选一，真正下载在点「保存」时才发生
+    // 网络上传的暂存值：新建时等「保存」一起提交，编辑时确认后立即上传
     bodyUrl: "",
     bodyGameType: "",
     coverUrl: "",
 });
 
 // 卡带 ID 的就地改名：点「修改 ID」变输入框，回车/「确认」提交、ESC/「取消」放弃。
-// 保存即生效（后端要搬磁盘目录），不等下面那个「保存」按钮
+// 保存即生效（后端要搬磁盘目录）
 const cartridgeEditing = ref(false);
 const cartridgeDraft = ref("");
 const cartridgeSaving = ref(false);
@@ -599,8 +641,8 @@ const remoteCoverUrl = ref("");
 // 封面允许的图片扩展名（与后端 _COVER_EXTENSIONS 一致）
 const COVER_EXTENSIONS = [".jpg", ".jpeg", ".png", ".gif", ".webp"];
 
-// 封面预览：刚选的封面用本地 objectURL 即时显示（提交前先看效果），否则显示该游戏当前封面。
-// objectURL 要显式回收：换文件、重开弹窗、离开页面时都清掉。
+// 封面预览：刚选的封面用本地 objectURL 即时显示（编辑时只会出现在上传途中），
+// 否则显示该游戏当前封面。objectURL 要显式回收：换文件、重开弹窗、离开页面时都清掉。
 const coverPreviewUrl = ref("");
 
 function releaseCoverPreview() {
@@ -612,7 +654,12 @@ function releaseCoverPreview() {
 
 const coverPreview = computed(() => {
     if (coverPreviewUrl.value) {
-        return { src: coverPreviewUrl.value, caption: "新封面（保存后生效）" };
+        const caption = coverUploading.value
+            ? "新封面（正在上传…）"
+            : formMode.value === "create"
+                ? "新封面（保存后生效）"
+                : "新封面";
+        return { src: coverPreviewUrl.value, caption };
     }
     const url = gameCoverUrl(editingItem.value);
     return url ? { src: url, caption: "当前封面" } : null;
@@ -831,6 +878,11 @@ function resetForm() {
     clearCoverFile();
     clearGuide();
     guideDeleting.value = false;
+    // 换了一只游戏：在途上传的 finally 认得旧 generation，不会来动新弹框的状态
+    uploadGen += 1;
+    bodyUploading.value = false;
+    coverUploading.value = false;
+    guideUploading.value = false;
     clearRemoteBody();
     form.coverUrl = "";
     remoteBody.url = "";
@@ -888,6 +940,8 @@ function openCreate() {
 }
 
 async function openEdit(id) {
+    // 上一只游戏关弹框时排队的元数据保存先落地，避免它的响应晚到覆盖这一只的编辑态
+    await metaSaveChain.catch(() => {});
     resetForm();
     formMode.value = "edit";
     editingId.value = id;
@@ -902,6 +956,13 @@ function openDetail(id) {
     detailId.value = id;
     detailVisible.value = true;
 }
+
+// 右上角关闭时输入框可能还没触发 change：补一次落库（空名称不提交，避免把游戏改成无名）
+watch(formVisible, (visible) => {
+    if (!visible && formMode.value === "edit" && form.name.trim()) {
+        queueMetaSave();
+    }
+});
 
 function openImport() {
     importUrl.value = "";
@@ -939,21 +1000,48 @@ function pickCoverFile() {
 }
 
 function onGameFileChange(event) {
-    form.gameFile = event.target.files?.[0] || null;
-    if (form.gameFile) {
-        // 本地文件与网络地址二选一
-        clearRemoteBody();
+    const file = event.target.files?.[0] || null;
+    form.gameFile = file;
+    if (!file) {
+        return;
     }
+    // 本地文件与网络地址二选一
+    clearRemoteBody();
+    if (formMode.value !== "edit") {
+        return;
+    }
+    // 编辑只能换同类型本体：文件选择器已按后缀收窄，这里再挡一道（也能拦住手改的地址）
+    const currentType = editingItem.value?.game_type;
+    const fileType = gameTypeByExtension(file.name);
+    if (!fileType) {
+        ElMessage.warning("无法识别游戏本体格式，请更换文件");
+        clearGameFile();
+        return;
+    }
+    if (currentType && fileType !== currentType) {
+        ElMessage.warning(
+            `只能更换同一游戏类型的本体：当前是「${typeLabel(currentType)}」，` +
+                `所选文件是「${typeLabel(fileType)}」`
+        );
+        clearGameFile();
+        return;
+    }
+    uploadBodyNow({ file });
 }
 
 function onCoverFileChange(event) {
-    form.coverFile = event.target.files?.[0] || null;
-    if (form.coverFile) {
+    const file = event.target.files?.[0] || null;
+    form.coverFile = file;
+    if (file) {
         form.coverUrl = "";
     }
     releaseCoverPreview();
-    if (form.coverFile) {
-        coverPreviewUrl.value = URL.createObjectURL(form.coverFile);
+    if (!file) {
+        return;
+    }
+    coverPreviewUrl.value = URL.createObjectURL(file);
+    if (formMode.value === "edit") {
+        uploadCoverNow({ file });
     }
 }
 
@@ -969,16 +1057,18 @@ function isGuideFileName(name) {
 
 function onGuideFileChange(event) {
     const file = (event.target.files || [])[0] || null;
-    if (file && !isGuideFileName(file.name)) {
+    if (!file) {
+        return;
+    }
+    if (!isGuideFileName(file.name)) {
         ElMessage.warning("攻略只支持 ZIP 压缩包或 PDF 文件");
         clearGuide();
         return;
     }
-    guideFile.value = file;
+    uploadGuideNow(file);
 }
 
 function clearGuide() {
-    guideFile.value = null;
     if (guideFileRef.value) {
         guideFileRef.value.value = "";
     }
@@ -1018,6 +1108,15 @@ function confirmRemoteBody() {
         );
         return;
     }
+    if (formMode.value === "edit") {
+        // 编辑弹框里确认即上传；上传成功再收起这个小弹框，失败留在原地改地址
+        uploadBodyNow({ url, gameType: remoteBody.gameType }).then((ok) => {
+            if (ok) {
+                remoteBodyVisible.value = false;
+            }
+        });
+        return;
+    }
     form.bodyUrl = url;
     form.bodyGameType = remoteBody.gameType;
     clearGameFile();
@@ -1054,6 +1153,14 @@ function confirmRemoteCover() {
         ElMessage.warning("封面仅支持 jpg、jpeg、png、gif、webp 图片直链");
         return;
     }
+    if (formMode.value === "edit") {
+        uploadCoverNow({ url }).then((ok) => {
+            if (ok) {
+                remoteCoverVisible.value = false;
+            }
+        });
+        return;
+    }
     form.coverUrl = url;
     clearCoverFile();
     remoteCoverVisible.value = false;
@@ -1077,7 +1184,179 @@ async function uploadAsset(
     if (coverType) {
         data.append("cover_type", coverType);
     }
-    await uploadGameAssetAPI(gameId, data);
+    return uploadGameAssetAPI(gameId, data);
+}
+
+/**
+ * 编辑弹框里的元数据（名称 / 描述 / 封面类型）改完即存。
+ * 失焦、切换单选或关弹框时触发；请求串行排队，旧游戏的响应不会覆盖新打开的游戏。
+ */
+let metaSaveChain = Promise.resolve();
+
+function queueMetaSave() {
+    if (formMode.value !== "edit" || !editingId.value) {
+        return;
+    }
+    const id = editingId.value;
+    const payload = {
+        name: form.name.trim(),
+        description: form.description,
+        cover_type: form.coverType || "",
+    };
+    // 在排队时就把基线快照下来：等真正发出请求时，编辑弹框可能已经换了一只游戏
+    const baseline = editingItem.value;
+    const base =
+        baseline && baseline.id === id
+            ? {
+                name: baseline.name,
+                description: baseline.description,
+                cover_type: baseline.cover_type || "",
+            }
+            : null;
+    metaSaveChain = metaSaveChain
+        .then(() => saveMetaNow(id, payload, base))
+        .catch(() => {});
+}
+
+/** 名称 / 描述 / 封面类型的变更入口：名称为空时还原成落库值，不提交。 */
+function onMetaFieldChange() {
+    if (formMode.value !== "edit") {
+        return;
+    }
+    if (!form.name.trim()) {
+        form.name = editingItem.value?.name || "";
+        ElMessage.warning("游戏名称不能为空");
+        return;
+    }
+    queueMetaSave();
+}
+
+async function saveMetaNow(id, payload, baseline) {
+    if (
+        baseline &&
+        baseline.name === payload.name &&
+        baseline.description === payload.description &&
+        baseline.cover_type === payload.cover_type
+    ) {
+        return;
+    }
+    try {
+        const updated = await updateManageGameAPI(id, payload);
+        if (editingId.value === id && editingItem.value?.id === id) {
+            editingItem.value = updated;
+            // 服务端会去首尾空白：只把没被后续编辑改过的输入框同步成落库值
+            if (form.name.trim() === payload.name) {
+                form.name = updated.name;
+            }
+            if (form.description === payload.description) {
+                form.description = updated.description;
+            }
+            if ((form.coverType || "") === payload.cover_type) {
+                form.coverType = updated.cover_type || "";
+            }
+        }
+        await reload();
+    } catch (err) {
+        if (!err.reported) {
+            ElMessage.error(err.message || "保存失败");
+        }
+    }
+}
+
+/** 立即上传本体（编辑弹框专用）。成功返回 true，失败返回 false。 */
+async function uploadBodyNow({ file = null, url = "", gameType = "" }) {
+    const id = editingId.value;
+    if (!id || bodyUploading.value) {
+        return false;
+    }
+    const gen = uploadGen;
+    bodyUploading.value = true;
+    try {
+        const updated = await uploadAsset(id, "game", { file, url, gameType });
+        if (editingId.value === id) {
+            editingItem.value = updated;
+        }
+        if (gen === uploadGen) {
+            clearRemoteBody();
+        }
+        ElMessage.success("游戏本体已更新");
+        await reload();
+        return true;
+    } catch (err) {
+        if (!err.reported) {
+            ElMessage.error(err.message || "游戏本体上传失败");
+        }
+        return false;
+    } finally {
+        if (gen === uploadGen) {
+            bodyUploading.value = false;
+            // 清掉选择：同一个文件再选一次也能触发 change
+            clearGameFile();
+        }
+    }
+}
+
+/** 立即上传封面（编辑弹框专用）。成功返回 true，失败返回 false。 */
+async function uploadCoverNow({ file = null, url = "" }) {
+    const id = editingId.value;
+    if (!id || coverUploading.value) {
+        return false;
+    }
+    const gen = uploadGen;
+    coverUploading.value = true;
+    try {
+        const updated = await uploadAsset(id, "cover", { file, url });
+        if (editingId.value === id) {
+            editingItem.value = updated;
+        }
+        if (gen === uploadGen) {
+            form.coverUrl = "";
+        }
+        ElMessage.success("封面已更新");
+        await reload();
+        return true;
+    } catch (err) {
+        if (!err.reported) {
+            ElMessage.error(err.message || "封面上传失败");
+        }
+        return false;
+    } finally {
+        if (gen === uploadGen) {
+            coverUploading.value = false;
+            clearCoverFile();
+            releaseCoverPreview();
+        }
+    }
+}
+
+/** 立即上传攻略（ZIP 只校验不解压、PDF 原样存；查看时才按需解到运行时目录）。 */
+async function uploadGuideNow(file) {
+    const id = editingId.value;
+    if (!id || guideUploading.value) {
+        clearGuide();
+        return;
+    }
+    const gen = uploadGen;
+    guideUploading.value = true;
+    try {
+        const data = new FormData();
+        data.append("file", file);
+        const updated = await uploadGuideAPI(id, data);
+        if (editingId.value === id) {
+            editingItem.value = updated;
+        }
+        ElMessage.success("攻略已上传");
+        await reload();
+    } catch (err) {
+        if (!err.reported) {
+            ElMessage.error(err.message || "攻略上传失败");
+        }
+    } finally {
+        if (gen === uploadGen) {
+            guideUploading.value = false;
+            clearGuide();
+        }
+    }
 }
 
 /**
@@ -1109,24 +1388,15 @@ async function onBeautifyConfirm({ blob, styleId }) {
     }
 }
 
-/** 提交攻略（ZIP 只校验不解压、PDF 原样存；查看时才按需解到运行时目录） */
-async function uploadGuide(gameId) {
-    const data = new FormData();
-    data.append("file", guideFile.value);
-    await uploadGuideAPI(gameId, data);
-}
-
-/** 删除攻略：确认后立即生效（不随「保存」提交），并清掉还没保存的新文件选择。 */
+/** 删除攻略：确认后立即生效。 */
 async function onDeleteGuide() {
     const item = editingItem.value;
-    if (!item?.has_guide || guideDeleting.value) {
+    if (!item?.has_guide || guideDeleting.value || guideUploading.value) {
         return;
     }
     const targetId = editingId.value;
-    const staged = Boolean(guideFile.value);
     const confirmed = await dangerConfirm(
-        `确定删除「${item.name}」的攻略？删除后无法恢复。` +
-            (staged ? "已选但尚未保存的新攻略也会一起丢弃。" : ""),
+        `确定删除「${item.name}」的攻略？删除后无法恢复。`,
         { title: "删除攻略" },
     );
     if (!confirmed) {
@@ -1138,7 +1408,6 @@ async function onDeleteGuide() {
         // 请求在途时可能已经关掉弹框又打开别的游戏，别用旧响应覆盖
         if (editingId.value === targetId) {
             editingItem.value = updated;
-            clearGuide();
         }
         ElMessage.success("攻略已删除");
         await reload();
@@ -1171,76 +1440,32 @@ async function onCreate() {
     await createManageGameAPI(data);
 }
 
+/** 新建：一次性提交名称 / 卡带 ID / 描述 / 本体（可选封面）。编辑没有保存按钮，不走这里。 */
 async function onSave() {
-    // 删除请求在途时不要再提交上传，避免同一次操作里又删又传
-    if (guideDeleting.value) {
+    if (formMode.value !== "create") {
         return;
     }
     if (!form.name.trim()) {
         ElMessage.warning("请填写游戏名称");
         return;
     }
-    if (formMode.value === "create") {
-        if (!form.cartridgeId.trim()) {
-            ElMessage.warning("请填写卡带 ID");
-            return;
-        }
-        if (!hasBodySource.value) {
-            ElMessage.warning("请选择游戏本体文件，或点「网络上传」填下载地址");
-            return;
-        }
-        if (!bodySourceType.value) {
-            ElMessage.warning("无法识别游戏本体格式，请更换文件或检查下载地址");
-            return;
-        }
-    } else if (guideFile.value && !isGuideFileName(guideFile.value.name)) {
-        ElMessage.warning("攻略只支持 ZIP 压缩包或 PDF 文件");
+    if (!form.cartridgeId.trim()) {
+        ElMessage.warning("请填写卡带 ID");
         return;
     }
-    // 编辑换本体只允许同类型：在写元数据之前拦住，避免「名称改了、本体被拒」
-    if (formMode.value === "edit" && hasBodySource.value) {
-        const currentType = editingItem.value?.game_type;
-        if (!bodySourceType.value) {
-            ElMessage.warning("无法识别游戏本体格式，请更换文件或检查下载地址");
-            return;
-        }
-        if (currentType && bodySourceType.value !== currentType) {
-            ElMessage.warning(
-                `只能更换同一游戏类型的本体：当前是「${typeLabel(currentType)}」，` +
-                    `所选文件/地址是「${typeLabel(bodySourceType.value)}」`,
-            );
-            return;
-        }
+    if (!hasBodySource.value) {
+        ElMessage.warning("请选择游戏本体文件，或点「网络上传」填下载地址");
+        return;
+    }
+    if (!bodySourceType.value) {
+        ElMessage.warning("无法识别游戏本体格式，请更换文件或检查下载地址");
+        return;
     }
 
     saving.value = true;
     try {
-        if (formMode.value === "create") {
-            await onCreate();
-        } else {
-            await updateManageGameAPI(editingId.value, {
-                name: form.name,
-                description: form.description,
-                cover_type: form.coverType,
-            });
-            if (form.gameFile || form.bodyUrl) {
-                await uploadAsset(editingId.value, "game", {
-                    file: form.gameFile,
-                    url: form.bodyUrl,
-                    gameType: form.bodyGameType,
-                });
-            }
-            if (form.coverFile || form.coverUrl) {
-                await uploadAsset(editingId.value, "cover", {
-                    file: form.coverFile,
-                    url: form.coverUrl,
-                });
-            }
-            if (guideFile.value) {
-                await uploadGuide(editingId.value);
-            }
-        }
-        ElMessage.success(formMode.value === "create" ? "游戏已添加" : "游戏已更新");
+        await onCreate();
+        ElMessage.success("游戏已添加");
         formVisible.value = false;
         await reload();
     } catch (err) {

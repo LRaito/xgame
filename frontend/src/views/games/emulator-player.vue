@@ -247,10 +247,12 @@ const SHELLS = {
         },
     },
     // NDS 有三种屏幕布局（- / = 循环，见 NDS_NATIVE / ndsScreenMode），机壳跟着换：
-    //   dual = 现状（上下两屏 + 中间铰链带，两洞都在）；
-    //   top  = 只显示上屏：只取机壳上半部分（y 0..807，铰链及以下全部不要）；
-    //   side = 左右双屏：上半与下半各一块，左右紧靠（x=1080 处相接），B 往下 177px
-    //          让两洞顶部对齐；铰链带（y 807..984）完全不出现在任何一块里。
+    //   dual = 上下两屏 + 中间铰链带，整图一块；
+    //   top  = 只显示上屏：取上半身到距图底 975px 处（y 0..945，含整条铰链带），
+    //          比屏幕洞底边多留 138px 机身，上屏下沿不会和机壳底边齐平；
+    //   side = 左右两块，左右紧靠（x=1080 处相接）：
+    //          上半与 top 一样取 y 0..945；下半从同一条分界（距图底 975px）到底部，
+    //          即 y 945..1920。下半在合成坐标里下移 138px，让两洞顶边对齐（y=177）。
     // 每块都用 parts 的 crop/offset 描述：
     //   crop  = 原图里要显示的那块矩形；offset = 这块的左上角在合成坐标系里的位置。
     // 合成坐标系（canvas）只用于「适应窗口」时把整张机壳塞进可用区域；holes 写在合成坐标里。
@@ -272,10 +274,10 @@ const SHELLS = {
             top: {
                 url: ndsShellUrl,
                 image: { width: 1080, height: 1920 },
-                canvas: { width: 1080, height: 807 },
+                canvas: { width: 1080, height: 945 },
                 holes: [{ x: 120, y: 177, width: 840, height: 630 }],
                 parts: [
-                    { crop: { x: 0, y: 0, width: 1080, height: 807 }, offset: { x: 0, y: 0 } },
+                    { crop: { x: 0, y: 0, width: 1080, height: 945 }, offset: { x: 0, y: 0 } },
                 ],
             },
             side: {
@@ -288,8 +290,9 @@ const SHELLS = {
                     { x: 1200, y: 177, width: 840, height: 630 },
                 ],
                 parts: [
-                    { crop: { x: 0, y: 0, width: 1080, height: 807 }, offset: { x: 0, y: 0 } },
-                    { crop: { x: 0, y: 984, width: 1080, height: 936 }, offset: { x: 1080, y: 177 } },
+                    { crop: { x: 0, y: 0, width: 1080, height: 945 }, offset: { x: 0, y: 0 } },
+                    // 下屏洞在图里 y=984，crop 后相对 y=39；下移 177−39=138 与上洞顶边齐平
+                    { crop: { x: 0, y: 945, width: 1080, height: 975 }, offset: { x: 1080, y: 138 } },
                 ],
             },
         },
@@ -509,7 +512,7 @@ const ndsModeColumns = computed(() => {
         return null;
     }
     return [
-        { id: "dual", label: "双屏", native: NDS_NATIVE.dual },
+        { id: "dual", label: "上下", native: NDS_NATIVE.dual },
         { id: "top", label: "单屏", native: NDS_NATIVE.top },
         { id: "side", label: "左右", native: NDS_NATIVE.side },
     ];
@@ -620,8 +623,10 @@ const shellLayers = computed(() => {
             key: index,
             src: spec.url,
             layerStyle: {
-                left: `${rect.left + (offset.x - crop.x - bounds.x) * scale}px`,
-                top: `${rect.top + (offset.y - crop.y - bounds.y) * scale}px`,
+                // 外层只按 offset 摆在合成坐标里；crop 由图内偏移（imageStyle）裁出，
+                // 这里不能再减一次 crop，否则有 crop 的部件会整体偏移 crop×scale。
+                left: `${rect.left + (offset.x - bounds.x) * scale}px`,
+                top: `${rect.top + (offset.y - bounds.y) * scale}px`,
                 width: `${crop.width * scale}px`,
                 height: `${crop.height * scale}px`,
             },

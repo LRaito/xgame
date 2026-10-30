@@ -4,7 +4,7 @@
         title="游戏详情"
         width="min(810px, 96vw)"
         align-center
-        footer-mode="close-only"
+        footer-mode="none"
         @update:model-value="emit('update:modelValue', $event)"
     >
         <div v-if="detail" class="game-detail">

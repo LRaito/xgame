@@ -93,7 +93,8 @@
 - 页面里不再手写原生 `<button>` 或按钮 CSS，唯一例外是 `AppSegmented` 自身。
 - 需要新外观先扩 `AppButton` 的 `text` 或 `tone`。
 - `CopyButton` 的 20px 卡带 ID 药丸是可复制数据 chip，不是第三种按钮类型。
-- `AppDialog` 的 `footer-mode` 五值：default/confirm-only/close-only/custom/none。
+- `AppDialog` 的 `footer-mode` 四值：default/confirm-only/custom/none。
+- 右上角关闭按钮始终存在：只读弹框用 `none`，不再放多余的「关闭」底栏按钮。
 - 确认框走 `confirmAction` / `dangerConfirm` / `dangerPrompt`（`utils/confirm.js`）。
 - 页面里不再直接调 `ElMessageBox`。
 - `AppPagination`：父级给 `page` / `total` / `pageSize`。
@@ -117,6 +118,15 @@
 - 相同功能的行保持相邻，便于合并单元格。
 - 数据写在 `views/shortcuts/index.vue`。
 - 改键位时同步更新那张表。
+
+**游戏管理页。**
+
+- 添加与编辑共用同一弹框：新建要等填完，编辑改完即存。
+- 编辑态没有「取消 / 保存」底栏，只留右上角关闭。
+- 名称、描述失焦即存，封面类型切换即存；关弹框时补存未失焦的改动。
+- 本体、封面、攻略都是选完立即上传，失败不保留选择。
+- 上传在途时禁用同一行的按钮，避免并发提交。
+- 卡带 ID、图集、美化封面、删除攻略原本就是立即生效。
 
 **交互约定。**
 

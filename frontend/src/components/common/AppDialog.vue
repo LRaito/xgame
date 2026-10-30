@@ -28,13 +28,6 @@
                         {{ cancelText }}
                     </app-button>
                     <app-button
-                        v-if="footerMode === 'close-only'"
-                        variant="secondary"
-                        @click="close"
-                    >
-                        {{ closeText }}
-                    </app-button>
-                    <app-button
                         v-if="footerMode === 'default' || footerMode === 'confirm-only'"
                         :variant="confirmVariant"
                         :loading="confirmLoading"
@@ -54,11 +47,11 @@ defineProps({
     modelValue: { type: Boolean, default: false },
     title: { type: String, default: "" },
     width: { type: String, default: "480px" },
-    // default：取消 + 确认；confirm-only：只有确认；close-only：只有关闭；
+    // default：取消 + 确认；confirm-only：只有确认；
     // custom：只渲染 #footer 插槽；none：不渲染 footer
+    // （右上角关闭按钮始终存在，所以不再提供「只有关闭」的底栏形态）
     footerMode: { type: String, default: "default" },
     cancelText: { type: String, default: "取消" },
-    closeText: { type: String, default: "关闭" },
     confirmText: { type: String, default: "确定" },
     confirmVariant: { type: String, default: "secondary" },
     confirmDisabled: { type: Boolean, default: false },
@@ -74,7 +67,7 @@ function close() {
 </script>
 
 <style>
-/* 弹框底部固定：次要/关闭在左、主操作在右，间距统一。
+/* 弹框底部固定：次要操作在左、主操作在右，间距统一。
    el-dialog 的 footer 可能被 teleport 到 body，所以用非 scoped 的唯一类名。 */
 .app-dialog__footer {
     display: flex;
