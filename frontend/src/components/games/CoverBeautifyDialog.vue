@@ -144,7 +144,11 @@ async function compose() {
     releaseResult();
     status.value = "working";
     try {
-        const composed = await composeCover(current.id, sourceImage);
+        const composed = await composeCover(
+            current.id,
+            sourceImage,
+            props.game?.cartridge_id,
+        );
         if (token !== runToken) {
             return;
         }

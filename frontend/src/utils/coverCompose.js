@@ -52,9 +52,10 @@ export function loadImage(src) {
  *
  * @param {string} styleId "flash" | "gb" | "gbc" | "gba" | "nds" | "fc" | "nes"（见 constants/coverStyles.js）
  * @param {HTMLImageElement} sourceImg 已载入完成的原封面
+ * @param {string} [cartridgeId] 卡带 ID；有 `serial` 配置的样式会把它写进画面
  * @returns {Promise<Blob>} PNG
  */
-export async function composeCover(styleId, sourceImg) {
+export async function composeCover(styleId, sourceImg, cartridgeId = "") {
     if (styleId === "flash") {
         return composeFlashDisc(sourceImg);
     }
@@ -62,41 +63,90 @@ export async function composeCover(styleId, sourceImg) {
     if (!cart) {
         throw new Error("不支持的美化类型。");
     }
-    return composeCartridge(cart, sourceImg);
+    return composeCartridge(cart, sourceImg, cartridgeId);
 }
 
 /* ---------------------------------------------------------------- 卡带 ---- */
 
 /**
- * 卡带：底图铺满 → 把封面**拉伸填满**洞口（`object-fit: fill` 的做法，不改比例地
- * 拉成洞口的长宽比，不裁切也不留边）→ 与底图合成。
+ * 卡带：先在贴图区铺底色、把封面**拉伸填满**贴图区（`object-fit: fill` 的做法，
+ * 不改比例地拉成贴图区的长宽比，不裁切也不留边），再与底图合并。
  *
- * 贴之前一定要按洞口的形状裁一刀：底图洞口是按同一形状填的，形状之外仍是机身像素
- * （GBA 是机身灰、GBC 是贴纸凹槽的阴影），不裁的话矩形封面会把这圈盖掉。
+ * 两种图层顺序由 `baseOnTop` 决定：
+ *   - 普通卡带（默认）：底图先铺，封面盖在洞口上；底图洞口已填机身色，洞口形状之外的
+ *     机身像素靠 `clip()` 留住（GBA 是机身灰、GBC 是贴纸凹槽的阴影）。
+ *   - NDS（`baseOnTop: true`）：封面先画在镂空窗里，**底图最后整张盖上来**——顶部 logo
+ *     黑区、左右黑分隔线、下方黑条都露在封面上面，封面只从镂空窗透出来。
+ *
  * 圆角可以**按角给**（`cornerRadii()` 归一化成 `{ tl, tr, br, bl }`）；
- * NDS 卡带的左下角是**斜角**，由 `cornerChamfers()` 给（同一个角有斜角就不再走圆角）。
+ * 斜角由 `cornerChamfers()` 给（同一个角有斜角就不再走圆角）。
+ *
+ * `holeFill` 铺在封面下面：封面自带透明像素时，空缺处露出这层底色（NDS 是贴纸黑），
+ * 不会露出底图的透明窗。`serial` 是画在底图上的卡带 ID 文字（目前只有 NDS 配了），
+ * 在封面与底图之后画，位置用输出画布坐标。
  */
-async function composeCartridge(cart, sourceImg) {
+async function composeCartridge(cart, sourceImg, cartridgeId = "") {
     const { image, hole } = cart;
     const base = await loadImage(cart.url);
     const ctx = makeContext(image.width, image.height);
 
-    ctx.drawImage(base, 0, 0, image.width, image.height);
+    const drawCover = () => {
+        ctx.save();
+        roundRectPath(
+            ctx,
+            hole.x,
+            hole.y,
+            hole.width,
+            hole.height,
+            cornerRadii(cart.radius),
+            cornerChamfers(cart.chamfer),
+        );
+        ctx.clip();
+        // 封面自带透明像素时露出的贴纸底色
+        if (cart.holeFill) {
+            ctx.fillStyle = cart.holeFill;
+            ctx.fillRect(hole.x, hole.y, hole.width, hole.height);
+        }
+        // 没有源矩形：整张封面直接拉伸到贴图区大小
+        ctx.drawImage(sourceImg, hole.x, hole.y, hole.width, hole.height);
+        ctx.restore();
+    };
 
-    ctx.save();
-    roundRectPath(
-        ctx,
-        hole.x,
-        hole.y,
-        hole.width,
-        hole.height,
-        cornerRadii(cart.radius),
-        cornerChamfers(cart.chamfer),
-    );
-    ctx.clip();
-    // 没有源矩形：整张封面直接拉伸到洞口大小
-    ctx.drawImage(sourceImg, hole.x, hole.y, hole.width, hole.height);
-    ctx.restore();
+    if (cart.baseOnTop) {
+        // NDS：封面在下，卡带框盖在上面，只从镂空窗露出
+        drawCover();
+        ctx.drawImage(base, 0, 0, image.width, image.height);
+    } else {
+        ctx.drawImage(base, 0, 0, image.width, image.height);
+        drawCover();
+    }
+
+    // 卡带 ID：靠右固定留白，按字形墨迹的上下边界垂直居中
+    // （textBaseline "middle" 对等宽字体偏高约 3px，所以改用 actualBoundingBox 量出墨迹）
+    if (cart.serial && cartridgeId) {
+        const { rightEdge, paddingRight, centerY, font, color } = cart.serial;
+        const text = String(cartridgeId);
+        ctx.save();
+        ctx.font = font;
+        ctx.fillStyle = color;
+        ctx.textAlign = "right";
+        const metrics = ctx.measureText(text);
+        const ascent = metrics.actualBoundingBoxAscent;
+        const descent = metrics.actualBoundingBoxDescent;
+        if (Number.isFinite(ascent) && Number.isFinite(descent)) {
+            ctx.textBaseline = "alphabetic";
+            ctx.fillText(
+                text,
+                rightEdge - paddingRight,
+                centerY + (ascent - descent) / 2,
+            );
+        } else {
+            // 老浏览器没有 actualBoundingBox，退回 middle
+            ctx.textBaseline = "middle";
+            ctx.fillText(text, rightEdge - paddingRight, centerY);
+        }
+        ctx.restore();
+    }
 
     return toPngBlob(ctx.canvas);
 }
@@ -247,9 +297,6 @@ function angleGradient(ctx, x, y, w, h, deg) {
  * （`c`，同样四角，数字是沿两条边切掉的长度）。同一个角同时给了斜角和圆角时以斜角为准。
  * 0 = 直角。不用 `ctx.roundRect`：那个 Chrome 99+ / Safari 16+ 才有，而且只吃一个统一半径。
  * `arcTo` 半径 0 是退化情形，这里干脆跳过它——上一句 lineTo 已经走到角上了。
- *
- * NDS 卡带的左下角是斜角：底边走到 (x + c.bl, y + h) 后直接斜线到 (x, y + h - c.bl)，
- * 与底图补色用的 `rounded_mask` + 三角形切除是同一块区域。
  */
 function roundRectPath(ctx, x, y, w, h, r, c = { tl: 0, tr: 0, br: 0, bl: 0 }) {
     // 每条边从角点往里缩的距离：斜角优先，其次圆角，否则 0（直角）
