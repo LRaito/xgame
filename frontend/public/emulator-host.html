@@ -116,12 +116,18 @@
             // 与 frontend/src/constants/emulatorScreens.js 的 NDS_NATIVE 一一对应，必须同步：
             //   dual = 上下双屏 + gap 54（帧缓冲 256×438）
             //   top  = 只显示上屏（256×192），gap 无意义
-            //   side = 左右双屏 + gap 73（帧缓冲 585×192）。73 由机壳两半紧靠时
-            //          240 图像 px 的洞间距反推：240×256/840 ≈ 73.14。
+            //   side = 左右双屏。melonDS 的 Left/Right 布局**不使用 melonds_screen_gap**，
+            //          帧缓冲始终 512×192（两屏紧贴）；而左右机壳的两个洞之间是机身，
+            //          所以由宿主页把 512×192 拆成左右两屏、中间插入 51px 透明间隙
+            //          （见 setupNdsSideScreen），对外按 (256+51+256)×192 = 563×192 上报。
+            //          51 由 nds-side-shell.png 的洞口反推：92×256/460 ≈ 51.2，取 51。
+            const NDS_SIDE_GAP = 51;
+            const NDS_SIDE_SCREEN = { width: 256, height: 192 };
             const NDS_LAYOUTS = {
                 dual: { layout: "Top/Bottom", gap: "54" },
                 top: { layout: "Top Only", gap: "54" },
-                side: { layout: "Left/Right", gap: "73" },
+                // gap 对 Left/Right 无效（内核忽略），真正的间隙由合成层控制
+                side: { layout: "Left/Right", gap: "0" },
             };
             const ndsParam = params.get("nds");
             let ndsMode = NDS_LAYOUTS[ndsParam] ? ndsParam : "dual";
@@ -342,6 +348,97 @@
                 canvas.style.webkitMaskSize = "100% 100%";
             }
 
+            // ---------- NDS 左右布局：拆屏 + 插入间隙 ----------
+            // 内核的 Left/Right 布局没有水平间隙（帧缓冲 512×192，两屏紧贴），而左右机壳
+            // 的两个洞之间是机身。这里把引擎画布里的左右两屏分别抠出来，按 0..256 与
+            // 307..563 摆到一张 563×192 的合成画布上，中间 51px 留透明——父页面盖在
+            // iframe 后面的机壳就从缝里露出来，两块画面各自落在自己的洞里。
+            // 原画布设 opacity:0 继续渲染并接收输入；合成层 pointer-events:none 把事件让给它。
+            let ndsSideScreen = null;
+
+            function removeNdsSideScreen() {
+                if (!ndsSideScreen) {
+                    return;
+                }
+                cancelAnimationFrame(ndsSideScreen.raf);
+                ndsSideScreen.canvas.remove();
+                if (ndsSideScreen.src) {
+                    ndsSideScreen.src.style.opacity = "";
+                }
+                ndsSideScreen = null;
+            }
+
+            function setupNdsSideScreen() {
+                removeNdsSideScreen();
+                if (core !== "nds" || ndsMode !== "side") {
+                    return;
+                }
+                const inst = window.EJS_emulator;
+                const src = inst?.canvas || document.querySelector("#ejs canvas.ejs_canvas");
+                if (!src) {
+                    return;
+                }
+                const gap = NDS_SIDE_GAP;
+                const sw = NDS_SIDE_SCREEN.width;
+                const sh = NDS_SIDE_SCREEN.height;
+                const canvas = document.createElement("canvas");
+                canvas.width = sw * 2 + gap;
+                canvas.height = sh;
+                canvas.style.cssText =
+                    "position:fixed;z-index:5;pointer-events:none;image-rendering:pixelated";
+                const ctx = canvas.getContext("2d");
+                // 引擎是像素画风，放大时保持硬边
+                ctx.imageSmoothingEnabled = false;
+                src.style.opacity = "0";
+                document.body.appendChild(canvas);
+                const draw = () => {
+                    const rect = src.getBoundingClientRect();
+                    canvas.style.left = `${rect.left}px`;
+                    canvas.style.top = `${rect.top}px`;
+                    canvas.style.width = `${rect.width}px`;
+                    canvas.style.height = `${rect.height}px`;
+                    const w = src.width;
+                    const h = src.height;
+                    if (w > 0 && h > 0) {
+                        // 引擎把 512×192 的帧按等比居中摆进画布，两侧可能有黑边；
+                        // 先算帧区域，只取两屏，不把黑边带进合成层。
+                        const scale = Math.min(w / (sw * 2), h / sh);
+                        const frameW = sw * 2 * scale;
+                        const frameH = sh * scale;
+                        const ox = (w - frameW) / 2;
+                        const oy = (h - frameH) / 2;
+                        // 合成画布按源画布的像素密度取尺寸，避免把高倍率画面压成 256px
+                        const cw = Math.round(frameW) + Math.round(gap * scale);
+                        const ch = Math.round(frameH);
+                        if (canvas.width !== cw || canvas.height !== ch) {
+                            canvas.width = cw;
+                            canvas.height = ch;
+                            ctx.imageSmoothingEnabled = false;
+                        }
+                        const halfW = Math.round(frameW / 2);
+                        const halfH = ch;
+                        ctx.clearRect(0, 0, cw, ch);
+                        ctx.drawImage(src, ox, oy, frameW / 2, frameH, 0, 0, halfW, halfH);
+                        ctx.drawImage(
+                            src,
+                            ox + frameW / 2,
+                            oy,
+                            frameW / 2,
+                            frameH,
+                            halfW + Math.round(gap * scale),
+                            0,
+                            halfW,
+                            halfH,
+                        );
+                    }
+                    if (ndsSideScreen && ndsSideScreen.canvas === canvas) {
+                        ndsSideScreen.raf = requestAnimationFrame(draw);
+                    }
+                };
+                ndsSideScreen = { canvas, src, raf: 0 };
+                draw();
+            }
+
             /** 把布局/间隙写进引擎内核变量（运行中改与引擎设置菜单走同一条路）。 */
             function applyNdsLayoutVariables(mode) {
                 const conf = NDS_LAYOUTS[mode];
@@ -394,11 +491,16 @@
                     const positive = (value) =>
                         typeof value === "number" && isFinite(value) && value > 0 ? value : null;
                     try {
-                        return {
-                            width: positive(manager.getVideoDimensions("width")),
-                            height: positive(manager.getVideoDimensions("height")),
-                            aspect: positive(manager.getVideoDimensions("aspect")),
-                        };
+                        let width = positive(manager.getVideoDimensions("width"));
+                        let height = positive(manager.getVideoDimensions("height"));
+                        let aspect = positive(manager.getVideoDimensions("aspect"));
+                        // 左右布局由宿主页合成两屏 + 间隙，对父页面按合成后的 563×192 上报，
+                        // 舞台、机壳与遮罩才按「两块分开的屏」计算。
+                        if (core === "nds" && ndsMode === "side" && width && height) {
+                            width = NDS_SIDE_SCREEN.width * 2 + NDS_SIDE_GAP;
+                            aspect = width / height;
+                        }
+                        return { width, height, aspect };
                     } catch {
                         return null;
                     }
@@ -580,6 +682,7 @@
                     }
                     if (mode === ndsMode) {
                         applyNdsMask();
+                        setupNdsSideScreen();
                         return { ok: true, mode, videoInfo: window.__ejsRpc.videoInfo };
                     }
                     const previous = ndsMode;
@@ -593,6 +696,7 @@
                         if (matchesNdsMode(mode, readVideoSize(inst.gameManager))) {
                             ndsMode = mode;
                             applyNdsMask();
+                            setupNdsSideScreen();
                             return { ok: true, mode, videoInfo: window.__ejsRpc.videoInfo };
                         }
                     }
@@ -603,6 +707,7 @@
                         // 恢复失败也只能返回失败
                     }
                     applyNdsMask();
+                    setupNdsSideScreen();
                     return {
                         ok: false,
                         needsRestart: true,
@@ -803,6 +908,8 @@
                         document.documentElement.classList.add("x-nds-passthrough");
                         window.requestAnimationFrame(applyNdsMask);
                         window.setTimeout(applyNdsMask, 300);
+                        window.requestAnimationFrame(setupNdsSideScreen);
+                        window.setTimeout(setupNdsSideScreen, 300);
                     }
                     initControlBar();
                 };

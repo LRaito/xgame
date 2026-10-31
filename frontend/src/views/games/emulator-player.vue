@@ -203,6 +203,7 @@ import gbcShellUrl from "@/assets/shells/gbc-shell.png";
 import nesShellUrl from "@/assets/shells/nes-shell.png";
 import nesShell43Url from "@/assets/shells/nes-shell-43.png";
 import ndsShellUrl from "@/assets/shells/nds-shell.png";
+import ndsSideShellUrl from "@/assets/shells/nds-side-shell.png";
 
 const ENGINE_LOADER = "/emulatorjs/data/loader.js";
 
@@ -247,12 +248,14 @@ const SHELLS = {
         },
     },
     // NDS 有三种屏幕布局（- / = 循环，见 NDS_NATIVE / ndsScreenMode），机壳跟着换：
-    //   dual = 上下两屏 + 中间铰链带，整图一块；
+    //   dual = 上下两屏 + 中间铰链带，整图一块（nds-shell.png）；
     //   top  = 只显示上屏：取上半身到距图底 975px 处（y 0..945，含整条铰链带），
     //          比屏幕洞底边多留 138px 机身，上屏下沿不会和机壳底边齐平；
-    //   side = 左右两块，左右紧靠（x=1080 处相接）：
-    //          上半与 top 一样取 y 0..945；下半从同一条分界（距图底 975px）到底部，
-    //          即 y 945..1920。下半在合成坐标里下移 138px，让两洞顶边对齐（y=177）。
+    //   side = 左右布局用一张独立素材 nds-side-shell.png（1274×700，整机正视图，
+    //          两块 460×345 的 4:3 透明洞，洞间距 92px），一块整图直出。
+    //          注意 melonDS 的 Left/Right 不吃 gap（帧缓冲固定 512×192、两屏紧贴），
+    //          51px 的屏幕间隙由宿主页拆屏合成后上报（见 emulator-host.html 的
+    //          setupNdsSideScreen），播放页拿到的对外几何才是 563×192。
     // 每块都用 parts 的 crop/offset 描述：
     //   crop  = 原图里要显示的那块矩形；offset = 这块的左上角在合成坐标系里的位置。
     // 合成坐标系（canvas）只用于「适应窗口」时把整张机壳塞进可用区域；holes 写在合成坐标里。
@@ -281,18 +284,18 @@ const SHELLS = {
                 ],
             },
             side: {
-                url: ndsShellUrl,
-                image: { width: 1080, height: 1920 },
-                canvas: { width: 2160, height: 1113 },
-                // 两洞水平间距 240px（左右各 120px 机身），对应 585 宽的帧缓冲里的 73px 间隙
+                url: ndsSideShellUrl,
+                image: { width: 1274, height: 700 },
+                canvas: { width: 1274, height: 700 },
+                // 两洞各 460×345（精确 4:3），洞间距 92px：92×256/460 ≈ 51.2，
+                // 宿主页据此把内核的 512×192 拆成两屏并插入 51px 间隙，
+                // 对外按 563×192 上报（见 NDS_NATIVE.side 与 emulator-host.html）
                 holes: [
-                    { x: 120, y: 177, width: 840, height: 630 },
-                    { x: 1200, y: 177, width: 840, height: 630 },
+                    { x: 131, y: 100, width: 460, height: 345 },
+                    { x: 683, y: 100, width: 460, height: 345 },
                 ],
                 parts: [
-                    { crop: { x: 0, y: 0, width: 1080, height: 945 }, offset: { x: 0, y: 0 } },
-                    // 下屏洞在图里 y=984，crop 后相对 y=39；下移 177−39=138 与上洞顶边齐平
-                    { crop: { x: 0, y: 945, width: 1080, height: 975 }, offset: { x: 1080, y: 138 } },
+                    { crop: { x: 0, y: 0, width: 1274, height: 700 }, offset: { x: 0, y: 0 } },
                 ],
             },
         },
@@ -560,12 +563,25 @@ const stageAspect = computed(() => {
     }
     return aspectForMode(aspectMode.value);
 });
+// 左右布局的机壳上下不对称：洞在上方留 100px，下方还留 255px 的按键区（1274×700 素材）。
+// 舞台默认在可用区域垂直居中，整张机壳的视觉中心就会偏下 (255−100)/2 个图像 px；
+// 开着机壳时把舞台相对上移同样的比例，让整张机壳在可用区域里垂直居中。
+const NDS_SIDE_SHIFT_RATIO = (255 - 100) / 2 / 345;
+
 // 舞台尺寸：fit=按可用空间等比缩放；否则按倍率放大原生分辨率（超出部分由容器滚动）
 const stageStyle = computed(() => {
     if (!stageSize.value) {
         return null;
     }
-    return { width: `${stageSize.value.width}px`, height: `${stageSize.value.height}px` };
+    const style = { width: `${stageSize.value.width}px`, height: `${stageSize.value.height}px` };
+    // 注意用 position: relative 而不是 transform：transform 会把 fixed 定位的机壳
+    // 变成相对舞台定位，整张机壳会错位。relative 只挪视觉位置，机壳读 getBoundingClientRect
+    // 仍能跟着走。
+    if (isNds.value && ndsScreenMode.value === "side" && shellOn.value) {
+        style.position = "relative";
+        style.top = `${-Math.round(stageSize.value.height * NDS_SIDE_SHIFT_RATIO)}px`;
+    }
+    return style;
 });
 
 // 机壳只有画过洞对齐图的平台有（其余类型没有这张图）。
@@ -593,9 +609,9 @@ const shellOn = computed(() => supportsShell.value && shellVisible.value);
  * 之外的部分裁掉。
  *
  * 没有 parts 的机种（GBA/GBC/FC）就是「整图一块」，布局与旧版单个 img 完全一致；
- * NDS dual 是一块整图、top 只取上半身、side 是上下两半左右紧靠。
+ * NDS 每种布局也都是一块整图（side 用独立的双屏素材，见上）。
  *
- * 外接矩形的比例与舞台一致（GBA 3:2、FC 8:7、NDS 256:438 / 4:3 / 585:192），所以只要
+ * 外接矩形的比例与舞台一致（GBA 3:2、FC 8:7、NDS 256:438 / 4:3 / 563:192），所以只要
  * 舞台按引擎上报的 aspect 摆放，洞的上下左右会同时严丝合缝地对齐画面；画面一小（换倍率、
  * 缩窗口、全屏）这里就跟着重算，所以任何画面尺寸都适配。
  *

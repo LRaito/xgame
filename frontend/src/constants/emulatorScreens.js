@@ -32,9 +32,12 @@ export const EMU_NATIVE = {
  *
  * - dual：`Top/Bottom` + gap 54，256×(192+54+192)；
  * - top：`Top Only`，只显示上屏，256×192；
- * - side：`Left/Right` + gap 73，两屏左右排列：(256+73+256)×192 = 585×192。
- *   gap 73 由机壳几何反推——上下两半机壳左右紧靠时，两洞之间是左右各 120px 机身
- *   （共 240 图像 px），按 840 图像 px = 256 屏幕 px 换算 240×256/840 ≈ 73.14。
+ * - side：对外几何是 (256+51+256)×192 = 563×192。
+ *   注意 melonDS 内核的 `Left/Right` 布局**不吃 `melonds_screen_gap`**，帧缓冲固定
+ *   512×192（两屏紧贴）；51px 间隙由宿主页把两屏拆开后合成（emulator-host.html 的
+ *   `setupNdsSideScreen`），再按 563×192 上报给播放页，舞台与机壳才按两块分开的屏算。
+ *   51 由左右机壳素材 nds-side-shell.png 的洞口反推：两洞各 460 图像 px 宽、间距 92，
+ *   92×256/460 ≈ 51.2，取 51。机壳洞各 460×345 = 精确 4:3，与 256×192 一一对应。
  *
  * 宿主页 emulator-host.html 里有一份对应的 layout/gap 表，改这里必须同步改那边；
  * 切换成功与否以引擎上报的 `videoInfo` 为准（见播放页 switchNdsScreenMode）。
@@ -42,7 +45,7 @@ export const EMU_NATIVE = {
 export const NDS_NATIVE = {
     dual: { width: 256, height: 438 },
     top: { width: 256, height: 192 },
-    side: { width: 585, height: 192 },
+    side: { width: 563, height: 192 },
 };
 
 /** - / = 循环顺序。 */
