@@ -33,7 +33,7 @@
 | 2 | 任天堂 Virtual Boy | `vb` / `beetle_vb` | `.vb` | 1 | 无 BIOS |
 | 3 | 世嘉 CD | `segaCD` / `genesis_plus_gx` | cue+bin / `.chd` | 4 | BIOS `bios_CD_E/U/J.bin` |
 | 4 | 世嘉 32X | `sega32x` / `picodrive` | `.32x` | 1 | 文档未列 BIOS，需实测 |
-| 5 | 世嘉土星 | `segaSaturn` / `yabause` | `.chd` | 3 | BIOS `saturn_bios.bin` |
+| 5 | 世嘉 土星 | `segaSaturn` / `yabause` | `.chd` | 3 | BIOS `saturn_bios.bin` |
 | 6 | 索尼 PS1 | `psx` / `pcsx_rearmed` | `.chd` `.pbp` `.iso` | 3 | BIOS `scph5500/5501/5502.bin` |
 | 7 | 索尼 PSP | `psp` / `ppsspp` | `.iso` `.cso` | 5 | 强制线程 + WebGL2 |
 | 8 | 日电 PCE | `pce` / `mednafen_pce` | `.pce` `.sgx` | 1 | 先只开 HuCard |
@@ -128,6 +128,7 @@
 
 - **`.bin` 不能直接开放**：Atari 2600/5200/7800 常用 `.bin`，会与多机种歧义。
 - 这些机种用 `.a26` / `.a52` / `.a78` 等专属后缀。
+- 新增机种的显示名统一为「公司名 + 空格 + 型号」，由 `tests/test_platforms.py` 钉住。
 - **`.zip` 已被 H5 占用**：不能把 `.zip` 直接加给街机、DOS、Sega CD、Amiga。
 - 多文件类型必须改成「用户选类型优先」，后缀只做提示。
 - 线程开关现在是全局的；按机种开线程要避免影响现有 8 个机种。

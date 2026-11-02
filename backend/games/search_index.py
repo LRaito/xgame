@@ -19,7 +19,7 @@
 建库时一律经 `backend/games/platforms.py` 的词表解析成统一机种（id 是 EmulatorJS 的
 system key）。所以检索侧同一个机种的多个原始名（`任天堂GB` + `任天堂GBC`）**在库里就是同一行
 console**，页面的机种下拉天然不会出现两个同名项；认不出机种的（Wii、3DS、CD-I…）保留原文、
-`platform_id` 留空，自成一组。
+`platform_id` 留空，自成一组，显示名仍按「公司名 + 空格 + 型号」补空格。
 """
 
 import csv
@@ -36,7 +36,12 @@ from datetime import datetime
 from pathlib import Path
 
 from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, Settings
-from backend.games.platforms import PLATFORMS, normalize_name, resolve_platform
+from backend.games.platforms import (
+    PLATFORMS,
+    display_console_name,
+    normalize_name,
+    resolve_platform,
+)
 from backend.games.search_text import index_text
 
 logger = logging.getLogger(__name__)
@@ -545,7 +550,7 @@ def _write_consoles(conn: sqlite3.Connection, groups: dict[str, list[str]]) -> d
             "INSERT INTO console(id, name, platform_id, raw_names) VALUES(?, ?, ?, ?)",
             (
                 index,
-                platform.label if platform else raw_names[0],
+                platform.label if platform else display_console_name(raw_names[0]),
                 platform.id if platform else None,
                 json.dumps(raw_names, ensure_ascii=False),
             ),

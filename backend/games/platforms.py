@@ -15,8 +15,9 @@ EJS 4.2.3 的 `EmulatorJS.getCores()`
 
 1. **`id` 就是 `game_type` 的值**（对已收录可玩的机种而言），所以磁盘目录名、库里已有的
    `games.game_type`、EJS 的 `EJS_core` 天然一致，改这张表**不会**挪动任何文件。
-2. **`label` 是三处共用的显示名**（中文，厂商 + 型号），前端 `constants/gameTypes.js` 里那 8 个
-   可玩机种的 label 是它的镜像，`tests/test_platforms.py` 钉住两边逐字一致。
+2. **`label` 是三处共用的显示名**（中文，厂商 + 空格 + 型号；没有厂商名的只写型号），
+   前端 `constants/gameTypes.js` 里那 8 个可玩机种的 label 是它的镜像，
+   `tests/test_platforms.py` 钉住两边逐字一致，也钉住这个格式。
 3. **`extensions` 非空才代表本项目已收录、可上传可玩**——只有 8 个机种有；其余机种（含 EJS 支持
    但本项目还没打包 core 的 n64/psx 等）只用来给外部名录「对上号」，不开放上传。
 
@@ -145,12 +146,17 @@ PLATFORMS: tuple[Platform, ...] = (
     ),
     Platform(
         id="segaSaturn",
-        label="世嘉土星",
+        label="世嘉 土星",
         cores=("yabause",),
-        aliases=("世嘉土星SS", "SS", "Saturn"),
+        aliases=("世嘉土星", "世嘉土星SS", "SS", "Saturn"),
     ),
     # EJS 的通用世嘉 system（不区分 MD/MS/GG），只作引擎侧的兜底，没有外部名录对应
-    Platform(id="sega", label="世嘉（通用）", cores=("genesis_plus_gx", "picodrive")),
+    Platform(
+        id="sega",
+        label="世嘉 通用机",
+        cores=("genesis_plus_gx", "picodrive"),
+        aliases=("世嘉（通用）",),
+    ),
     # —— 索尼 ——
     Platform(
         id="psx",
@@ -264,6 +270,32 @@ def normalize_name(raw: str) -> str:
     return "".join((raw or "").split()).casefold()
 
 
+# 显示名的厂商前缀：从词表里「公司名 + 空格 + 型号」的 label 派生，长度降序避免短前缀抢先。
+# 外部名录里认不出的机种名也按它补空格（`任天堂3DS` → `任天堂 3DS`）。
+_COMPANY_PREFIXES: tuple[str, ...] = tuple(
+    sorted(
+        {platform.label.split(" ", 1)[0] for platform in PLATFORMS if " " in platform.label},
+        key=len,
+        reverse=True,
+    )
+)
+
+
+def display_console_name(raw: str) -> str:
+    """把外部名录的原始机种名整理成显示名：已知厂商名后补一个空格。
+
+    只改格式，不改写公司名与型号本身；已经带空格的保持原样。
+    未收录机种（3DS、Wii、PS2…）也走这里，避免下拉里出现 `任天堂3DS` 这种写法。
+    """
+    text = (raw or "").strip()
+    for company in _COMPANY_PREFIXES:
+        if text.startswith(company):
+            model = text[len(company) :].lstrip()
+            if model:
+                return f"{company} {model}"
+    return text
+
+
 def _build_alias_index() -> dict[str, Platform]:
     """别名索引。`id` 与 `label` 本身也当别名收进来，为的是让「认不出的原始名」永远撞不上
     机种键：外部名录万一直接写了统一名（「任天堂 GB/GBC」）或 system key（`segaMD`）也能认出来，
@@ -296,9 +328,11 @@ def platform_order(platform_id: str | None) -> int:
 
 
 def platform_label(platform_id: str | None, fallback: str = "") -> str:
-    """机种的统一显示名；认不出机种时回退给调用方给的原文。"""
+    """机种的统一显示名；认不出机种时回退给调用方给的原文，并补齐厂商名后的空格。"""
     platform = PLATFORM_BY_ID.get(platform_id or "")
-    return platform.label if platform else (fallback or platform_id or "")
+    if platform:
+        return platform.label
+    return display_console_name(fallback) or platform_id or ""
 
 
 def playable_platforms() -> tuple[Platform, ...]:

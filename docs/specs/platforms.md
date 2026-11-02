@@ -13,7 +13,9 @@
 ## 数据与路径
 
 - `Platform` 字段：`id` / `label` / `cores` / `aliases` / `extensions` / `default_extension`。
-- `label` 是统一中文显示名，格式为「厂商 + 型号」，如「任天堂 FC」「世嘉 MD」。
+- `label` 是统一中文显示名，格式为「厂商 + 空格 + 型号」，如「任天堂 FC」「世嘉 土星」。
+- 没有厂商名的机种只写型号，如 `Amiga`、`DOS`。
+- 认不出机种的原始名展示时也按同一格式补空格，如 `任天堂3DS` → `任天堂 3DS`。
 - `aliases` 收两份 CSV 里的各种写法；匹配走 `normalize_name()`（去所有空白 + casefold）。
 - `id` 与 `label` 本身也当别名收，避免认不出的原始名撞上机种键。
 - `extensions` 非空才代表本项目已收录、可上传可玩；值就是 `game_type`。

@@ -43,8 +43,8 @@ _DUP_ACROSS_FILES = ("世嘉MD", "索尼克", "Sonic the Hedgehog (USA)")
 
 # 落库行数：_ROWS 12 行里有 1 行完全重复 → 11，再加跨文件重复但只该留一条的索尼克 → 12
 _EXPECTED_ROWS = 12
-# 机种按 id 排 = 词表顺序（厂商分组），认不出机种的（索尼PS2）排在最后用原文
-_EXPECTED_CONSOLES = ["任天堂 FC", "任天堂 SFC", "世嘉 MD", "索尼PS2"]
+# 机种按 id 排 = 词表顺序（厂商分组），认不出机种的（索尼PS2）排在最后，显示名补空格
+_EXPECTED_CONSOLES = ["任天堂 FC", "任天堂 SFC", "世嘉 MD", "索尼 PS2"]
 # 上面每一项对应的机种键（未收录机种为 None）
 _EXPECTED_PLATFORMS = ["nes", "snes", "segaMD", None]
 

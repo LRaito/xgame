@@ -128,8 +128,55 @@ def test_resolve_platform_ignores_case_and_whitespace():
 
 def test_platform_label_falls_back_to_the_raw_name():
     assert platform_label("nes") == "任天堂 FC"
-    assert platform_label(None, "任天堂Wii") == "任天堂Wii"
+    assert platform_label(None, "3DS") == "3DS"
     assert platform_label("raw:3ds", "3DS") == "3DS"
+
+
+def test_platform_label_formats_unmatched_company_names():
+    """认不出的机种也按「公司名 + 空格 + 型号」显示，不能原样吐 `任天堂3DS`。"""
+    assert platform_label(None, "任天堂3DS") == "任天堂 3DS"
+    assert platform_label(None, "索尼PS2") == "索尼 PS2"
+    assert platform_label(None, "世嘉dc") == "世嘉 dc"
+    assert platform_label(None, "任天堂 Wii") == "任天堂 Wii"
+    assert platform_label("raw:3ds", "任天堂3DS") == "任天堂 3DS"
+
+
+# 显示名统一为「公司名 + 空格 + 型号」；没有公司名的只写型号。
+# 这里只钉住「厂商名后面必须有空格」，不强制每台机器都写厂商。
+_LABEL_COMPANY_PREFIXES = (
+    "任天堂",
+    "世嘉",
+    "索尼",
+    "日电",
+    "万代",
+    "雅达利",
+    "松下",
+    "SNK",
+    "Commodore",
+)
+
+
+def test_platform_labels_use_company_space_model():
+    for platform in PLATFORMS:
+        label = platform.label
+        assert label == label.strip(), platform.id
+        assert "  " not in label, platform.id
+        for company in _LABEL_COMPANY_PREFIXES:
+            if label.startswith(company):
+                rest = label[len(company) :]
+                assert rest.startswith(" "), (
+                    f"{platform.id} 的显示名「{label}」在厂商名后缺少空格"
+                )
+
+
+def test_unmatched_console_labels_use_company_space_model():
+    """未收录机种没有词表 label，展示时也必须补厂商名后的空格。"""
+    for raw in _UNMATCHED_SEARCH_CONSOLES:
+        label = platform_label(None, raw)
+        for company in _LABEL_COMPANY_PREFIXES:
+            if label.startswith(company):
+                rest = label[len(company) :]
+                assert rest.startswith(" "), f"{raw!r} 的显示名「{label}」缺少空格"
 
 
 def test_platform_order_puts_unknown_platforms_last():

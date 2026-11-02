@@ -63,6 +63,7 @@
 - 统一机种 id 就是 EmulatorJS 的 system key。
 - 例：`任天堂GB` 与 `任天堂GBC` 都落到 `gb`；`SEGA CD` 与 `世嘉cd游戏` 都落到 `segaCD`。
 - 认不出机种时保留原文，`platform_id` 留空，归为「未收录」。
+- 未收录机种的显示名同样补厂商名后的空格，如 `任天堂3DS` → `任天堂 3DS`。
 - 检索侧合并 console，下拉不会出现两个同名项。
 - 选「任天堂 GB/GBC」一次覆盖 GB 与 GBC 的全部条目。
 - `tests/test_platforms.py` 拿真实 CSV 钉住解析；加机种只改词表别名。
