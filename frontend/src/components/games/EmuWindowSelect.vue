@@ -317,6 +317,11 @@ onBeforeUnmount(() => {
     margin-bottom: 6px;
 }
 
+/* Element Plus 给相邻按钮加 12px 左边距，会把格子挤出面板；面板内一律贴齐 */
+.emu-window-select__panel :deep(.el-button) {
+    margin-left: 0;
+}
+
 .emu-window-select__grid {
     display: grid;
     grid-template-columns: auto 1fr;
