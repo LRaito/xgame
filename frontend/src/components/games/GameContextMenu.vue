@@ -76,7 +76,7 @@ const emit = defineEmits(["detail", "guide", "set-progress", "set-hours"]);
 /* 子菜单里当前生效的那一项：底色加深 + 主色加粗，和 hover 的浅灰区分开 */
 .game-context-menu li.is-current {
     background: #eff6ff;
-    color: #2563eb;
+    color: var(--brand-accent);
     font-weight: 600;
 }
 
@@ -93,7 +93,7 @@ const emit = defineEmits(["detail", "guide", "set-progress", "set-hours"]);
     pointer-events: none;
 }
 
-/* 「设置进度」与「设置卡带类型」向右滑出各自的选项。子菜单挂在 li 里，
+/* 「设置进度」向右滑出选项。子菜单挂在 li 里，
    鼠标从触发项移过去时父 li 仍是 :hover，中间用 -2px 重叠避免掠过缝隙时收起。 */
 .game-context-menu__sub {
     position: relative;

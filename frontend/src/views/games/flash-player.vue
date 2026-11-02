@@ -3,9 +3,15 @@
         <template #actions>
             <flash-quality-select v-model="quality" />
             <flash-resolution-select v-model="resolution" :native-size="nativeSize" />
-            <button type="button" class="save-manager-entry" @click="saveManagerVisible = true">
+            <app-button
+                class="save-manager-entry"
+                variant="secondary"
+                tone="dark"
+                size="lg"
+                @click="saveManagerVisible = true"
+            >
                 存档管理
-            </button>
+            </app-button>
         </template>
         <start-gate
             v-if="needsGesture"
@@ -20,9 +26,10 @@
             @native-size="onNativeSize"
         />
         <app-empty v-else-if="!swfUrl && !loading" description="未找到该 Flash 游戏" />
-        <flash-save-manager
+        <save-manager
             ref="saveManagerRef"
             v-model="saveManagerVisible"
+            platform="flash"
             :game-id="currentGameId"
             @sync="onSyncSave"
             @save-action="onSaveAction"
@@ -35,6 +42,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
+import { confirmAction } from "@/utils/confirm";
 import { getPlayableGameAPI, uploadCloudSaveAPI } from "@/api/games";
 import { ensureGameAssetSw, gameSwfUrl } from "@/utils/gameAssetCache";
 import {
@@ -47,7 +55,7 @@ import GameShell from "@components/games/GameShell.vue";
 import FlashPlayer from "@components/games/FlashPlayer.vue";
 import FlashResolutionSelect from "@components/games/FlashResolutionSelect.vue";
 import FlashQualitySelect from "@components/games/FlashQualitySelect.vue";
-import FlashSaveManager from "@components/games/FlashSaveManager.vue";
+import SaveManager from "@components/games/SaveManager.vue";
 import StartGate from "@components/games/StartGate.vue";
 import { hasUserGesture } from "@/utils/userActivation";
 import { reportGamePlayed } from "@/utils/recentGames";
@@ -89,6 +97,8 @@ const playerActive = ref(true);
 // 无用户手势（刷新/直链进入）时先展示「开始游戏」，由一次点击后再挂载播放器
 const needsGesture = ref(false);
 const saveManagerRef = ref(null);
+// 「同步至云端」整段（含二次确认框）在跑：挡掉连发，也保证一次只弹一个确认框
+let syncingCloud = false;
 
 function wait(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
@@ -141,12 +151,15 @@ function onSaveAction(payload) {
 }
 
 // 「同步至云端」：先把最新进度落盘，再收集当前游戏全部本地存档，整体上传成一个云端快照。
-async function onUploadCloud(remark = "") {
+// 返回是否真的传上去了——快捷键那条路要据此决定弹不弹「已同步至云端」；
+// 存档管理弹框那条路忽略返回值，行为不变。
+async function onUploadCloud(payload) {
+    const remark = typeof payload === "string" ? payload : payload?.remark || "";
     const manager = saveManagerRef.value;
     const gameId = Number(game.value?.id) || 0;
     if (!gameId) {
         manager?.afterCloudUploaded();
-        return;
+        return false;
     }
     try {
         // reloadForSave(null) 触发一次“停播放器→落盘→重启”，末尾会刷新本地列表
@@ -155,7 +168,7 @@ async function onUploadCloud(remark = "") {
         if (!items.length) {
             ElMessage.info("本地没有可同步的存档。");
             manager?.afterCloudUploaded();
-            return;
+            return false;
         }
         const form = new FormData();
         form.append("game_id", String(gameId));
@@ -169,9 +182,101 @@ async function onUploadCloud(remark = "") {
         );
         await uploadCloudSaveAPI(form);
         manager?.afterCloudUploaded();
+        return true;
     } catch {
         // 错误已由请求层弹中文提示，这里复位云端按钮状态
         manager?.afterCloudUploaded();
+        return false;
+    }
+}
+
+/**
+ * 快捷键 `·`（Backquote，数字 1 左边那个键）：立即把当前进度同步到云端。
+ * Flash 的「落盘」必须先卸载 Ruffle 再重挂（等于重启游戏，见 reloadForSave），所以先弹二次确认。
+ * 还没点「开始游戏」、游戏没加载出来、存档弹框开着、或已经在同步时不响应。
+ */
+function onSyncCloudHotkey(event) {
+    if (
+        event.code !== "Backquote" ||
+        event.ctrlKey ||
+        event.altKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.repeat
+    ) {
+        return;
+    }
+    const target = event.target;
+    const tag = String(target?.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || target?.isContentEditable) {
+        return;
+    }
+    if (
+        syncingCloud ||
+        !swfUrl.value ||
+        needsGesture.value ||
+        loading.value ||
+        saveManagerVisible.value ||
+        !currentGameId.value
+    ) {
+        return;
+    }
+    // 捕获阶段拦下：Ruffle 在同一个文档里也监听键盘，先拿到才不会让 `·` 同时进游戏
+    event.preventDefault();
+    event.stopPropagation();
+    void syncCloudNow();
+}
+
+/**
+ * 快捷键 Alt + `（Backquote，数字 1 左边那个键）：打开存档管理。
+ * 与标题栏的「存档管理」按钮同一条路；游戏还没加载出来、弹框开着或正在同步时不响应。
+ * 注意和 `·` 区分：那个不带修饰键，这个必须按住 Alt。
+ */
+function onSaveManagerHotkey(event) {
+    if (
+        event.code !== "Backquote" ||
+        !event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        event.repeat
+    ) {
+        return;
+    }
+    const target = event.target;
+    const tag = String(target?.tagName || "").toUpperCase();
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
+        return;
+    }
+    if (!game.value || saveManagerVisible.value || syncingCloud) {
+        return;
+    }
+    // 捕获阶段拦下：Ruffle 在同一个文档里也监听键盘，别让 Alt+` 同时进游戏
+    event.preventDefault();
+    event.stopPropagation();
+    saveManagerVisible.value = true;
+}
+
+async function syncCloudNow() {
+    if (syncingCloud) {
+        return;
+    }
+    // 先置位再弹框：确认框开着时再按 `·` 不会再弹一个
+    syncingCloud = true;
+    try {
+        const confirmed = await confirmAction(
+            "同步会先让游戏把当前进度落盘，游戏将重新启动。确定现在同步吗？",
+            { title: "同步至云端", confirmText: "同步" },
+        );
+        if (!confirmed) {
+            // 取消 / 关闭：不重启也不提示
+            return;
+        }
+        if (await onUploadCloud()) {
+            ElMessage.success("已同步至云端");
+        }
+    } finally {
+        syncingCloud = false;
     }
 }
 
@@ -257,31 +362,23 @@ async function loadGame() {
     }
 }
 
-onMounted(loadGame);
+onMounted(() => {
+    // 捕获阶段：Ruffle 也在同一个文档里监听键盘，只有捕获阶段才拦得住 `·` 与 Alt+`
+    window.addEventListener("keydown", onSyncCloudHotkey, true);
+    window.addEventListener("keydown", onSaveManagerHotkey, true);
+    loadGame();
+});
 watch(() => route.params.gameId, loadGame);
-onBeforeUnmount(stopGamePlaytime);
+onBeforeUnmount(() => {
+    window.removeEventListener("keydown", onSyncCloudHotkey, true);
+    window.removeEventListener("keydown", onSaveManagerHotkey, true);
+    stopGamePlaytime();
+});
 </script>
 
 <style scoped>
-/* 标题栏里的「存档管理」入口，与 GameShell 自带的按钮同款深色样式 */
+/* 标题栏里的「存档管理」入口只保留不收缩；外观交给 AppButton 的 dark 变体 */
 .save-manager-entry {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 8px 14px;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 10px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 14px;
-    cursor: pointer;
-    transition: background 0.15s ease, border-color 0.15s ease;
-    white-space: nowrap;
     flex-shrink: 0;
-}
-
-.save-manager-entry:hover {
-    background: rgba(51, 65, 85, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
 }
 </style>

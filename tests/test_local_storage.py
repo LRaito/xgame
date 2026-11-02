@@ -30,6 +30,16 @@ def test_upload_creates_parent_dirs_and_reads_back(storage):
     assert storage.stat("game/nes/AB-12/game.nes").size == 3
 
 
+def test_dir_exists_only_true_for_directories(storage):
+    """改卡带ID 前要判断目录形态：同名的是个文件也算不在。"""
+    storage.upload("game/nes/AB-12/game.nes", _stream(b"rom"), 3, None)
+    assert storage.dir_exists("game/nes/AB-12") is True
+    assert storage.dir_exists("game/nes/AB-12/game.nes") is False
+    assert storage.dir_exists("game/nes/nope") is False
+    with pytest.raises(ValidationError):
+        storage.dir_exists("../escape")
+
+
 def test_upload_overwrites_and_leaves_no_temp_file(storage, tmp_path):
     storage.upload("a/b.bin", _stream(b"old"), 3, None)
     storage.upload("a/b.bin", _stream(b"new-data"), 8, None)
@@ -156,3 +166,18 @@ def test_constructor_creates_root(tmp_path):
     root = tmp_path / "deep" / "storage"
     LocalStorage(root)
     assert root.is_dir()
+
+
+def test_stream_is_seekable(storage):
+    """open_download 的返回值要能被 zipfile 当底层流用：seek/tell/seekable 都要在。"""
+    storage.upload("game/h5/AB/game.zip", io.BytesIO(b"0123456789"), 10, "application/zip")
+    stream = storage.open_download("game/h5/AB/game.zip")
+    try:
+        assert stream.seekable() is True
+        assert stream.readable() is True
+        assert stream.tell() == 0
+        assert stream.seek(4) == 4
+        assert stream.read(2) == b"45"
+        assert stream.seek(0, io.SEEK_END) == 10
+    finally:
+        stream.close()

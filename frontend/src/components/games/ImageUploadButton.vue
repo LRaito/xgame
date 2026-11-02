@@ -1,6 +1,8 @@
 <template>
     <span class="image-upload">
-        <app-button :loading="busy" @click="onPick">{{ label }}</app-button>
+        <app-button variant="secondary" :size="size" :loading="busy" @click="onPick">
+            {{ label }}
+        </app-button>
         <!-- 原生文件选择器藏起来（样式没法统一），只由按钮代点 -->
         <input
             ref="fileInputRef"
@@ -26,6 +28,7 @@ const props = defineProps({
     // 上传接口：(FormData) => Promise
     upload: { type: Function, required: true },
     label: { type: String, default: "上传" },
+    size: { type: String, default: "md" },
 });
 
 const emit = defineEmits(["uploaded"]);

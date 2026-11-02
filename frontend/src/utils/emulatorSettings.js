@@ -61,3 +61,29 @@ export function writeEngineSettings(key, value) {
         return false;
     }
 }
+
+// NDS 的屏幕布局由播放页的布局模式（- / =）和 iframe 的 ?nds= 参数控制，
+// 引擎设置菜单里也已经隐藏这两项；这里仍要剔除，防止历史云端/本机设置把它们带回来。
+const NDS_DISPLAY_OPTIONS = ["melonds_screen_layout", "melonds_screen_gap"];
+
+/**
+ * 剔除 NDS 的布局选项，返回**新对象**（不改入参）。
+ *
+ * 引擎在启动流程里会读设置块，而云端/本机存过的旧值优先级高于宿主页的
+ * `EJS_defaultOptions`——不剔除的话，用户以前在引擎设置菜单里改过的布局会盖掉
+ * 当前 `?nds=` 选定的模式，机壳、遮罩就对不上屏幕几何。非 NDS 或结构不完整的值原样返回。
+ */
+export function stripNdsDisplayOptions(value) {
+    if (!isValidEngineSettings(value)) {
+        return value;
+    }
+    const settings = value.settings;
+    if (!NDS_DISPLAY_OPTIONS.some((key) => key in settings)) {
+        return value;
+    }
+    const nextSettings = { ...settings };
+    for (const key of NDS_DISPLAY_OPTIONS) {
+        delete nextSettings[key];
+    }
+    return { ...value, settings: nextSettings };
+}

@@ -6,8 +6,18 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     volumes:
-      # 数据总目录：游戏本体/封面/H5 资源/攻略、云端存档、截图，以及 db/ 下的 SQLite 库与月度备份
+      # 数据总目录：游戏本体/封面/H5 资源/攻略、存档、截图、检索索引与备份
       - ${STORAGE_HOST_DIR:-./data/storage}:/data
+      # 运行时目录：只有 SQLite 库 app.db。单独挂一份是为了让数据目录能整体交给网盘备份——
+      # 网盘客户端拷不动一个一直被写着的库文件。留空则退回与数据目录同一个宿主目录。
+      - ${RUNTIME_HOST_DIR:-${STORAGE_HOST_DIR:-./data/storage}}:/runtime
+    environment:
+      # 两个宿主路径都只给启动时的哨兵判断用——容器里 STORAGE_ROOT / RUNTIME_ROOT 固定是
+      # /data 与 /runtime，看不出宿主路径，判断不了「这两个根是不是在 Windows 盘上（需要
+      # .mounted）」（见 backend/mount_guard.py）。后端仍然不读 .env 文件，这些值是 compose
+      # 按 .env / 默认值算好后传进去的。
+      STORAGE_HOST_DIR: ${STORAGE_HOST_DIR:-./data/storage}
+      RUNTIME_HOST_DIR: ${RUNTIME_HOST_DIR:-${STORAGE_HOST_DIR:-./data/storage}}
     restart: unless-stopped
 
   web:
@@ -33,12 +43,26 @@ services:
       - api
     restart: unless-stopped
 
-# 本项目不使用任何 docker 具名卷：数据一律落在宿主目录，用 ${STORAGE_HOST_DIR} 指定。
-# 这样备份、迁移、排查都是普通文件操作，不需要进容器或借 docker 命令。
+# 本项目不使用任何 docker 具名卷：数据一律落在宿主目录，用 ${STORAGE_HOST_DIR}（以及只放
+# SQLite 库的 ${RUNTIME_HOST_DIR}）指定。这样备份、迁移、排查都是普通文件操作，不需要进容器
+# 或借 docker 命令。
 #
 # ⚠️ 时序要求：宿主目录 bind 的源路径必须在 docker 启动之前就可达。
 # 数据目录若在 WSL 发行版（Ubuntu-22.04）的文件系统上，而 Docker Desktop 的守护进程先于该
-# 发行版启动，开机时 bind 会被挂成一个空 tmpfs —— api 会在空目录里新建一个空 app.db，
-# 看起来就像「数据全没了」。发行版起来后重启容器即可恢复，但窗口期内的写入会真丢（落在
-# tmpfs 内存里）。因此这个目录应当指向 docker 启动前就稳定的路径，且别放在会被 git pull
-# 覆盖的仓库内。见 DEVELOP.md 的「排障」。
+# 发行版启动，开机时 bind 会被挂成一个空 tmpfs —— 以前 api 会在空目录里新建一个空 app.db，
+# 看起来就像「数据全没了」。
+#
+# 现在这层由两个根目录各自的哨兵文件兜住：api 的入口脚本（backend/entrypoint.sh）在 exec
+# gunicorn 之前检查 /data/.mounted 与 /runtime/.mounted（backend/mount_guard.py），**只在那个根
+# 的宿主目录落在 Windows 盘挂载前缀（默认 /mnt，见 backend/config.py 的 WINDOWS_MOUNT_PREFIX）
+# 下时才检查**——那种目录才有上面这条竞态；空挂载里没有哨兵就打一条中文日志、等 5 秒、以非零码
+# 退出，靠本文件 api 服务的 `restart: unless-stopped` 反复重启，直到盘挂上、哨兵可见，服务自己
+# 恢复 —— 窗口期内一个字节都不会写进空目录。两个根都放普通 Linux 路径（如 /srv/xgame）下则完全
+# 不检查、直接启动。
+#
+# 所以：**Windows 盘上的根目录要各人工建一次哨兵**（代码只检查、绝不代建；两个根默认是同一个
+# 目录，那就只有一个文件）：
+#     mkdir -p "$STORAGE_HOST_DIR" && touch "$STORAGE_HOST_DIR/.mounted"
+#     mkdir -p "$RUNTIME_HOST_DIR" && touch "$RUNTIME_HOST_DIR/.mounted"
+# 并且这些目录应当指向 docker 启动前就稳定的路径，别放在会被 git pull 覆盖的仓库内。
+# 见 DEVELOP.md 与 README.md 的「排障 / 常见问题」。

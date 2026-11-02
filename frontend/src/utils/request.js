@@ -1,6 +1,7 @@
 import axios from "axios";
 import { ElMessage } from "element-plus";
 import { clearSession } from "./auth";
+import { overlayAppendTarget } from "./overlay";
 
 let csrfToken = "";
 let isRedirectingToLogin = false;
@@ -53,7 +54,7 @@ request.interceptors.response.use(
             const message = payload.message || "请求失败。";
             const silent = Boolean(response.config.notShowError);
             if (!silent) {
-                ElMessage.error(message);
+                ElMessage.error({ message, appendTo: overlayAppendTarget() });
             }
             return Promise.reject(fail(message, !silent));
         }
@@ -78,14 +79,14 @@ request.interceptors.response.use(
             }
             const silent401 = Boolean(error.config?.notShowError);
             if (!silent401) {
-                ElMessage.error(message);
+                ElMessage.error({ message, appendTo: overlayAppendTarget() });
             }
             return Promise.reject(fail(message, !silent401));
         }
 
         const silent = Boolean(error.config?.notShowError);
         if (!silent) {
-            ElMessage.error(message);
+            ElMessage.error({ message, appendTo: overlayAppendTarget() });
         }
         return Promise.reject(fail(message, !silent));
     }

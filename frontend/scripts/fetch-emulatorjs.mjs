@@ -4,7 +4,7 @@
  *
  * 与 scripts/copy-ruffle.mjs 的分工一致，但 EmulatorJS 没有官方 npm 包、官方 release
  * 是 303MB 的全量 .7z，因此这里只从官方 CDN（与 release 同源同版本）按需拉取最小集：
- *  loader + 引擎（emulator.min.js/.css）+ 本项目 6 个平台 core（wasm.data + report）。
+ *  loader + 引擎（emulator.min.js/.css）+ 本项目 7 个平台/机种 core（wasm.data + report）。
  *
  * core 文件命名规则（EmulatorJS 4.2.3 引擎逻辑）：
  *   cores/<core>[-thread][-legacy]-wasm.data
@@ -41,7 +41,7 @@ const DONE_MARKER = ".emulatorjs.done";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const destRoot = join(root, "public/emulatorjs", "data");
 
-// data/ 目录下相对路径清单（顶层引擎文件 + 6 平台 core）
+// data/ 目录下相对路径清单（顶层引擎文件 + 7 个平台/机种 core）
 const FILES = [
     "loader.js",
     "emulator.min.js",
@@ -53,7 +53,8 @@ const FILES = [
     "compression/libunrar.js",
     "compression/libunrar.wasm",
     "compression/README.md",
-    // cores：NES(fceumm) SNES(snes9x) GB/GBC(gambatte) GBA(mgba) MD/GG(genesis_plus_gx) SMS(smsplus)
+    // cores：NES(fceumm) SNES(snes9x) GB/GBC(gambatte) GBA(mgba) NDS(melonds)
+    //        MD/GG(genesis_plus_gx) SMS(smsplus)
     // 每个平台同时打 -wasm.data（WebGL2 开关打开时用）与 -legacy-wasm.data（引擎默认用）
     "cores/fceumm-wasm.data",
     "cores/fceumm-legacy-wasm.data",
@@ -73,6 +74,10 @@ const FILES = [
     "cores/smsplus-wasm.data",
     "cores/smsplus-legacy-wasm.data",
     "cores/reports/smsplus.json",
+    // NDS(melonds)：EJS 的 nds 默认核；desmume / desmume2015 刻意不打包
+    "cores/melonds-wasm.data",
+    "cores/melonds-legacy-wasm.data",
+    "cores/reports/melonds.json",
 ];
 
 // 本地化合并的输入（官方语言包，仅构建期下载、不入 data/）与合并产物输出（相对 data/）

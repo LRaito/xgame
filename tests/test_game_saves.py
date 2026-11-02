@@ -8,7 +8,6 @@ from backend.auth.service import AuthService
 from backend.games import paths
 from backend.games.models import GameCloudSnapshot, GameCloudSnapshotFile
 from backend.config import DB_SUBDIR
-from backend.mount_guard import SENTINEL_NAME
 
 
 @pytest.fixture
@@ -25,8 +24,7 @@ def _files(storage_root) -> set[str]:
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file()
-        and p.name != SENTINEL_NAME
-        # db/ 里是 SQLite 库与它的月度备份，不属于游戏素材
+        # db/ 里是备份与检索索引，不属于游戏素材
         and p.relative_to(root).parts[0] != DB_SUBDIR
     }
 
@@ -71,6 +69,19 @@ def _upload_form(game_id: int, sols: list[bytes], remark="备注"):
         for i, data_ in enumerate(sols)
     ]
     return data, files
+
+
+def _create_snapshot(client, game_id: int, remark="备注"):
+    data, files = _upload_form(game_id, [_sol_data(b"snapshot")], remark=remark)
+    response = client.post("/api/games/saves", data=data, files=files)
+    assert response.status_code == 201, response.text
+    return response.json()["data"]
+
+
+def _list_snapshots(client, game_id: int) -> list[dict]:
+    response = client.get("/api/games/saves", params={"game_id": game_id})
+    assert response.status_code == 200, response.text
+    return response.json()["data"]
 
 
 def test_save_file_path_layout():
@@ -295,3 +306,421 @@ def test_emulator_state_snapshot_keeps_extension(logged_in_saves):
         disposition = download.headers.get("content-disposition") or ""
         assert "slot-%d.state" % index in disposition
         assert ".sol" not in disposition
+
+
+def test_cloud_snapshot_auto_parent_latest(logged_in_saves):
+    """新快照自动接在同组最新一条后面；第一条才是顶层。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-1")["id"]
+    first = _create_snapshot(client, game_id, remark="第一条")
+    second = _create_snapshot(client, game_id, remark="第二条")
+    third = _create_snapshot(client, game_id, remark="第三条")
+
+    assert first["parent_id"] is None
+    assert second["parent_id"] == first["id"]
+    assert third["parent_id"] == second["id"]
+
+    listed = {item["id"]: item for item in _list_snapshots(client, game_id)}
+    assert listed[first["id"]]["parent_id"] is None
+    assert listed[second["id"]]["parent_id"] == first["id"]
+    assert listed[third["id"]]["parent_id"] == second["id"]
+
+    for item, expected in ((first, None), (second, first["id"]), (third, second["id"])):
+        detail = client.get(f"/api/games/saves/{item['id']}")
+        assert detail.json()["data"]["parent_id"] == expected
+
+
+def test_cloud_snapshot_auto_parent_scoped_to_game(logged_in_saves):
+    """自动父级只看同一游戏；另一个游戏的第一条仍是顶层。"""
+    client = logged_in_saves
+    game_a = _make_game(client, "游戏 A", cartridge_id="TREE-1A")["id"]
+    game_b = _make_game(client, "游戏 B", cartridge_id="TREE-1B")["id"]
+    first_a = _create_snapshot(client, game_a)
+    second_a = _create_snapshot(client, game_a)
+    first_b = _create_snapshot(client, game_b)
+
+    assert first_a["parent_id"] is None
+    assert second_a["parent_id"] == first_a["id"]
+    assert first_b["parent_id"] is None
+
+
+def test_cloud_snapshot_auto_parent_after_latest_deleted(logged_in_saves):
+    """删掉最新一条后再建，会接到剩余的最新一条。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-1C")["id"]
+    first = _create_snapshot(client, game_id, remark="第一条")
+    second = _create_snapshot(client, game_id, remark="第二条")
+
+    assert client.delete(f"/api/games/saves/{second['id']}").status_code == 200
+    third = _create_snapshot(client, game_id, remark="第三条")
+    assert third["parent_id"] == first["id"]
+
+
+def test_cloud_snapshot_auto_parent_tiebreak_id_desc(logged_in_saves):
+    """同一 created_at 时，“最新”按 id 倒序取。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-1D")["id"]
+    first = _create_snapshot(client, game_id)
+    second = _create_snapshot(client, game_id)
+
+    with Session(client.app.state.engine) as session:
+        rows = session.exec(
+            select(GameCloudSnapshot).where(GameCloudSnapshot.game_id == game_id)
+        ).all()
+        fixed = rows[0].created_at
+        for row in rows:
+            row.created_at = fixed
+            session.add(row)
+        session.commit()
+
+    third = _create_snapshot(client, game_id)
+    assert third["parent_id"] == max(first["id"], second["id"])
+
+
+def test_cloud_snapshot_set_and_clear_parent(logged_in_saves):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-2")["id"]
+    parent = _create_snapshot(client, game_id, remark="主干")
+    child = _create_snapshot(client, game_id, remark="分支")
+
+    response = client.put(
+        f"/api/games/saves/{child['id']}/parent", json={"parent_id": parent["id"]}
+    )
+    assert response.status_code == 200
+    assert response.json()["data"]["parent_id"] == parent["id"]
+
+    listed = {item["id"]: item for item in _list_snapshots(client, game_id)}
+    assert listed[child["id"]]["parent_id"] == parent["id"]
+    with Session(client.app.state.engine) as session:
+        assert session.get(GameCloudSnapshot, child["id"]).parent_id == parent["id"]
+
+    # null = 设为顶层
+    cleared = client.put(
+        f"/api/games/saves/{child['id']}/parent", json={"parent_id": None}
+    )
+    assert cleared.status_code == 200
+    assert cleared.json()["data"]["parent_id"] is None
+    with Session(client.app.state.engine) as session:
+        assert session.get(GameCloudSnapshot, child["id"]).parent_id is None
+
+
+def test_cloud_snapshot_parent_self_rejected(logged_in_saves):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-3")["id"]
+    snapshot = _create_snapshot(client, game_id)
+
+    response = client.put(
+        f"/api/games/saves/{snapshot['id']}/parent",
+        json={"parent_id": snapshot["id"]},
+    )
+    assert response.status_code == 400
+    assert "自己" in response.json()["message"]
+    with Session(client.app.state.engine) as session:
+        assert session.get(GameCloudSnapshot, snapshot["id"]).parent_id is None
+
+
+def test_cloud_snapshot_parent_cross_game_rejected(logged_in_saves):
+    client = logged_in_saves
+    game_a = _make_game(client, "游戏 A", cartridge_id="TREE-4A")["id"]
+    game_b = _make_game(client, "游戏 B", cartridge_id="TREE-4B")["id"]
+    snapshot_a = _create_snapshot(client, game_a)
+    snapshot_b = _create_snapshot(client, game_b)
+    assert snapshot_a["parent_id"] is None
+    assert snapshot_b["parent_id"] is None
+
+    response = client.put(
+        f"/api/games/saves/{snapshot_a['id']}/parent",
+        json={"parent_id": snapshot_b["id"]},
+    )
+    assert response.status_code == 400
+    assert "同一游戏" in response.json()["message"]
+    with Session(client.app.state.engine) as session:
+        assert session.get(GameCloudSnapshot, snapshot_a["id"]).parent_id is None
+
+
+def test_cloud_snapshot_parent_cycle_rejected(logged_in_saves):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-5")["id"]
+    a = _create_snapshot(client, game_id, remark="A")
+    b = _create_snapshot(client, game_id, remark="B")
+    c = _create_snapshot(client, game_id, remark="C")
+
+    for child, parent in ((b, a), (c, b)):
+        response = client.put(
+            f"/api/games/saves/{child['id']}/parent",
+            json={"parent_id": parent["id"]},
+        )
+        assert response.status_code == 200, response.text
+
+    # A → C 会让 A→B→C→A 成环
+    response = client.put(
+        f"/api/games/saves/{a['id']}/parent", json={"parent_id": c["id"]}
+    )
+    assert response.status_code == 400
+    assert "循环" in response.json()["message"]
+    with Session(client.app.state.engine) as session:
+        assert session.get(GameCloudSnapshot, a["id"]).parent_id is None
+
+
+def test_cloud_snapshot_parent_user_isolation(logged_in_saves, app):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-6")["id"]
+    alice_snapshot = _create_snapshot(client, game_id)
+
+    with Session(app.state.engine) as session:
+        AuthService(session).create_user("bobby", "secret123")
+    client.post("/api/logout")
+    login = client.post(
+        "/api/login", json={"username": "bobby", "password": "secret123"}
+    )
+    assert login.status_code == 200, login.text
+    bobby_snapshot = _create_snapshot(client, game_id)
+    assert bobby_snapshot["parent_id"] is None
+
+    # 改别人的快照 → 404
+    response = client.put(
+        f"/api/games/saves/{alice_snapshot['id']}/parent",
+        json={"parent_id": bobby_snapshot["id"]},
+    )
+    assert response.status_code == 404
+    # 把父级指向别人的快照 → 404（不暴露存在性）
+    response = client.put(
+        f"/api/games/saves/{bobby_snapshot['id']}/parent",
+        json={"parent_id": alice_snapshot["id"]},
+    )
+    assert response.status_code == 404
+    # 列表仍只看到自己的
+    assert [item["id"] for item in _list_snapshots(client, game_id)] == [
+        bobby_snapshot["id"]
+    ]
+
+
+def test_cloud_snapshot_parent_missing_rejected(logged_in_saves):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-7")["id"]
+    snapshot = _create_snapshot(client, game_id)
+
+    response = client.put(
+        f"/api/games/saves/{snapshot['id']}/parent", json={"parent_id": 999999}
+    )
+    assert response.status_code == 404
+    assert "不存在" in response.json()["message"]
+
+
+def test_cloud_snapshot_delete_reparents_children(logged_in_saves, storage_root):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-8")["id"]
+    parent = _create_snapshot(client, game_id, remark="父")
+    child = _create_snapshot(client, game_id, remark="子")
+    other_child = _create_snapshot(client, game_id, remark="另一个子")
+    grandchild = _create_snapshot(client, game_id, remark="孙")
+
+    for target, parent_id in (
+        (child, parent["id"]),
+        (other_child, parent["id"]),
+        (grandchild, child["id"]),
+    ):
+        response = client.put(
+            f"/api/games/saves/{target['id']}/parent", json={"parent_id": parent_id}
+        )
+        assert response.status_code == 200, response.text
+
+    assert client.delete(f"/api/games/saves/{parent['id']}").status_code == 200
+
+    with Session(client.app.state.engine) as session:
+        assert session.get(GameCloudSnapshot, parent["id"]) is None
+        # 直接子级变顶层，孙级仍挂在原来的父级下
+        assert session.get(GameCloudSnapshot, child["id"]).parent_id is None
+        assert session.get(GameCloudSnapshot, other_child["id"]).parent_id is None
+        assert session.get(GameCloudSnapshot, grandchild["id"]).parent_id == child["id"]
+        # 子级文件仍在
+        assert session.get(GameCloudSnapshotFile, child["files"][0]["id"]) is not None
+
+    download = client.get(
+        f"/api/games/saves/{child['id']}/files/{child['files'][0]['id']}/download"
+    )
+    assert download.status_code == 200
+    assert download.content == _sol_data(b"snapshot")
+
+
+def test_cloud_snapshot_list_oldest_first(logged_in_saves):
+    """列表按展示分数升序：越新越靠下（与 created_at 无关）。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-9")["id"]
+    first = _create_snapshot(client, game_id)
+    second = _create_snapshot(client, game_id)
+
+    with Session(client.app.state.engine) as session:
+        rows = session.exec(
+            select(GameCloudSnapshot).where(GameCloudSnapshot.game_id == game_id)
+        ).all()
+        fixed = rows[0].created_at
+        for row in rows:
+            row.created_at = fixed
+            session.add(row)
+        session.commit()
+
+    ids = [item["id"] for item in _list_snapshots(client, game_id)]
+    assert ids == [first["id"], second["id"]]
+
+
+def _make_siblings(client, game_id: int, count: int = 3) -> list[dict]:
+    """建 count 条快照并把它们都设为顶层，成为同级兄弟。"""
+    items = [_create_snapshot(client, game_id, remark=f"第 {i + 1} 条") for i in range(count)]
+    for item in items:
+        response = client.put(
+            f"/api/games/saves/{item['id']}/parent", json={"parent_id": None}
+        )
+        assert response.status_code == 200, response.text
+    return items
+
+
+def _order(client, game_id: int) -> list[int]:
+    return [item["id"] for item in _list_snapshots(client, game_id)]
+
+
+def test_cloud_snapshot_create_appends_last(logged_in_saves):
+    """新快照追加在末尾（越新越靠下），分数递增。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-1")["id"]
+    first = _create_snapshot(client, game_id)
+    second = _create_snapshot(client, game_id)
+    third = _create_snapshot(client, game_id)
+
+    listed = _list_snapshots(client, game_id)
+    assert [item["id"] for item in listed] == [first["id"], second["id"], third["id"]]
+    scores = [item["sort_order"] for item in listed]
+    assert scores == sorted(scores)
+    assert len(set(scores)) == 3
+
+
+def test_cloud_snapshot_move_reorders_siblings(logged_in_saves):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-2")["id"]
+    first, second, third = _make_siblings(client, game_id)
+    assert _order(client, game_id) == [first["id"], second["id"], third["id"]]
+
+    # 第三条移到同级最上面，返回整份有序列表
+    moved = client.post(f"/api/games/saves/{third['id']}/move", json={"to_index": 0})
+    assert moved.status_code == 200, moved.text
+    assert [item["id"] for item in moved.json()["data"]] == [
+        third["id"],
+        first["id"],
+        second["id"],
+    ]
+    assert _order(client, game_id) == [third["id"], first["id"], second["id"]]
+
+    # 第一条（现在在中间）下移一位
+    moved = client.post(f"/api/games/saves/{first['id']}/move", json={"to_index": 2})
+    assert moved.status_code == 200, moved.text
+    assert _order(client, game_id) == [third["id"], second["id"], first["id"]]
+
+
+def test_cloud_snapshot_move_only_touches_target(logged_in_saves):
+    """只改被移动那一行的分数，其余兄弟不动。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-3")["id"]
+    first, second, third = _make_siblings(client, game_id)
+
+    with Session(client.app.state.engine) as session:
+        before = {
+            row.id: row.sort_order
+            for row in session.exec(
+                select(GameCloudSnapshot).where(GameCloudSnapshot.game_id == game_id)
+            ).all()
+        }
+
+    response = client.post(
+        f"/api/games/saves/{third['id']}/move", json={"to_index": 0}
+    )
+    assert response.status_code == 200, response.text
+
+    with Session(client.app.state.engine) as session:
+        after = {
+            row.id: row.sort_order
+            for row in session.exec(
+                select(GameCloudSnapshot).where(GameCloudSnapshot.game_id == game_id)
+            ).all()
+        }
+    assert after[first["id"]] == before[first["id"]]
+    assert after[second["id"]] == before[second["id"]]
+    assert after[third["id"]] < after[first["id"]]
+
+
+def test_cloud_snapshot_move_edge_cases(logged_in_saves, app):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-4")["id"]
+    first, second, third = _make_siblings(client, game_id)
+
+    # 越界
+    response = client.post(
+        f"/api/games/saves/{first['id']}/move", json={"to_index": 9}
+    )
+    assert response.status_code == 400
+    assert "位置" in response.json()["message"]
+    assert _order(client, game_id) == [first["id"], second["id"], third["id"]]
+
+    # 原位：空操作
+    response = client.post(
+        f"/api/games/saves/{second['id']}/move", json={"to_index": 1}
+    )
+    assert response.status_code == 200
+    assert _order(client, game_id) == [first["id"], second["id"], third["id"]]
+
+    # 别人的快照 → 404
+    with Session(app.state.engine) as session:
+        AuthService(session).create_user("bobby", "secret123")
+    client.post("/api/logout")
+    client.post("/api/login", json={"username": "bobby", "password": "secret123"})
+    response = client.post(
+        f"/api/games/saves/{first['id']}/move", json={"to_index": 0}
+    )
+    assert response.status_code == 404
+
+
+def test_cloud_snapshot_move_requires_login(client):
+    response = client.post("/api/games/saves/1/move", json={"to_index": 0})
+    assert response.status_code == 401
+
+
+def test_cloud_snapshot_move_renumbers_when_gap_runs_out(logged_in_saves):
+    """反复挤同一个间隙，间隔耗尽时整份重排，顺序仍正确。"""
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="MOVE-5")["id"]
+    _make_siblings(client, game_id)
+
+    for _ in range(40):
+        ids = _order(client, game_id)
+        response = client.post(
+            f"/api/games/saves/{ids[-1]}/move", json={"to_index": 1}
+        )
+        assert response.status_code == 200, response.text
+
+    with Session(client.app.state.engine) as session:
+        scores = [
+            row.sort_order
+            for row in session.exec(
+                select(GameCloudSnapshot)
+                .where(GameCloudSnapshot.game_id == game_id)
+                .order_by(GameCloudSnapshot.sort_order, GameCloudSnapshot.id)
+            ).all()
+        ]
+    assert scores == sorted(scores)
+    assert len(set(scores)) == len(scores)
+
+
+def test_delete_game_removes_snapshot_tree(logged_in_saves, app):
+    client = logged_in_saves
+    game_id = _make_game(client, cartridge_id="TREE-10")["id"]
+    parent = _create_snapshot(client, game_id)
+    child = _create_snapshot(client, game_id)
+    client.put(
+        f"/api/games/saves/{child['id']}/parent", json={"parent_id": parent["id"]}
+    )
+
+    assert client.delete(f"/api/games/manage/{game_id}").status_code == 200
+    with Session(app.state.engine) as session:
+        rows = session.exec(
+            select(GameCloudSnapshot).where(GameCloudSnapshot.game_id == game_id)
+        ).all()
+        assert rows == []

@@ -1,5 +1,6 @@
 import re
 
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from backend.auth.models import (
@@ -47,11 +48,17 @@ class AuthService:
         self._session = session
 
     def create_user(self, username: str, password: str) -> User:
-        """注册：用户名唯一，密码只做哈希入库。"""
+        """注册：用户名唯一，密码只做哈希入库。
+
+        查重**按小写比**：用户名是 `save/{用户名}/…`、`image/{用户名}/…` 这两条落盘路径的
+        一个目录名，而 Windows（NTFS）与 macOS 的文件系统不区分大小写——`Alice` 和 `alice`
+        在库里是两条记录、在磁盘上却是同一个目录，两个账号的存档与截图会串在一起。
+        只挡新增，不去动已有账号的落盘路径（改了会让旧数据「看起来丢了」）。
+        """
         username = validate_username(username)
         password = validate_password(password)
         existing = self._session.exec(
-            select(User).where(User.username == username)
+            select(User).where(func.lower(User.username) == username.lower())
         ).first()
         if existing is not None:
             raise AuthError(f"用户名 {username} 已被占用，换一个吧。")

@@ -1,52 +1,95 @@
 <template>
     <div ref="rootRef" class="emu-window-select">
         <span class="emu-window-select__text">窗口</span>
-        <button
-            type="button"
+        <app-button
             class="emu-window-select__button"
+            variant="secondary"
+            tone="dark"
+            size="lg"
             :aria-expanded="open ? 'true' : 'false'"
             @click="open = !open"
         >
             {{ currentLabel }}
-        </button>
+        </app-button>
 
         <!-- 面板就地渲染在标题栏里（不 teleport）：鼠标移进面板仍算在标题栏内，
              标题栏不会收起把它一起带走 -->
         <div v-if="open" class="emu-window-select__panel">
-            <button
-                type="button"
-                class="emu-window-select__fit"
-                :class="{ 'is-active': scale === FIT }"
-                @click="pick(FIT, mode)"
-            >
-                适应窗口
-            </button>
-            <!-- 两列矩阵：行是倍率，列是显示比例。只有这台机器有两种比例（FC）时才画表头 -->
-            <div class="emu-window-select__grid" :class="{ 'emu-window-select__grid--wide': wide }">
-                <template v-if="wide">
-                    <span />
-                    <span class="emu-window-select__head">像素完美</span>
-                    <span class="emu-window-select__head">4:3</span>
-                </template>
-                <template v-for="row in rows" :key="row.value">
+            <!-- 非 NDS：适应窗口 + 倍率 × 显示比例矩阵 -->
+            <template v-if="!isModeMatrix">
+                <app-button
+                    class="emu-window-select__fit"
+                    variant="secondary"
+                    tone="dark"
+                    size="sm"
+                    block
+                    :pressed="scale === FIT"
+                    @click="pick(FIT, mode)"
+                >
+                    适应窗口
+                </app-button>
+                <!-- 两列矩阵：行是倍率，列是显示比例。只有这台机器有两种比例（FC）时才画表头 -->
+                <div class="emu-window-select__grid" :class="{ 'emu-window-select__grid--wide': wide }">
+                    <template v-if="wide">
+                        <span />
+                        <span class="emu-window-select__head">像素完美</span>
+                        <span class="emu-window-select__head">4:3</span>
+                    </template>
+                    <template v-for="row in rows" :key="row.value">
+                        <span class="emu-window-select__scale">{{ row.label }}</span>
+                        <app-button
+                            class="emu-window-select__cell"
+                            variant="secondary"
+                            tone="dark"
+                            size="sm"
+                            block
+                            :pressed="isActive(row.value, PP)"
+                            @click="pick(row.value, PP)"
+                        >
+                            {{ row.pp }}
+                        </app-button>
+                        <app-button
+                            v-if="wide"
+                            class="emu-window-select__cell"
+                            variant="secondary"
+                            tone="dark"
+                            size="sm"
+                            block
+                            :pressed="isActive(row.value, WIDE)"
+                            @click="pick(row.value, WIDE)"
+                        >
+                            {{ row.wide }}
+                        </app-button>
+                    </template>
+                </div>
+            </template>
+            <!-- NDS：三列 = 三种屏幕布局。每列独立选自己的倍率/适应窗口，互不影响；
+                 点某一列的格子还会顺便切到那个布局。 -->
+            <div v-else class="emu-window-select__grid emu-window-select__grid--modes">
+                <span />
+                <span
+                    v-for="col in modes"
+                    :key="col.id"
+                    class="emu-window-select__head"
+                    :class="{ 'emu-window-select__head--active': col.id === activeMode }"
+                >
+                    {{ col.label }}
+                </span>
+                <template v-for="row in modeRows" :key="row.value">
                     <span class="emu-window-select__scale">{{ row.label }}</span>
-                    <button
-                        type="button"
+                    <app-button
+                        v-for="(text, index) in row.cells"
+                        :key="modes[index].id"
                         class="emu-window-select__cell"
-                        :class="{ 'is-active': isActive(row.value, PP) }"
-                        @click="pick(row.value, PP)"
+                        variant="secondary"
+                        tone="dark"
+                        size="sm"
+                        block
+                        :pressed="scaleFor(modes[index].id) === row.value"
+                        @click="pickMode(modes[index].id, row.value)"
                     >
-                        {{ row.pp }}
-                    </button>
-                    <button
-                        v-if="wide"
-                        type="button"
-                        class="emu-window-select__cell"
-                        :class="{ 'is-active': isActive(row.value, WIDE) }"
-                        @click="pick(row.value, WIDE)"
-                    >
-                        {{ row.wide }}
-                    </button>
+                        {{ text }}
+                    </app-button>
                 </template>
             </div>
         </div>
@@ -73,15 +116,24 @@ const props = defineProps({
     // 第二列（4:3）的配置 { aspect, native }；null 表示这台机器只有一种显示比例，不画第二列。
     // native 是这一列的**帧缓冲分辨率**（可能和第一列不同：FC 的 4:3 模式用完整 240 行帧）
     wide: { type: Object, default: null },
+    // NDS：三种屏幕布局各一列（[{ id, label, native }]）。传了就用「模式 × 倍率」矩阵，
+    // 每列独立记住自己选中的倍率；忽略 modelValue / wide。null = 用原来的显示比例矩阵。
+    modes: { type: Array, default: null },
+    // 每列当前选中的倍率：{ [modeId]: "fit" | "1" | "1.5" ... }
+    modeScales: { type: Object, default: null },
+    // 当前激活的屏幕布局 id（表头高亮 + 收起按钮显示它自己的倍率）
+    activeMode: { type: String, default: "" },
 });
 
-const emit = defineEmits(["update:modelValue"]);
+const emit = defineEmits(["update:modelValue", "pick-mode"]);
 
 // 可选窗口倍率：1× 用帧缓冲像素高度，往上（含半档）放大；「适应窗口」在另一个选项里。
 const SCALES = [1, 1.5, 2, 2.5, 3, 3.5, 4];
 
 const rootRef = ref(null);
 const open = ref(false);
+
+const isModeMatrix = computed(() => Array.isArray(props.modes) && props.modes.length > 0);
 
 // 取值解析：早期只存过倍率（没有 "|"），一律当作像素完美
 const parsed = computed(() => {
@@ -130,8 +182,60 @@ const rows = computed(() => {
     });
 });
 
+// ---------- NDS：模式 × 倍率矩阵 ----------
+
+function scaleFor(modeId) {
+    return String(props.modeScales?.[modeId] ?? FIT);
+}
+
+/** 某一列的显示宽高比：激活中的列用引擎上报值，其余列用该模式自己的帧缓冲比例。 */
+function modeRatio(col) {
+    if (col.id === props.activeMode && props.aspect > 0) {
+        return props.aspect;
+    }
+    return col.native?.height ? col.native.width / col.native.height : 0;
+}
+
+function modeCellText(col, value) {
+    if (value === FIT) {
+        return "适应";
+    }
+    return sizeText(col.native.height * Number(value), modeRatio(col));
+}
+
+// 第一行是「适应窗口」，其后是各倍率；每列的格子按该列自己的模式换算尺寸
+const modeRows = computed(() => {
+    const cols = props.modes || [];
+    return [
+        { value: FIT, label: "适应", cells: cols.map(() => "适应") },
+        ...SCALES.map((value) => ({
+            value: String(value),
+            label: `${value.toFixed(1)}×`,
+            cells: cols.map((col) => modeCellText(col, String(value))),
+        })),
+    ];
+});
+
+function pickMode(modeId, value) {
+    emit("pick-mode", { mode: modeId, scale: value });
+    open.value = false;
+}
+
 // 收起状态下按钮上的文字 = 当前选择（真实窗口尺寸）
 const currentLabel = computed(() => {
+    if (isModeMatrix.value) {
+        const cols = props.modes || [];
+        const col = cols.find((item) => item.id === props.activeMode) || cols[0];
+        if (!col) {
+            return "适应窗口";
+        }
+        const value = scaleFor(col.id);
+        if (value === FIT) {
+            return `${col.label} 适应窗口`;
+        }
+        const size = modeCellText(col, value);
+        return size ? `${col.label} ${value}×（${size}）` : `${col.label} ${value}×`;
+    }
     const prefix = mode.value === WIDE ? "4:3 " : "";
     if (scale.value === FIT) {
         return mode.value === WIDE ? "适应窗口（4:3）" : "适应窗口";
@@ -195,31 +299,6 @@ onBeforeUnmount(() => {
     white-space: nowrap;
 }
 
-/* 与标题栏的按钮（.game-shell__btn / .emulator-player__action）同一套盒模型：
-   8px 上下内边距 + 14px 字号 + 1.6 行高 = 40px 高，并排时上下沿对齐 */
-.emu-window-select__button {
-    padding: 8px 10px;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 8px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 14px;
-    line-height: 1.6;
-    cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease;
-    white-space: nowrap;
-}
-
-.emu-window-select__button:hover {
-    background: rgba(51, 65, 85, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
-}
-
-.emu-window-select__button:focus-visible {
-    outline: none;
-    border-color: #38bdf8;
-}
-
 /* 面板挂在按钮下方、右对齐：标题栏靠右，右对齐才不会被视口切掉 */
 .emu-window-select__panel {
     position: absolute;
@@ -235,18 +314,7 @@ onBeforeUnmount(() => {
 }
 
 .emu-window-select__fit {
-    display: block;
-    width: 100%;
     margin-bottom: 6px;
-    padding: 8px 10px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 13px;
-    text-align: left;
-    cursor: pointer;
-    white-space: nowrap;
 }
 
 .emu-window-select__grid {
@@ -258,6 +326,16 @@ onBeforeUnmount(() => {
 
 .emu-window-select__grid--wide {
     grid-template-columns: auto 1fr 1fr;
+}
+
+/* NDS：三列 = 三种屏幕布局，每列自己一组倍率 */
+.emu-window-select__grid--modes {
+    grid-template-columns: auto 1fr 1fr 1fr;
+}
+
+.emu-window-select__head--active {
+    color: #e2e8f0;
+    font-weight: 600;
 }
 
 .emu-window-select__head {
@@ -276,29 +354,4 @@ onBeforeUnmount(() => {
     white-space: nowrap;
 }
 
-.emu-window-select__cell {
-    padding: 7px 10px;
-    border: 1px solid transparent;
-    border-radius: 8px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 13px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background 0.15s ease, border-color 0.15s ease;
-}
-
-.emu-window-select__fit:hover,
-.emu-window-select__cell:hover {
-    background: rgba(51, 65, 85, 0.95);
-    border-color: rgba(148, 163, 184, 0.4);
-}
-
-/* 当前生效的那一格点亮，一眼看出选的是倍率 + 哪种显示比例 */
-.emu-window-select__fit.is-active,
-.emu-window-select__cell.is-active {
-    background: rgba(37, 99, 235, 0.85);
-    border-color: rgba(96, 165, 250, 0.6);
-    color: #f8fafc;
-}
 </style>

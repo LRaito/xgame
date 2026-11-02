@@ -6,8 +6,9 @@ server {
     http2 on;
     server_name _;
     root /usr/share/nginx/html;
-    # GBA 整卡可达 32MiB，给上传留余量（游戏本体经 /api 反代，上传限制在此网关生效）
-    client_max_body_size 128m;
+    # 游戏本体经 /api 反代，上传限制在此网关生效。GBA 整卡可达 32MiB，
+    # NDS 本体则可达数百 MB，所以网关放宽到 512m；ZIP/PDF 的 128MB 是应用层自己的上限。
+    client_max_body_size 512m;
 
     ssl_certificate     /etc/nginx/certs/cert.pem;
     ssl_certificate_key /etc/nginx/certs/cert.key;
@@ -42,6 +43,14 @@ server {
             application/javascript js;
         }
         default_type application/javascript;
+    }
+
+    # NDS BIOS 包（用户自备、文件名固定且随时可能被替换）。必须比下面的 /emulatorjs/
+    # 更具体——更长的 ^~ 前缀优先命中，不继承父级的 immutable 长缓存。
+    location ^~ /emulatorjs/bios/ {
+        try_files $uri =404;
+        add_header Cache-Control "no-cache";
+        default_type application/zip;
     }
 
     # EmulatorJS 引擎（loader + 引擎 + 各平台 WASM core，文件名固定，构建期拉取）。
@@ -94,6 +103,12 @@ server {
         default_type application/wasm;
     }
 
+    # 兜底：根路径下的文件（public/ 原样拷过来的那些）**不带 Cache-Control**，
+    # 浏览器按启发式规则缓存。所以「会随开发迭代换内容、文件名又不变」的素材一律别放
+    # public/——放 src/assets/ 下 import，让 Vite 给产物加内容哈希，落到上面的
+    # /assets/ 那条 immutable 上，改内容即改 URL，缓存自然失效。目前 public/ 只剩
+    # 两个固定路径的入口（emulator-host.html、game-asset-sw.js，
+    # Service Worker 脚本必须在固定路径）。
     location / {
         try_files $uri $uri/ /index.html;
     }

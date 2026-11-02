@@ -4,8 +4,7 @@ from sqlmodel import Session, select
 from backend.auth.service import AuthService
 from backend.config import DB_SUBDIR
 from backend.games import paths
-from backend.games.models import Game, GameGalleryImage
-from backend.mount_guard import SENTINEL_NAME
+from backend.games.models import GameGalleryImage
 
 # 一张“长得像 PNG”的最小字节：magic 之后接任意业务字节
 PNG_HEAD = b"\x89PNG\r\n\x1a\n"
@@ -27,7 +26,6 @@ def _files(storage_root) -> set[str]:
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file()
-        and p.name != SENTINEL_NAME
         and p.relative_to(root).parts[0] != DB_SUBDIR
     }
 
@@ -47,15 +45,6 @@ def _make_game(
     )
     assert response.status_code == 201, response.text
     return response.json()["data"]
-
-
-def _unlock_body(app, game_id: int) -> None:
-    """清掉本体 CRC32 锁，让换本体/换类型这条路可用。"""
-    with Session(app.state.engine) as session:
-        row = session.get(Game, game_id)
-        row.crc32 = ""
-        session.add(row)
-        session.commit()
 
 
 def _png(payload: bytes = b"frame") -> bytes:
@@ -312,11 +301,11 @@ def test_gallery_is_shared_across_users(logged_in_gallery, app, storage_root):
     assert [k for k in _files(storage_root) if "/image/" in k] == []
 
 
-def test_type_switch_migrates_gallery(logged_in_gallery, app, storage_root):
-    """换本体换类型：图集跟着目录搬到新类型目录，行里的路径一并更新。"""
+def test_body_replacement_keeps_gallery(logged_in_gallery, app, storage_root):
+    """同类型换本体：图集仍留在当前类型目录，行与读取都不变。"""
     client = logged_in_gallery
     game = _make_game(
-        client, name="带图集换类型", cartridge_id="GAL-9", filename="a.nes", body=b"nes-body"
+        client, name="带图集换本体", cartridge_id="GAL-9", filename="a.nes", body=b"nes-body"
     )
     game_id = game["id"]
     assert game["game_type"] == "nes"
@@ -325,27 +314,23 @@ def test_type_switch_migrates_gallery(logged_in_gallery, app, storage_root):
     assert all(row.status_code == 201 for row in created)
     assert len([k for k in _files(storage_root) if k.startswith("game/nes/GAL-9/image/")]) == 2
 
-    _unlock_body(app, game_id)
-    switched = client.post(
+    replaced = client.post(
         f"/api/games/manage/{game_id}/assets",
         data={"kind": "game"},
-        files={"file": ("a.gba", b"gba-body", "application/octet-stream")},
+        files={"file": ("b.nes", b"nes-body-v2", "application/octet-stream")},
     )
-    assert switched.status_code == 201, switched.text
-    assert switched.json()["data"]["game_type"] == "gba"
+    assert replaced.status_code == 201, replaced.text
+    assert replaced.json()["data"]["game_type"] == "nes"
 
-    # 图片整目录搬到了新类型目录，旧类型目录整个没了
+    # 图集仍在当前类型目录，行里的路径不变，取图照旧 200、顺序与内容都不变
     moved = sorted(k for k in _files(storage_root) if "/image/" in k)
     assert len(moved) == 2
-    assert all(k.startswith("game/gba/GAL-9/image/") for k in moved)
-    assert not (storage_root / "game" / "nes" / "GAL-9").exists()
-
-    # 行里的路径跟着换，取图照旧 200、顺序与内容都不变
+    assert all(k.startswith("game/nes/GAL-9/image/") for k in moved)
     with Session(app.state.engine) as session:
         rows = session.exec(
             select(GameGalleryImage).where(GameGalleryImage.game_id == game_id)
         ).all()
-        assert all(row.file_path.startswith("game/gba/GAL-9/image/") for row in rows)
+        assert all(row.file_path.startswith("game/nes/GAL-9/image/") for row in rows)
     listing = client.get("/api/games/gallery", params={"game_id": game_id})
     assert [row["id"] for row in listing.json()["data"]] == ids
     image = client.get(f"/api/games/gallery/{ids[0]}/image")

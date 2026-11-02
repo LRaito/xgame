@@ -1,0 +1,22 @@
+# 这是 BuildKit 的「Dockerfile 专属 ignore」：文件名必须是 <Dockerfile 名>.dockerignore，
+# 它**代替**上下文根目录那份 .dockerignore —— 那份是给 api 镜像的，把整个 frontend 排除了，
+# 而本 Dockerfile 恰恰要从 frontend/ 里取 package.json、package-lock.json 与引擎脚本。
+# （没有这个文件时，构建上下文是仓库根、却按根目录那份 ignore 走，COPY frontend/... 会直接报
+#   “not found”，很难看出是 ignore 干的。）
+#
+# 下面按「大头」排除，不玩「全排除再逐条放行」：放行列表漏一项就是 COPY 失败，还不好查。
+# BuildKit 只真正传输 COPY 用到的文件，所以这里保持简短即可，不用追求滴水不漏。
+frontend/node_modules
+frontend/dist
+frontend/public
+dist-win
+data
+.git
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+certs
+docs
+tests
+.env

@@ -4,9 +4,8 @@
         title="游戏详情"
         width="min(810px, 96vw)"
         align-center
-        confirm-text="关闭"
+        footer-mode="none"
         @update:model-value="emit('update:modelValue', $event)"
-        @confirm="emit('update:modelValue', false)"
     >
         <div v-if="detail" class="game-detail">
             <!-- 图片栏：封面（共享）恒占第一格，其后是图集与本人的截图，可左右翻页 -->
@@ -15,6 +14,7 @@
                 :cover-alt="detail.name"
                 :gallery="galleryImages"
                 :screenshots="screenshots"
+                :screenshot-aspect="detailAspect"
             />
             <dl>
                 <div><dt>名称</dt><dd>{{ detail.name }}</dd></div>
@@ -25,17 +25,8 @@
                     </dd>
                 </div>
                 <div><dt>类型</dt><dd>{{ typeLabel(detail.game_type) }}</dd></div>
-                <div>
-                    <dt>卡带类型</dt>
-                    <!-- 只给国旗，不叠文字：alt 里带中文名，读屏与图挂掉时仍有意义 -->
-                    <dd>
-                        <img
-                            class="game-detail__flag"
-                            :src="cartridgeTypeFlag(detail.cartridge_type)"
-                            :alt="cartridgeTypeLabel(detail.cartridge_type)"
-                        />
-                    </dd>
-                </div>
+                <!-- 封面类型 = 这盘封面被美化成的外观；没美化过就是空的（同页其它缺失项一样给「—」） -->
+                <div><dt>封面类型</dt><dd>{{ coverTypeLabel(detail.cover_type) || "—" }}</dd></div>
                 <div><dt>大小</dt><dd>{{ formatSize(detail.size) }}</dd></div>
                 <div>
                     <dt>CRC32</dt>
@@ -52,9 +43,12 @@
                         <image-upload-button
                             :game-id="props.gameId"
                             :upload="uploadScreenshotAPI"
+                            size="sm"
                             @uploaded="reloadScreenshots"
                         />
-                        <app-button @click="screenshotManagerVisible = true">管理</app-button>
+                        <app-button variant="secondary" size="sm" @click="screenshotManagerVisible = true">
+                            管理
+                        </app-button>
                     </dd>
                 </div>
                 <div>
@@ -85,7 +79,12 @@
                 <div>
                     <dt>本体</dt>
                     <dd>
-                        <app-button v-if="detail.game_path" @click="downloadGame">
+                        <app-button
+                            v-if="detail.game_path"
+                            variant="secondary"
+                            size="sm"
+                            @click="downloadGame"
+                        >
                             下载
                         </app-button>
                         <span v-else>—</span>
@@ -94,7 +93,12 @@
                 <div>
                     <dt>封面</dt>
                     <dd>
-                        <app-button v-if="detail.cover_path" @click="downloadCover">
+                        <app-button
+                            v-if="detail.cover_path"
+                            variant="secondary"
+                            size="sm"
+                            @click="downloadCover"
+                        >
                             下载
                         </app-button>
                         <span v-else>—</span>
@@ -110,12 +114,13 @@
     <screenshot-manager-dialog
         v-model="screenshotManagerVisible"
         :game-id="props.gameId"
+        :frame-aspect="detailAspect"
         @changed="reloadScreenshots"
     />
 </template>
 
 <script setup>
-import { ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { ElMessage } from "element-plus";
 import {
     coverDownloadPath,
@@ -125,13 +130,15 @@ import {
     listScreenshotsAPI,
     uploadScreenshotAPI,
 } from "@/api/games";
-import { cartridgeTypeFlag, cartridgeTypeLabel } from "@/constants/cartridgeTypes";
+import { coverTypeLabel } from "@/constants/coverStyles";
+import { screenshotAspect } from "@/constants/emulatorScreens";
 import { gameTypeLabel as typeLabel } from "@/constants/gameTypes";
 import AppDialog from "@components/common/AppDialog.vue";
 import GameScreenshotGallery from "@components/games/GameScreenshotGallery.vue";
 import ImageUploadButton from "@components/games/ImageUploadButton.vue";
 import ScreenshotManagerDialog from "@components/games/ScreenshotManagerDialog.vue";
 import { gameCoverUrl } from "@/utils/gameAssetCache";
+import { formatDateTimeSeconds as formatDateTime } from "@/utils/fileDisplay";
 import { downloadViaPath } from "@/utils/download";
 
 // 游戏详情弹窗：游戏中心（右键「详情」）与游戏管理（列表「详情」按钮）共用同一份内容。
@@ -144,6 +151,8 @@ const props = defineProps({
 const emit = defineEmits(["update:modelValue"]);
 
 const detail = ref(null);
+// 截图格子的宽高比：NDS 双屏是竖版；详情还没到或未知类型按 1:1
+const detailAspect = computed(() => screenshotAspect(detail.value?.game_type));
 
 // 本人该游戏的截图与共享图集（图片栏用；封面是共享的，走 gameCoverUrl）
 const screenshots = ref([]);
@@ -247,17 +256,6 @@ function formatSize(bytes) {
     }
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
-
-function formatDateTime(value) {
-    if (!value) {
-        return "—";
-    }
-    // 后端给的是 ISO（带 +00:00）：空格分隔、去掉时区后缀，并砍掉毫秒——只展示到秒
-    return value
-        .replace("T", " ")
-        .replace(/\.\d+/, "")
-        .replace(/\+00:00$/, "");
-}
 </script>
 
 <style scoped>
@@ -351,13 +349,6 @@ function formatDateTime(value) {
     display: flex;
     align-items: center;
     gap: 8px;
-}
-
-/* 卡带类型：原尺寸（22×16）显示国旗，不放大也不裁切 */
-.game-detail__flag {
-    display: block;
-    width: 22px;
-    height: 16px;
 }
 
 /* 卡带 ID 与 CRC32 的值：窄了就省略 */

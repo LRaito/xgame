@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import logging
 import os
 from pathlib import Path
@@ -14,9 +13,9 @@ from backend.errors import NotFoundError, StorageError, ValidationError
 from backend.games.models import PROGRESS_NOT_STARTED
 from backend.games.service import (
     GAME_TYPES,
+    MANAGE_PAGE_SIZE_DEFAULT,
     RECENT_LIMIT_DEFAULT,
     GameUpload,
-    GuideUpload,
     allowed_body_extensions,
 )
 from backend.http import iso, json_err, json_ok
@@ -33,9 +32,14 @@ _ROM_CONTENT_TYPE = "application/octet-stream"
 class UpdateGameBody(BaseModel):
     name: str | None = None
     description: str | None = None
-    # 卡带类型：None = 不改（右滑菜单与编辑弹框都用它单独设过值）
-    cartridge_type: str | None = None
+    # 封面类型（封面样式 id）：None = 不改；空串 = 清空；该游戏类型不认的值 400
+    cover_type: str | None = None
     clear_cover: bool = False
+
+
+class RenameCartridgeBody(BaseModel):
+    # 缺字段时给空串、走业务侧的中文 400，不要 FastAPI 那句英文 422（与 ImportGameBody.url 同一套）
+    cartridge_id: str = ""
 
 
 class ImportGameBody(BaseModel):
@@ -51,7 +55,7 @@ def _center_payload(item, stat=None) -> dict:
         "id": item.id,
         "name": item.name,
         "cartridge_id": item.cartridge_id,
-        "cartridge_type": item.cartridge_type,
+        "cover_type": item.cover_type,
         "description": item.description,
         "category": item.game_type,
         "path": item.path,
@@ -59,8 +63,9 @@ def _center_payload(item, stat=None) -> dict:
         "cover_path": item.cover_path,
         "game_path": item.game_path,
         "updated_at": iso(item.updated_at),
-        # 攻略按磁盘现状报（guide/index.html 在不在），前端据此决定右键菜单里出不出现
-        "has_guide": item.has_guide,
+        # 攻略形态来自 games.guide_kind（上传写值、删除清空），列表不 stat 磁盘
+        "has_guide": bool(item.guide_kind),
+        "guide_kind": item.guide_kind,
         # 游玩统计按账号走，没有记录时是 0 秒 + 未开始
         "play_seconds": stat.play_seconds if stat else 0,
         "progress": stat.progress if stat else PROGRESS_NOT_STARTED,
@@ -77,7 +82,7 @@ def _manage_payload(item) -> dict:
         "id": item.id,
         "name": item.name,
         "cartridge_id": item.cartridge_id,
-        "cartridge_type": item.cartridge_type,
+        "cover_type": item.cover_type,
         "description": item.description,
         "game_type": item.game_type,
         "size": item.size,
@@ -87,7 +92,8 @@ def _manage_payload(item) -> dict:
         "path": item.path,
         "created_at": iso(item.created_at),
         "updated_at": iso(item.updated_at),
-        "has_guide": item.has_guide,
+        "has_guide": bool(item.guide_kind),
+        "guide_kind": item.guide_kind,
     }
 
 
@@ -158,9 +164,24 @@ def games_manage_list(
     service: GameServiceDep,
     game_type: str | None = Query(None),
     q: str | None = Query(None),
+    page: int = Query(1),
+    page_size: int = Query(MANAGE_PAGE_SIZE_DEFAULT),
 ):
-    items = service.list_manage(game_type=game_type or None, keyword=q or None)
-    return json_ok([_manage_payload(item) for item in items])
+    """管理列表的一页。排序与筛选口径不变；越界参数由 service 收敛（不在这里做范围校验）。"""
+    result = service.list_manage(
+        game_type=game_type or None,
+        keyword=q or None,
+        page=page,
+        page_size=page_size,
+    )
+    return json_ok(
+        {
+            "total": result.total,
+            "page": result.page,
+            "page_size": result.page_size,
+            "items": [_manage_payload(item) for item in result.items],
+        }
+    )
 
 
 @router.get("/manage/{game_id}")
@@ -192,7 +213,6 @@ def games_create(
     service: GameServiceDep,
     name: str = Form(...),
     cartridge_id: str = Form(""),
-    cartridge_type: str = Form(""),
     description: str = Form(""),
     file: UploadFile | None = File(None),
     cover: UploadFile | None = File(None),
@@ -214,7 +234,6 @@ def games_create(
             _upload_of(file) if file is not None else None,
             _upload_of(cover) if cover is not None else None,
             cartridge_id=cartridge_id,
-            cartridge_type=cartridge_type,
             body_url=body_url,
             body_game_type=body_game_type,
             cover_url=cover_url,
@@ -234,13 +253,32 @@ def games_update(
             game_id,
             name=body.name,
             description=body.description,
-            cartridge_type=body.cartridge_type,
+            cover_type=body.cover_type,
             clear_cover=body.clear_cover,
         )
     except ValidationError as exc:
         return json_err(str(exc), 400)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
+    return json_ok(_manage_payload(item))
+
+
+@router.put("/manage/{game_id}/cartridge-id")
+def games_rename_cartridge_id(
+    game_id: int, body: RenameCartridgeBody, _user: CurrentUser, service: GameServiceDep
+):
+    """改卡带ID：磁盘目录与库里所有引用它的路径列一起改。
+
+    **独立接口**：`PUT /manage/{id}` 依旧不接受这个字段——改名是搬目录的显式迁移，
+    不该混在普通编辑里（见 `docs/architecture.md` 决策 10）。
+    """
+    try:
+        item = service.rename_cartridge_id(game_id, body.cartridge_id)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    logger.info("已改卡带ID game_id=%s cartridge_id=%s", game_id, item.cartridge_id)
     return json_ok(_manage_payload(item))
 
 
@@ -262,11 +300,16 @@ def games_upload_asset(
     file: UploadFile | None = File(None),
     url: str = Form(""),
     game_type: str = Form(""),
+    cover_type: str = Form(""),
 ):
-    """一步上传游戏本体或封面：流式写入存储目录 → 删旧文件 → 更新游戏行。
+    """一步上传游戏本体或封面：校验类型 → 流式写入存储目录 → 更新游戏行 → 删旧文件。
 
-    来源可以是本地文件（`file`）或网络直链（`url`）；换本体时游戏类型随新本体的
-    扩展名自动切换——直链看不出类型时由 `game_type` 指定，两者必须一致。
+    来源可以是本地文件（`file`）或网络直链（`url`）。**换本体只接受与当前游戏类型
+    相同的本体**（按扩展名判定，创建后类型不可变），跨类型返回 400 且旧档不动；
+    成功后重算并更新 `crc32`/`size`/`game_path`。直链的 `game_type` 必须等于当前类型。
+
+    `cover_type`（封面样式 id）**只在 kind="cover" 且非空时生效**，供「美化封面」
+    把所选样式与封面文件一次写进去；kind="game" 时忽略。
     """
     try:
         if file is not None and not file.filename:
@@ -277,6 +320,7 @@ def games_upload_asset(
             upload=_upload_of(file) if file is not None else None,
             url=url,
             game_type=game_type,
+            cover_type=cover_type,
         )
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)
@@ -286,46 +330,43 @@ def games_upload_asset(
     return json_ok(_manage_payload(item), status=201)
 
 
-def _parse_guide_paths(raw: str) -> list[str]:
-    """解析随 files 一起提交的相对路径数组；不是字符串数组一律中文 400。"""
-    try:
-        value = json.loads(raw or "[]")
-    except (TypeError, ValueError) as exc:
-        raise ValidationError("攻略路径参数格式不正确。") from exc
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        raise ValidationError("攻略路径参数格式不正确。")
-    return value
-
-
 @router.post("/manage/{game_id}/guide")
 def games_upload_guide(
     game_id: int,
     _user: CurrentUser,
     service: GameServiceDep,
-    files: list[UploadFile] | None = File(None),
-    paths: str = Form(""),
+    file: UploadFile | None = File(None),
 ):
-    """整目录上传攻略：多个文件 + 按下标一一对位的文件夹内相对路径 JSON 数组。
+    """上传攻略：ZIP 静态站点包（解压后根目录需含 index.html）或单个 PDF。
 
-    前端已经剥掉最外层目录名，所以这里收到的就是攻略根的相对路径。文件数上限 1000 是
-    Starlette 表单解析的硬限制，超过时前端先拦；服务端照样全量校验、整体替换。
+    ZIP 与 H5 一样只校验、不解压，查看时才按需解到运行时根；PDF 原样存数据根。
+    同一个游戏只保留一种形态，上传一种会替换掉另一种。
     """
     try:
-        file_list = list(files or [])
-        path_list = _parse_guide_paths(paths)
-        if len(path_list) != len(file_list):
-            raise ValidationError("攻略上传参数不一致，请重新选择文件夹后重试。")
-        uploads = [
-            GuideUpload(path=raw, stream=item.file, size=_uploaded_size(item))
-            for raw, item in zip(path_list, file_list)
-        ]
-        item = service.upload_guide(game_id, uploads)
+        if file is None:
+            raise ValidationError("请选择要上传的攻略文件（ZIP 或 PDF）。")
+        item = service.upload_guide(game_id, _upload_of(file))
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    logger.info("已上传攻略 game_id=%s files=%s", game_id, len(uploads))
+    logger.info("已上传攻略 game_id=%s", game_id)
     return json_ok(_manage_payload(item), status=201)
+
+
+@router.delete("/manage/{game_id}/guide")
+def games_delete_guide(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """删除攻略（ZIP/PDF 都删）并清空 `guide_kind`；幂等，没有攻略也返回 200。"""
+    try:
+        item = service.delete_guide(game_id)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except StorageError as exc:
+        # 磁盘删不掉是服务端故障；此时列不会被清空，重试即可
+        logger.exception("删除攻略失败 game_id=%s", game_id)
+        return json_err(str(exc), 500)
+    logger.info("已删除攻略 game_id=%s", game_id)
+    return json_ok(_manage_payload(item))
 
 
 @router.get("/{game_id}/cover")
@@ -428,7 +469,11 @@ def games_h5_asset(game_id: int, asset_path: str, service: GameServiceDep):
         stream, mime, _size = service.open_h5_asset(game_id, asset_path)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
+    except StorageError as exc:
+        # 懒解压写运行时根失败（磁盘满/只读）是服务端故障，不是客户端的错
+        logger.exception("解压或读取 H5 资源失败 game_id=%s", game_id)
+        return json_err(f"{exc}请检查运行时目录是否可写、空间是否充足。", 500)
+    except ValidationError as exc:
         return json_err(str(exc), 400)
     return build_download_response(stream, content_type=mime, headers=_H5_HEADERS)
 
@@ -440,7 +485,10 @@ def games_h5_asset_head(game_id: int, asset_path: str, service: GameServiceDep):
         stream, mime, size = service.open_h5_asset(game_id, asset_path)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
+    except StorageError as exc:
+        logger.exception("解压或读取 H5 资源失败 game_id=%s", game_id)
+        return json_err(f"{exc}请检查运行时目录是否可写、空间是否充足。", 500)
+    except ValidationError as exc:
         return json_err(str(exc), 400)
     stream.close()
     return Response(
@@ -457,6 +505,12 @@ _GUIDE_HEADERS = {
     "Cache-Control": "no-cache, must-revalidate",
 }
 
+# PDF 攻略与 ZIP 攻略同一套缓存/嗅探策略；显式 inline 让浏览器就地渲染而不是当附件。
+_GUIDE_PDF_HEADERS = {
+    **_GUIDE_HEADERS,
+    "Content-Disposition": content_disposition("guide.pdf", inline=True),
+}
+
 
 @router.get("/{game_id}/guide/{asset_path:path}")
 def games_guide_asset(
@@ -467,7 +521,11 @@ def games_guide_asset(
         stream, mime, _size = service.open_guide_asset(game_id, asset_path)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
+    except StorageError as exc:
+        # 懒解压写运行时根失败（磁盘满/只读）是服务端故障，不是客户端的错
+        logger.exception("解压或读取攻略失败 game_id=%s", game_id)
+        return json_err(f"{exc}请检查运行时目录是否可写、空间是否充足。", 500)
+    except ValidationError as exc:
         return json_err(str(exc), 400)
     return build_download_response(stream, content_type=mime, headers=_GUIDE_HEADERS)
 
@@ -481,11 +539,43 @@ def games_guide_asset_head(
         stream, mime, size = service.open_guide_asset(game_id, asset_path)
     except NotFoundError as exc:
         return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
+    except StorageError as exc:
+        logger.exception("解压或读取攻略失败 game_id=%s", game_id)
+        return json_err(f"{exc}请检查运行时目录是否可写、空间是否充足。", 500)
+    except ValidationError as exc:
         return json_err(str(exc), 400)
     stream.close()
     return Response(
         content=b"",
         media_type=mime,
         headers={**_GUIDE_HEADERS, "Content-Length": str(size)},
+    )
+
+
+# PDF 攻略单独一条路径：它不解包，直接从数据根读。路径段 `guide.pdf` 与上面的
+# `/{game_id}/guide/{asset_path}` 不冲突（后者第二段必须是字面量 `guide`）。
+@router.get("/{game_id}/guide.pdf")
+def games_guide_pdf(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """流式返回攻略 PDF（inline，浏览器内置查看器就地打开）；需登录。"""
+    try:
+        stream, _size = service.open_guide_pdf(game_id)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    return build_download_response(
+        stream, content_type="application/pdf", headers=_GUIDE_PDF_HEADERS
+    )
+
+
+@router.head("/{game_id}/guide.pdf")
+def games_guide_pdf_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """HEAD 与 GET 同响应头，供浏览器预探测。"""
+    try:
+        stream, size = service.open_guide_pdf(game_id)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    stream.close()
+    return Response(
+        content=b"",
+        media_type="application/pdf",
+        headers={**_GUIDE_PDF_HEADERS, "Content-Length": str(size)},
     )

@@ -63,27 +63,26 @@ function onChange(event) {
 }
 
 .flash-resolution-select__select {
-    /* 与标题栏的按钮（.game-shell__btn / .emulator-player__action）同一套盒模型：
-       8px 上下内边距 + 14px 字号 + 1.6 行高 = 40px 高，并排时上下沿对齐 */
-    padding: 8px 10px;
-    border: 1px solid rgba(148, 163, 184, 0.3);
-    border-radius: 8px;
-    background: rgba(30, 41, 59, 0.8);
-    color: #e2e8f0;
-    font-size: 14px;
-    line-height: 1.6;
+    height: var(--app-control-h-lg);
+    padding: 0 var(--app-control-px-sm);
+    border: 1px solid var(--app-dark-border);
+    border-radius: var(--app-radius-control);
+    background: var(--app-dark-surface);
+    color: var(--app-dark-text);
+    font-family: inherit;
+    font-size: var(--app-font-size-md);
     cursor: pointer;
     transition: border-color 0.15s ease, background 0.15s ease;
     max-width: 160px;
 }
 
 .flash-resolution-select__select:hover {
-    background: rgba(51, 65, 85, 0.9);
-    border-color: rgba(148, 163, 184, 0.5);
+    background: var(--app-dark-surface-hover);
+    border-color: var(--app-dark-border-hover);
 }
 
 .flash-resolution-select__select:focus-visible {
-    outline: none;
-    border-color: #38bdf8;
+    outline: var(--app-focus-axis) solid var(--app-focus-ring-dark);
+    outline-offset: var(--app-focus-offset);
 }
 </style>

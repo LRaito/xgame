@@ -7,8 +7,10 @@ from backend.auth.models import User
 from backend.auth.service import AuthService
 from backend.config import Settings
 from backend.games.gallery_service import GalleryService
+from backend.games.ranking_service import GameRankingService
 from backend.games.save_service import CloudSaveService
 from backend.games.screenshot_service import ScreenshotService
+from backend.games.search_service import GameSearchService
 from backend.games.service import GameService
 from backend.games.settings_service import EmulatorSettingsService
 from backend.games.stats_service import GameStatsService
@@ -41,7 +43,8 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 def get_game_service(request: Request, session: DbSession) -> GameService:
-    return GameService(session, request.app.state.storage)
+    # 两个存储：数据根（素材与两个 zip）与运行时根（H5/攻略的解包产物）
+    return GameService(session, request.app.state.storage, request.app.state.runtime_storage)
 
 
 GameServiceDep = Annotated[GameService, Depends(get_game_service)]
@@ -89,6 +92,27 @@ def get_game_stats_service(session: DbSession) -> GameStatsService:
 
 
 GameStatsServiceDep = Annotated[GameStatsService, Depends(get_game_stats_service)]
+
+
+def get_game_search_service(request: Request) -> GameSearchService:
+    # 检索用的是独立只读库（`<根路径>/db/game.db`），由 make index 构建，这里不碰 SQLite 会话
+    return GameSearchService(request.app.state.settings.game_index_path)
+
+
+GameSearchServiceDep = Annotated[GameSearchService, Depends(get_game_search_service)]
+
+
+def get_game_ranking_service(request: Request, games: GameServiceDep) -> GameRankingService:
+    # 榜单与检索共用同一个只读库（`<根路径>/db/game.db`），只是读另一张表。
+    # 额外把「按卡带ID 找库存游戏」注进去：榜单行要在**请求期**与 `games` 表关联一次
+    # （索引库本身刻意不与平台库存联动，见 ranking_service._attach_links）。
+    return GameRankingService(
+        request.app.state.settings.game_index_path,
+        cartridge_lookup=games.map_for_cartridge_ids,
+    )
+
+
+GameRankingServiceDep = Annotated[GameRankingService, Depends(get_game_ranking_service)]
 
 
 def get_settings_dep(request: Request) -> Settings:

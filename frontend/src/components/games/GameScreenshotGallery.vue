@@ -4,23 +4,31 @@
          最后是本人的截图；放不下时左右翻页，第 2 页起不再显示封面。
          图片一律等比缩放到长边到上限为止。
          左键单击任意一张图（含封面）看大图，见下面的看大图层 -->
-    <div v-if="visible" class="gallery" @wheel="onWheel">
-        <button
+    <div v-if="visible" class="gallery" :style="galleryStyle" @wheel="onWheel">
+        <app-button
             v-if="pageCount > 1"
-            type="button"
             class="gallery__nav gallery__nav--prev"
+            variant="secondary"
+            tone="image"
+            size="sm"
+            icon-only
+            round
             aria-label="上一页"
             :disabled="page === 0"
             @click="page -= 1"
         >
             ‹
-        </button>
+        </app-button>
 
         <!-- 所有格子排在一条轨道上，翻页靠整条轨道水平滑动（一页正好一屏） -->
         <div class="gallery__viewport">
             <div class="gallery__track" :style="{ transform: `translateX(-${page * PAGE_OFFSET}px)` }">
                 <div v-for="(slot, index) in slots" :key="index" class="gallery__cell">
-                    <div class="gallery__frame" :class="{ 'gallery__frame--empty': !slot.url }">
+                    <div
+                        class="gallery__frame"
+                        :class="{ 'gallery__frame--empty': !slot.url }"
+                        :style="frameStyle(slot)"
+                    >
                         <img
                             v-if="slot.url"
                             class="gallery__img"
@@ -36,16 +44,20 @@
             </div>
         </div>
 
-        <button
+        <app-button
             v-if="pageCount > 1"
-            type="button"
             class="gallery__nav gallery__nav--next"
+            variant="secondary"
+            tone="image"
+            size="sm"
+            icon-only
+            round
             aria-label="下一页"
             :disabled="page === pageCount - 1"
             @click="page += 1"
         >
             ›
-        </button>
+        </app-button>
     </div>
 
     <!-- 看大图：铺满视口的深色遮罩 + 等比放大到视口内的原图。
@@ -64,24 +76,32 @@
 
             <!-- 只有一张图时不摆按钮；按钮上的点击不能冒泡到遮罩（否则一点就退回） -->
             <template v-if="imageCount > 1">
-                <button
-                    type="button"
+                <app-button
                     class="viewer__nav viewer__nav--prev"
+                    variant="secondary"
+                    tone="overlay"
+                    size="lg"
+                    icon-only
+                    round
                     aria-label="上一张"
                     :disabled="!canPrev"
                     @click.stop="stepPreview(-1)"
                 >
                     ‹
-                </button>
-                <button
-                    type="button"
+                </app-button>
+                <app-button
                     class="viewer__nav viewer__nav--next"
+                    variant="secondary"
+                    tone="overlay"
+                    size="lg"
+                    icon-only
+                    round
                     aria-label="下一张"
                     :disabled="!canNext"
                     @click.stop="stepPreview(1)"
                 >
                     ›
-                </button>
+                </app-button>
             </template>
         </div>
     </teleport>
@@ -100,6 +120,9 @@ const props = defineProps({
     gallery: { type: Array, default: () => [] },
     // 本人该游戏的截图，已按后端给的展示顺序排好
     screenshots: { type: Array, default: () => [] },
+    // 截图的宽高比（宽 / 高）：只有截图格子按它变高（NDS 双屏是竖版），
+    // 封面与图集仍保持 1:1，现有 7 个机种的观感不变
+    screenshotAspect: { type: Number, default: 1 },
 });
 
 // 每页 4 格；格子边长与格间距见样式里的 --cell / --cell-gap（两边必须一致）
@@ -111,18 +134,40 @@ const PAGE_OFFSET = PAGE_SIZE * (CELL_SIZE + CELL_GAP);
 
 const page = ref(0);
 
+// 最高的截图框高度：竖版（NDS 约 308）比 180 方框高，翻页按钮要按它居中。
+// 横图（比例 > 1）仍按 180 算，不额外缩小正方形框。
+const galleryStyle = computed(() => {
+    // 没有截图时全是 1:1 的封面/图集，不必按竖版框把翻页按钮压低
+    const aspect =
+        props.screenshots.length > 0 && props.screenshotAspect > 0 ? props.screenshotAspect : 1;
+    return { "--frame-h": `${Math.max(CELL_SIZE, CELL_SIZE / aspect)}px` };
+});
+
+/** 只有截图格子按截图比例变高；封面与图集保持 1:1。 */
+function frameStyle(slot) {
+    if (slot.kind !== "screenshot" || !(props.screenshotAspect > 0)) {
+        return null;
+    }
+    if (props.screenshotAspect === 1) {
+        return null;
+    }
+    return { aspectRatio: String(props.screenshotAspect), height: "auto" };
+}
+
 // 第一格恒为封面（没有封面也是一个空占位），其后是图集、最后是本人截图。
 // imageIndex 是这张图在「能看大图的那串图」里的下标（空占位是 -1）：
 // 看大图按它左右翻，所以没有封面的那个空占位不参与翻页
 const slots = computed(() => {
     const list = [
-        { url: props.coverUrl, alt: props.coverAlt, caption: "" },
+        { kind: "cover", url: props.coverUrl, alt: props.coverAlt, caption: "" },
         ...props.gallery.map((item) => ({
+            kind: "gallery",
             url: galleryImagePath(item),
             alt: item.description || "图集图片",
             caption: item.description || "",
         })),
         ...props.screenshots.map((item) => ({
+            kind: "screenshot",
             url: screenshotImagePath(item),
             alt: item.description || "游戏截图",
             caption: item.description || "",
@@ -256,8 +301,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onPreviewKeydown, tr
     overflow: hidden;
 }
 
+/* 底部对齐：竖版截图比封面/图集高，多出来的部分向上长，描述行仍在同一水平线上 */
 .gallery__track {
     display: flex;
+    align-items: flex-end;
     column-gap: 14px;
     transition: transform 0.3s ease;
     will-change: transform;
@@ -267,7 +314,8 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onPreviewKeydown, tr
     flex: 0 0 180px;
 }
 
-/* 不加底色、不做圆角：截图是什么样就什么样，方框只负责限尺寸 */
+/* 不加底色、不做圆角：截图是什么样就什么样，方框只负责限尺寸。
+   截图格子由 frameStyle 内联覆盖 aspect-ratio（高度 = 180 / 截图比例）。 */
 .gallery__frame {
     width: 180px;
     height: 180px;
@@ -304,35 +352,16 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onPreviewKeydown, tr
     text-overflow: ellipsis;
 }
 
-/* 翻页按钮压在画面左右边缘上：图片栏宽度正好是 4 格，两侧没有多余空间可占 */
-.gallery__nav {
+/* 翻页按钮压在画面左右边缘上：图片栏宽度正好是 4 格，两侧没有多余空间可占。
+   外观交给 AppButton 的 image tone */
+.gallery .gallery__nav.el-button {
     position: absolute;
-    top: 90px;
+    /* 最高的截图框（--frame-h，默认 180）的中线 */
+    top: calc(var(--frame-h) / 2);
     transform: translateY(-50%);
     z-index: 1;
-    width: 30px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 0 0 2px;
-    border: 0;
-    border-radius: 50%;
-    background: rgba(15, 23, 42, 0.45);
-    color: #fff;
     font-size: 20px;
-    line-height: 1;
-    cursor: pointer;
-    transition: background 0.15s ease, opacity 0.15s ease;
-}
-
-.gallery__nav:hover:not(:disabled) {
-    background: rgba(15, 23, 42, 0.72);
-}
-
-.gallery__nav:disabled {
-    opacity: 0.25;
-    cursor: default;
 }
 
 .gallery__nav--prev {
@@ -369,33 +398,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onPreviewKeydown, tr
 
 /* 翻页按钮压在遮罩左右边缘（图片之上）：遮罩是深的，所以用半透明白，
    比图片栏那对深色按钮更看得见。到头的那个置灰 */
-.viewer__nav {
+.viewer .viewer__nav.el-button {
     position: absolute;
     top: 50%;
     transform: translateY(-50%);
-    width: 44px;
-    height: 44px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
     padding: 0 0 4px;
-    border: 0;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.16);
-    color: #fff;
     font-size: 30px;
-    line-height: 1;
-    cursor: pointer;
-    transition: background 0.15s ease, opacity 0.15s ease;
-}
-
-.viewer__nav:hover:not(:disabled) {
-    background: rgba(255, 255, 255, 0.3);
-}
-
-.viewer__nav:disabled {
-    opacity: 0.25;
-    cursor: default;
 }
 
 .viewer__nav--prev {

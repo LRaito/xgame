@@ -3,19 +3,41 @@
         :model-value="modelValue"
         :title="title"
         :width="width"
+        :align-center="alignCenter"
         :close-on-click-modal="false"
         :close-on-press-escape="true"
         destroy-on-close
-        @close="emit('update:modelValue', false)"
+        @close="close"
     >
+        <!-- 标题右边还想放东西（比如美化封面的样式单选）就走这个插槽：
+             el-dialog 的 header 插槽只替换标题那一段，右上角的关闭按钮不受影响 -->
+        <template v-if="$slots.header" #header>
+            <span class="el-dialog__title">{{ title }}</span>
+            <slot name="header" />
+        </template>
+
         <slot />
-        <template #footer>
-            <slot name="footer">
-                <app-button @click="emit('update:modelValue', false)">取消</app-button>
-                <app-button type="primary" :loading="confirmLoading" @click="emit('confirm')">
-                    {{ confirmText }}
-                </app-button>
-            </slot>
+        <template v-if="footerMode !== 'none'" #footer>
+            <div class="app-dialog__footer">
+                <slot name="footer">
+                    <app-button
+                        v-if="footerMode === 'default'"
+                        variant="secondary"
+                        @click="close"
+                    >
+                        {{ cancelText }}
+                    </app-button>
+                    <app-button
+                        v-if="footerMode === 'default' || footerMode === 'confirm-only'"
+                        :variant="confirmVariant"
+                        :loading="confirmLoading"
+                        :disabled="confirmDisabled"
+                        @click="emit('confirm')"
+                    >
+                        {{ confirmText }}
+                    </app-button>
+                </slot>
+            </div>
         </template>
     </el-dialog>
 </template>
@@ -25,9 +47,36 @@ defineProps({
     modelValue: { type: Boolean, default: false },
     title: { type: String, default: "" },
     width: { type: String, default: "480px" },
+    // default：取消 + 确认；confirm-only：只有确认；
+    // custom：只渲染 #footer 插槽；none：不渲染 footer
+    // （右上角关闭按钮始终存在，所以不再提供「只有关闭」的底栏形态）
+    footerMode: { type: String, default: "default" },
+    cancelText: { type: String, default: "取消" },
     confirmText: { type: String, default: "确定" },
+    confirmVariant: { type: String, default: "secondary" },
+    confirmDisabled: { type: Boolean, default: false },
     confirmLoading: { type: Boolean, default: false },
+    alignCenter: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["update:modelValue", "confirm"]);
+
+function close() {
+    emit("update:modelValue", false);
+}
 </script>
+
+<style>
+/* 弹框底部固定：次要操作在左、主操作在右，间距统一。
+   el-dialog 的 footer 可能被 teleport 到 body，所以用非 scoped 的唯一类名。 */
+.app-dialog__footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--app-space-3, 12px);
+}
+
+.app-dialog__footer .el-button + .el-button {
+    margin-left: 0;
+}
+</style>

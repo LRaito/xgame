@@ -87,6 +87,17 @@ export function updateManageGameAPI(id, data) {
     return request({ url: `/api/games/manage/${id}`, method: "put", data });
 }
 
+/** 改卡带 ID：后端会把磁盘目录（含各账号的存档与截图）一起改名并改写库里的路径列。
+
+    独立接口——普通编辑（updateManageGameAPI）不接受这个字段。 */
+export function renameCartridgeIdAPI(id, cartridgeId) {
+    return request({
+        url: `/api/games/manage/${id}/cartridge-id`,
+        method: "put",
+        data: { cartridge_id: cartridgeId },
+    });
+}
+
 /** 从 7k7k / 4399 / flash.homes 游戏页地址搬运游戏（服务端解析、下载并入库，耗时较长）。
 
     卡带ID 由服务端按本体 CRC32 自动生成（F-{CRC32}），不用前端传。 */
@@ -113,7 +124,7 @@ export function uploadGameAssetAPI(id, formData) {
     });
 }
 
-/** 整目录上传攻略：multipart 里 files 是多个文件、paths 是与之一一对应的相对路径 JSON 数组。 */
+/** 上传攻略：multipart 里只有一个 file 字段（ZIP 解压后根目录需含 index.html，或单个 PDF）。 */
 export function uploadGuideAPI(id, formData) {
     return request({
         url: `/api/games/manage/${id}/guide`,
@@ -121,6 +132,11 @@ export function uploadGuideAPI(id, formData) {
         data: formData,
         timeout: 0,
     });
+}
+
+/** 删除攻略（ZIP/PDF 都删），返回更新后的管理条目。 */
+export function deleteGuideAPI(id) {
+    return request({ url: `/api/games/manage/${id}/guide`, method: "delete" });
 }
 
 /**
@@ -172,6 +188,11 @@ export function guideEntryPath(id) {
     return `/api/games/${id}/guide/index.html`;
 }
 
+/** 攻略 PDF 地址（数据根直读，新标签页内联展示；接口同样需登录）。 */
+export function guidePdfPath(id) {
+    return `/api/games/${id}/guide.pdf`;
+}
+
 /** 游戏封面的下载地址（download=1 时附件下载，文件名 cover.{后缀}）；
  *  v=updated_at 破缓存，理由同 gameDownloadPath。 */
 export function coverDownloadPath(id, updatedAt = "") {
@@ -205,8 +226,33 @@ export function deleteCloudSaveAPI(id) {
 }
 
 /** 修改云端存档的描述（备注）。 */
-export function updateCloudSaveAPI(id, remark) {
-    return request({ url: `/api/games/saves/${id}`, method: "put", data: { remark } });
+export function updateCloudSaveAPI(id, remark, config = {}) {
+    return request({
+        url: `/api/games/saves/${id}`,
+        method: "put",
+        data: { remark },
+        ...config,
+    });
+}
+
+/** 设置/清除云端存档的父级（parentId=null 表示设为顶层）。 */
+export function setCloudSaveParentAPI(id, parentId, config = {}) {
+    return request({
+        url: `/api/games/saves/${id}/parent`,
+        method: "put",
+        data: { parent_id: parentId },
+        ...config,
+    });
+}
+
+/** 调整云端存档在同级兄弟中的位置（toIndex 从 0 起）；返回整份有序列表。 */
+export function moveCloudSaveAPI(id, toIndex, config = {}) {
+    return request({
+        url: `/api/games/saves/${id}/move`,
+        method: "post",
+        data: { to_index: toIndex },
+        ...config,
+    });
 }
 
 /** 云端存档单个文件的同源流式地址（octet-stream）。 */
@@ -330,4 +376,45 @@ export async function fetchCloudSaveFileBase64(id, fileId) {
         skipAuthRedirect: true,
     });
     return blobToBase64(blob);
+}
+
+/**
+ * 游戏检索：在外部中英文名录索引里搜一页（服务端分页 + 机种过滤）。
+ * 数据来自独立只读库，由项目根目录的 `make index` 构建。
+ * 请求带 notShowError：检索是高频操作，失败由页面内联提示，不弹全局 Message。
+ */
+export function searchGamesAPI(params) {
+    return request({
+        url: "/api/games/search",
+        method: "get",
+        params,
+        notShowError: true,
+    });
+}
+
+/** 游戏检索的机种下拉候选项（按源文件顺序）。 */
+export function listSearchConsolesAPI() {
+    return request({ url: "/api/games/search/consoles", method: "get" });
+}
+
+/**
+ * 游戏榜单的机种下拉候选项（只列榜单里出现过的机种）与默认机种。
+ * 数据与检索同一个只读库，见后端 ranking_router.py。
+ */
+export function listRankingConsolesAPI() {
+    return request({
+        url: "/api/games/search/ranking/consoles",
+        method: "get",
+        notShowError: true,
+    });
+}
+
+/** 游戏榜单：取某个机种的整份榜单（不分页）。失败由页面内联提示，不弹全局 Message。 */
+export function getGameRankingAPI(params) {
+    return request({
+        url: "/api/games/search/ranking",
+        method: "get",
+        params,
+        notShowError: true,
+    });
 }
