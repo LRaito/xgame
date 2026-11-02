@@ -28,6 +28,7 @@
 | [`frontend.md`](frontend.md) | 路由、api 层、组件、界面交互 |
 | [`delivery-docker.md`](delivery-docker.md) | 镜像、compose、bind、备份、哨兵 |
 | [`delivery-windows.md`](delivery-windows.md) | Windows 包构建、启动器、编码、升级 |
+| [`todo.md`](todo.md) | 待接机种清单与推进顺序（计划，非规格） |
 
 ## 统一结构
 
