@@ -40,6 +40,7 @@ from backend.games.models import (
 from backend.games.platforms import (
     PLATFORM_BY_ID,
     all_body_extensions,
+    default_playable_platform_for_extension,
     playable_platforms,
 )
 from backend.games.runtime_assets import RuntimeAssets
@@ -55,7 +56,7 @@ GAME_TYPE_H5 = "h5"
 #
 # **机种那部分从 `backend/games/platforms.py` 的机种词表派生**（id 就是 EJS 的 system key，
 # 也就是 game_type 的值），所以「哪些机种能上传」只需要改那张表——但 `extensions` 非空的
-# 机种才会出现在这里：词表里还有 12 个 EJS 支持、本项目还没打包 core 的机种（n64/psx…），
+# 机种才会出现在这里：词表里还有 7 个 EJS 支持、本项目还没打包 core 的机种（segaCD/psp…），
 # 它们只用来给游戏发现的外部名录「对上号」，不开放上传。
 #
 # flash 与 h5 **不是机种**（是载体类型），所以不来自词表、写在这里，永远排在最前。
@@ -296,11 +297,12 @@ def extension_candidates() -> dict[str, list[str]]:
 
 
 def default_game_types_by_extension() -> dict[str, str]:
-    """后缀 → 默认类型（候选第 1 个）。"""
-    return {
-        extension: candidates[0]
-        for extension, candidates in extension_candidates().items()
-    }
+    """后缀 → 默认类型（先看覆盖表，再取候选第 1 个）。"""
+    result: dict[str, str] = {}
+    for extension, candidates in extension_candidates().items():
+        platform = default_playable_platform_for_extension(extension)
+        result[extension] = platform.id if platform else candidates[0]
+    return result
 
 
 def _body_type_mismatch(current: str, detected: str | Sequence[str]) -> ValidationError:

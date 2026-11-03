@@ -20,6 +20,8 @@
 | 主机 ROM | `/games/play/{id}` | 宿主 iframe + EmulatorJS |
 
 - 播放路径只有一份实现：`play_path(game_type, id)`，列表载荷的 `path` 也用它。
+- 宿主页请求本体时用 `/api/games/{id}/play/<落盘名>`（如 `game.chd`）：
+  EmulatorJS 把 URL 末段当 ROM 文件名，`.pbp` 等核依赖后缀；不带末段的 `/play` 仍保留。
 - 主机播放页外层是 SPA 壳，内嵌 `/emulator-host.html`，EmulatorJS 官方要求 iframe 隔离。
 - 引擎资产由 `frontend/scripts/fetch-emulatorjs.mjs` 在构建期拉到 `frontend/public/emulatorjs/`。
 - 引擎资产以固定版本随镜像发布，nginx 与 `static_site.py` 按 immutable 缓存，运行时不依赖外网。
@@ -116,8 +118,8 @@
 - **复古滤镜。** 选择器是 `frontend/src/components/games/EmuFilterSelect.vue`，清单在 `frontend/src/constants/emuFilters.js`。
 - 清单按游戏类型给出，每个滤镜 = 内核选项键值对 + EmulatorJS 内置 GLSL 着色器键名。
 - 着色器对所有内核通用；内核选项按各内核自身能力配置。
-- 当前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、SMS 七个机种；NDS 与第 1、2 档新增的
-  16 个机种暂未配清单，所以不显示入口。
+- 当前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、SMS 七个机种；NDS 与第 1、2、3 档新增的
+  21 个机种暂未配清单，所以不显示入口。
 - 每张清单第一项恒为「无」，也是表外取值的回落目标。
 - 选择按游戏类型记在 localStorage 的 `games.emu.filter`，整张表存一个 JSON。
 - 拉起引擎前先清掉设置块里滤镜相关的旧值，再写入本次选择。
@@ -258,6 +260,10 @@
 - 手工：引擎自带菜单里换着色器后，播放页选择器跟着选中，并可记住下次生效。
 - 手工：Commodore 五个机种首次进入时确认画面比例；`EMU_NATIVE` 里是初始值，
   以引擎上报的 `videoInfo` 与截图实图为准校准。
+- 手工：N64 / 土星 / PS1 / PC-FX / 3DO 各跑一盘；PS1 至少覆盖 `.pbp` 与 `.chd`，
+  3DO 覆盖 `.iso`，确认 iframe URL 的末段是 `game.<ext>`。
+- 手工：上述机种缺 BIOS 时给中文提示；补齐后能启动；N64 不需要 BIOS。
+- 手工：土星帧率与 N64 画幅是否可接受，低配设备记录降级表现。
 - 手工：NDS 三种布局用 `-` / `=` 循环，舞台、机壳、窗口选择器三列同步。
 - 手工：每种机种的机壳洞与画面四边对齐，换倍率/全屏后仍对齐。
 - 手工：截图、`·`、``Alt + ` ``、回车、NDS 布局快捷键在焦点位于输入框/弹框时不响应。

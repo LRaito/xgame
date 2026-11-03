@@ -1,6 +1,6 @@
 # XGAME
 
-个人自托管的**游戏平台**：把 Flash、HTML5 与 8/16/32-bit 主机游戏收进一个网页，浏览器打开就能玩，
+个人自托管的**游戏平台**：把 Flash、HTML5 与 8/16/32/64 位主机游戏收进一个网页，浏览器打开就能玩，
 存档、截图、攻略与游玩进度都跟着账号走。
 
 > 这是**使用指南**：怎么装起来、怎么玩。要改代码、看架构与数据字典，见 [`DEVELOP.md`](DEVELOP.md)。
@@ -136,7 +136,7 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 ## 玩游戏
 
 三种游戏都是点开即玩、不装插件：**Flash**（`.swf`）、**HTML5**（`.zip`，浏览器里当网页游戏跑）、
-**主机**（NES / SNES / GB / GBA / NDS / MD / Atari / Commodore 等，浏览器里跑模拟器，不需要外网）。
+**主机**（NES / SNES / N64 / GB / GBA / NDS / MD / PS1 / 土星 / PC-FX / 3DO / Atari / Commodore 等，浏览器里跑模拟器，不需要外网）。
 
 > **部分机种额外需要 BIOS。** 用户自备 ZIP 放到 `frontend/public/emulatorjs/bios/` 后重建 web 镜像
 > （Windows 包放到 `web/emulatorjs/bios/`），不随仓库提交；缺失时播放页会直接给出中文提示。
@@ -147,8 +147,12 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 > | 雅达利 5200 | `atari5200.zip` | `5200.rom` | 可选（缺包回退内置 AltirraOS） |
 > | 雅达利 Lynx | `lynx.zip` | `lynxboot.img` | 必需 |
 > | ColecoVision | `coleco.zip` | `colecovision.rom` | 必需 |
+> | 世嘉 土星 | `segaSaturn.zip` | `saturn_bios.bin` | 必需 |
+> | 索尼 PS1 | `psx.zip` | `scph5500.bin`、`scph5501.bin`、`scph5502.bin` | 必需（按区，建议三个都放） |
+> | 日电 PC-FX | `pcfx.zip` | `pcfx.rom`（必须正好 1 MiB） | 必需 |
+> | 松下 3DO | `3do.zip` | `panafz1.bin` | 必需 |
 >
-> ZIP 根目录直接放上面这些文件，不要套子目录。
+> N64 不需要 BIOS。ZIP 根目录直接放上面这些文件，不要套子目录。
 
 ### 播放页
 
@@ -258,6 +262,13 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 | `.nes` / `.sfc` `.smc` | FC / SNES |
 | `.gb` `.gbc` / `.gba` / `.nds` | GB / GBA / NDS |
 | `.md` `.gen` / `.gg` / `.sms` | MD / GG / SMS |
+| `.z64` `.n64` `.v64` | 任天堂 N64 |
+| `.chd` | 土星 / PS1 / PC-FX / 3DO（创建时按下拉选类型，默认 PS1） |
+| `.pbp` | PS1 |
+| `.iso` | PS1 / 3DO（创建时按下拉选类型） |
+
+> 多机种共用的后缀（`.chd`、`.iso`、Commodore 的 `.d64` / `.prg`）会在创建时出现类型下拉。
+> 单文件上限 512MB；更大的 CD 镜像建议先转成 CHD 或 PBP。
 
 ### 元数据
 
@@ -383,6 +394,8 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
    HTML5、SNES、MD、GG、SMS 还没实测过（GB 与 GBC 是同一个游戏类型、走同一条路）。
    NDS 已接入 melonDS，三种屏幕布局可用，但仍需实机确认帧缓冲与间隙的细节；
    几何参数见 [`docs/specs/game-center-playback.md`](docs/specs/game-center-playback.md)。
+   N64、PS1、土星、PC-FX、3DO 已接入核与 BIOS 机制，仍需自备 ROM / BIOS 做实机确认，
+   尤其土星帧率与 PS1 的 `.pbp` / `.chd` 启动。
 
 ## 许可与免责声明
 

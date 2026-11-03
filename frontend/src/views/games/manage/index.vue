@@ -715,10 +715,21 @@ const bodyTypeOptions = computed(() =>
 );
 const bodySourceType = computed(() => {
     if (form.gameFile) {
-        return form.gameType || bodyTypeCandidates.value[0] || null;
+        return (
+            form.gameType ||
+            gameTypesStore.defaultOfFilename(form.gameFile.name) ||
+            bodyTypeCandidates.value[0] ||
+            null
+        );
     }
     if (form.bodyUrl) {
-        return form.gameType || form.bodyGameType || bodyTypeCandidates.value[0] || null;
+        return (
+            form.gameType ||
+            form.bodyGameType ||
+            gameTypesStore.defaultOfFilename(basenameOfUrl(form.bodyUrl)) ||
+            bodyTypeCandidates.value[0] ||
+            null
+        );
     }
     return null;
 });
@@ -809,9 +820,10 @@ function gameTypesOfUrl(url) {
     return name ? gameTypeCandidatesByFilename(name) : [];
 }
 
-/** 地址能认出的默认类型（候选第 1 个）；认不出返回 null。 */
+/** 地址能认出的默认类型（按后缀覆盖表优先）；认不出返回 null。 */
 function gameTypeOfUrl(url) {
-    return gameTypesOfUrl(url)[0] || null;
+    const name = basenameOfUrl(url);
+    return name ? gameTypesStore.defaultOfFilename(name) || null : null;
 }
 
 function isHttpUrl(url) {
@@ -1107,8 +1119,9 @@ function onGameFileChange(event) {
         return;
     }
     if (formMode.value !== "edit") {
-        // 新建：多候选时默认选第一个，用户仍可在类型下拉里改
-        form.gameType = candidates.includes(form.gameType) ? form.gameType : candidates[0];
+        // 新建：多候选时按后缀覆盖表选默认项，用户仍可在类型下拉里改
+        const preferred = gameTypesStore.defaultOfFilename(file.name) || candidates[0];
+        form.gameType = candidates.includes(form.gameType) ? form.gameType : preferred;
         return;
     }
     // 编辑只能换同类型本体：当前类型必须在该后缀的候选集内
@@ -1189,10 +1202,9 @@ function confirmRemoteBody() {
         ElMessage.warning("请填写 http/https 开头的下载地址");
         return;
     }
-    const candidates = gameTypesOfUrl(url);
     if (!remoteBody.gameType) {
-        // 地址能看出候选就自动选默认；看不出必须手选
-        remoteBody.gameType = candidates[0] || "";
+        // 地址能看出候选就按覆盖表选默认；看不出必须手选
+        remoteBody.gameType = gameTypeOfUrl(url) || "";
     }
     if (!remoteBody.gameType) {
         ElMessage.warning("请选择游戏类型");

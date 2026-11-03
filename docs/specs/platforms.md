@@ -31,12 +31,13 @@
 
 ## 行为与规则
 
-### 可玩机种（24 个）
+### 可玩机种（29 个）
 
 | game_type | 显示名 | 扩展名 | 默认后缀 | EmulatorJS core |
 |---|---|---|---|---|
 | `nes` | 任天堂 FC | `.nes` | `.nes` | `fceumm` / `nestopia` |
 | `snes` | 任天堂 SFC | `.sfc` `.smc` | `.sfc` | `snes9x` |
+| `n64` | 任天堂 N64 | `.z64` `.n64` `.v64` | `.z64` | `mupen64plus_next` / `parallel_n64` |
 | `gb` | 任天堂 GB/GBC | `.gb` `.gbc` | `.gb` | `gambatte` |
 | `gba` | 任天堂 GBA | `.gba` | `.gba` | `mgba` |
 | `nds` | 任天堂 NDS | `.nds` | `.nds` | `melonds` / `desmume` / `desmume2015` |
@@ -45,7 +46,10 @@
 | `segaGG` | 世嘉 GG | `.gg` | `.gg` | `genesis_plus_gx` |
 | `segaMS` | 世嘉 SMS | `.sms` | `.sms` | `smsplus` / `genesis_plus_gx` / `picodrive` |
 | `sega32x` | 世嘉 32X | `.32x` | `.32x` | `picodrive` |
+| `segaSaturn` | 世嘉 土星 | `.chd` | `.chd` | `yabause` |
+| `psx` | 索尼 PS1 | `.chd` `.pbp` `.iso` | `.chd` | `pcsx_rearmed` / `mednafen_psx_hw` |
 | `pce` | 日电 PCE | `.pce` `.sgx` | `.pce` | `mednafen_pce` |
+| `pcfx` | 日电 PC-FX | `.chd` | `.chd` | `mednafen_pcfx` |
 | `ngp` | SNK NGPC | `.ngc` `.ngp` | `.ngc` | `mednafen_ngp` |
 | `ws` | 万代 WS | `.ws` `.wsc` | `.ws` | `mednafen_wswan` |
 | `atari2600` | 雅达利 2600 | `.a26` | `.a26` | `stella2014` |
@@ -54,6 +58,7 @@
 | `jaguar` | 雅达利 Jaguar | `.j64` `.jag` | `.j64` | `virtualjaguar` |
 | `lynx` | 雅达利 Lynx | `.lnx` | `.lnx` | `handy` |
 | `coleco` | ColecoVision | `.col` | `.col` | `gearcoleco` |
+| `3do` | 松下 3DO | `.iso` `.chd` | `.iso` | `opera` |
 | `c64` | Commodore 64 | `.d64` `.tap` `.crt` `.prg` | `.d64` | `vice_x64sc` |
 | `c128` | Commodore 128 | `.d64` `.d71` `.prg` | `.d64` | `vice_x128` |
 | `pet` | Commodore PET | `.prg` `.d64` | `.prg` | `vice_xpet` |
@@ -61,9 +66,14 @@
 | `vic20` | Commodore VIC-20 | `.prg` `.d64` | `.prg` | `vice_xvic` |
 
 - `cores` 记录引擎支持的全部 core，不代表本项目都打包了资产；NDS 只打包 `melonds`。
-- **扩展名可以跨机种重叠**：Commodore 共用 `.d64` / `.prg`。
+  N64 打包 `mupen64plus_next` 与 `parallel_n64`（iOS Safari 会默认选后者）；
+  PS1 两个 core 都打包。
+- **扩展名可以跨机种重叠**：Commodore 共用 `.d64` / `.prg`；CD 镜像共用 `.chd`
+  （土星 / PS1 / PC-FX / 3DO）与 `.iso`（PS1 / 3DO）。
   判定时取「后缀候选集」，候选第 1 个（词表顺序）是默认项；唯一候选自动确定。
-- `GAME_TYPES` 派生为 `flash`、`h5` 加 24 个可玩机种 id，顺序与词表一致。
+- 多候选后缀的默认项可被 `_EXTENSION_DEFAULT_OVERRIDES` 覆盖：`.chd` 默认 PS1，
+  不改变候选列表顺序。
+- `GAME_TYPES` 派生为 `flash`、`h5` 加 29 个可玩机种 id，顺序与词表一致。
 - 后端扩展名白名单、默认后缀表、候选表与 `GAME_TYPE_LABELS` 都从词表派生。
 - 前端不保存映射：`GET /api/games/status` 的 `types` / `extension_candidates` /
   `default_game_type_by_extension` 是唯一来源。
@@ -82,6 +92,14 @@
 | `atari5200` | `atari5200.zip` | `5200.rom` | 可选（核心内置 AltirraOS） |
 | `lynx` | `lynx.zip` | `lynxboot.img` | 必需 |
 | `coleco` | `coleco.zip` | `colecovision.rom` | 必需 |
+| `segaSaturn` | `segaSaturn.zip` | `saturn_bios.bin` | 必需（核有 HLE 回退，兼容性差） |
+| `psx` | `psx.zip` | `scph5500.bin`、`scph5501.bin`、`scph5502.bin` | 必需（按区，建议三个都放） |
+| `pcfx` | `pcfx.zip` | `pcfx.rom` | 必需（必须正好 1 MiB） |
+| `3do` | `3do.zip` | `panafz1.bin` | 必需（也可用其他 3DO BIOS 文件名） |
+
+- N64 不需要 BIOS。
+- 土星也可用 `sega_101.bin` / `mpr-17933.bin`，3DO 也可用 `panafz10.bin` 等；
+  文件名必须与 core 查找名完全一致。
 
 - ZIP 放在 `frontend/public/emulatorjs/bios/`，包根目录直接放必需文件，不能套子目录。
 - BIOS 是用户自备文件，不随仓库提交；Docker 需重建 web 镜像，Windows 包需重新组装。

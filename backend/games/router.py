@@ -435,36 +435,43 @@ def _open_play_asset(service: GameServiceDep, game_id: int):
     return item, stream, content_type, Path(item.game_path).name
 
 
-@router.get("/{game_id}/play")
-def games_play(game_id: int, _user: CurrentUser, service: GameServiceDep):
-    """流式返回游戏本体（SWF 或 ROM），文件名取落盘名（game.<ext>）。
+def _play_asset_or_error(
+    service: GameServiceDep,
+    game_id: int,
+    expected_filename: str | None = None,
+):
+    """打开本体；错误时返回 (None, 错误响应)，成功时返回 ((item, stream, type, name), None)。
 
-    content-type：Flash（.swf）保持原值以兼容现有播放链路与缓存；其余平台统一
-    octet-stream——EmulatorJS 按字节读取，不依赖 content-type，core 由前端指定。
+    `expected_filename` 只用于「URL 末段带文件名」的路由：EmulatorJS 用末段当 ROM
+    文件名（`.pbp` 等核会看后缀），所以客户端必须传真实落盘名，不一致直接 404。
     """
     try:
-        _item, stream, content_type, filename = _open_play_asset(service, game_id)
+        item, stream, content_type, filename = _open_play_asset(service, game_id)
     except NotFoundError as exc:
-        return json_err(str(exc), 404)
+        return None, json_err(str(exc), 404)
     except (ValidationError, StorageError) as exc:
-        return json_err(str(exc), 400)
+        return None, json_err(str(exc), 400)
+    if expected_filename is not None and expected_filename != filename:
+        stream.close()
+        return None, json_err("游戏文件不存在。", 404)
+    return (item, stream, content_type, filename), None
+
+
+def _play_download(service: GameServiceDep, game_id: int, expected_filename=None):
+    asset, error = _play_asset_or_error(service, game_id, expected_filename)
+    if error is not None:
+        return error
+    _item, stream, content_type, filename = asset
     return build_download_response(
         stream, filename=filename, content_type=content_type
     )
 
 
-@router.head("/{game_id}/play")
-def games_play_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
-    """HEAD 与 GET 同语义：返回相同响应头但不传正文。
-
-    EmulatorJS 启动前会先对本体 URL 发一个 HEAD 探测（此前 405 会报一条网络错误）。
-    """
-    try:
-        item, stream, content_type, filename = _open_play_asset(service, game_id)
-    except NotFoundError as exc:
-        return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
-        return json_err(str(exc), 400)
+def _play_head(service: GameServiceDep, game_id: int, expected_filename=None):
+    asset, error = _play_asset_or_error(service, game_id, expected_filename)
+    if error is not None:
+        return error
+    item, stream, content_type, filename = asset
     size = stream.size if stream.size is not None else item.size
     stream.close()
     return Response(
@@ -475,6 +482,47 @@ def games_play_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
             "Content-Disposition": content_disposition(filename),
         },
     )
+
+
+@router.get("/{game_id}/play")
+def games_play(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """流式返回游戏本体（SWF 或 ROM），文件名取落盘名（game.<ext>）。
+
+    content-type：Flash（.swf）保持原值以兼容现有播放链路与缓存；其余平台统一
+    octet-stream——EmulatorJS 按字节读取，不依赖 content-type，core 由前端指定。
+    """
+    return _play_download(service, game_id)
+
+
+@router.get("/{game_id}/play/{filename}")
+def games_play_named(
+    game_id: int,
+    filename: str,
+    _user: CurrentUser,
+    service: GameServiceDep,
+):
+    """带文件名的本体流：末段供 EmulatorJS 识别 ROM 格式，内容仍按 game_path 下发。"""
+    return _play_download(service, game_id, filename)
+
+
+@router.head("/{game_id}/play")
+def games_play_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """HEAD 与 GET 同语义：返回相同响应头但不传正文。
+
+    EmulatorJS 启动前会先对本体 URL 发一个 HEAD 探测（此前 405 会报一条网络错误）。
+    """
+    return _play_head(service, game_id)
+
+
+@router.head("/{game_id}/play/{filename}")
+def games_play_named_head(
+    game_id: int,
+    filename: str,
+    _user: CurrentUser,
+    service: GameServiceDep,
+):
+    """带文件名的 HEAD，语义与 GET 相同。"""
+    return _play_head(service, game_id, filename)
 
 
 # H5 资源响应头：sandbox 让文档进入不透明源（读不到本站 cookie/DOM、无法注册 SW），

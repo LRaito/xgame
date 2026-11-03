@@ -8,11 +8,13 @@
 - 下拉顺序 = `/status.game_types` = `flash`、`h5` + 词表里的可玩机种。
 - 引擎基线固定 EmulatorJS **4.2.3**，system key 与 core 取自其 `getCores()`。
 - 下表只列 EmulatorJS 支持的机种；key / core 与 `getCores()` 一致，由 `tests/test_platforms.py` 钉住。
-- 词表当前共 36 个机种，已可玩 24 个，剩余 12 个。
-- 剩余 12 个中 `sega` / `mame` 是引擎兜底 key，不单独接，真正可新增 **10 个**。
+- 词表当前共 36 个机种，已可玩 29 个，剩余 7 个。
+- 剩余 7 个中 `sega` / `mame` 是引擎兜底 key，不单独接，真正可新增 **5 个**。
 - 第 1 档 13 个已全部接入，包括 Commodore 五个：
   `c64`、`c128`、`pet`、`plus4`、`vic20`。
 - 第 2 档 3 个已全部接入：`atari5200`、`lynx`、`coleco`；BIOS 机制已通用化。
+- 第 3 档 5 个已全部接入：`n64`、`segaSaturn`、`psx`、`pcfx`、`3do`；
+  单文件镜像按 `.chd` / `.pbp` / `.iso` 收，多文件格式留给第 4 档。
 - Commodore 共用 `.d64` / `.prg`，由「后缀候选集 + 用户选择」消歧；
   创建后也能在编辑弹框里改类型。
 - 下表仍按词表顺序列出待接机种，不按难度重排；难度用「档」标注。
@@ -24,24 +26,19 @@
 |---|---|---|---|
 | 1 | 0 | 已全部接入 | — |
 | 2 | 0 | 已全部接入（BIOS 机制已通用化） | — |
-| 3 | 5 | BIOS / 性能 / 画幅 QA | 每个约 0.5–1 天 |
+| 3 | 0 | 已全部接入（单文件 CD 镜像） | — |
 | 4 | 2 | 多文件上传与播放链路 | 机制 2–3 天，每个 1–2 天 |
 | 5 | 3 | 线程、COOP/COEP、数据模型 | 每个 3 天以上，街机以周计 |
 
 ## 机种清单（按词表顺序）
 
-已可玩的 24 个不在下表重复列出。下表是剩余 10 个待接机种，按其在词表中的先后排列，
+已可玩的 29 个不在下表重复列出。下表是剩余 5 个待接机种，按其在词表中的先后排列，
 接入后在下拉里的相对位置与此一致。
 
 | 机种 | key / core | 扩展名 | 档 | 说明 |
 |---|---|---|---|---|
-| 任天堂 N64 | `n64` / `mupen64plus_next` | `.z64` `.n64` `.v64` | 3 | 无 BIOS；核约 1.45 MB |
 | 世嘉 CD | `segaCD` / `genesis_plus_gx` | cue+bin / `.chd` | 4 | BIOS `bios_CD_E/U/J.bin` |
-| 世嘉 土星 | `segaSaturn` / `yabause` | `.chd` | 3 | BIOS `saturn_bios.bin` |
-| 索尼 PS1 | `psx` / `pcsx_rearmed` | `.chd` `.pbp` `.iso` | 3 | BIOS `scph5500/5501/5502.bin` |
 | 索尼 PSP | `psp` / `ppsspp` | `.iso` `.cso` | 5 | 强制线程 + WebGL2 |
-| 日电 PC-FX | `pcfx` / `mednafen_pcfx` | `.chd` | 3 | BIOS `pcfx.rom` |
-| 松下 3DO | `3do` / `opera` | `.iso` `.chd` | 3 | BIOS `panafz1.bin` 等 |
 | Amiga | `amiga` / `puae` | adf/hdf 多盘或 zip | 4 | Kickstart 必需 |
 | DOS | `dos` / `dosbox_pure` | jsdos zip | 5 | 强制线程；键鼠 |
 | 街机 | `arcade` / `fbneo` | romset zip | 5 | `mame` 是独立兜底 key，不单独接；数据治理最重 |
@@ -79,15 +76,21 @@
 - Lynx 文档正文写「无 BIOS」，但表格把 `lynxboot.img` 标为 Required，按表格准备（必需）。
 - 5200 文档未列 BIOS；`a5200` 核内置 AltirraOS，`5200.rom` 按可选处理，缺包回退。
 
-### 第 3 档：单文件但重
+### 第 3 档：单文件但重（已全部接入）
 
-对应：`n64`、`segaSaturn`、`psx`、`pcfx`、`3do`。
+`n64`、`segaSaturn`、`psx`、`pcfx`、`3do`，均已接入。
 
-建议只收单文件镜像，cue+bin 归到第 4 档。
+只收单文件镜像，cue+bin 归到第 4 档：
 
-- N64 排最前，因为没有 BIOS，配置层面与第 1 档相同。
-- PS1、土星、3DO、PC-FX 都需要按区或按型号准备 BIOS。
-- 土星的 wasm 性能最差，需先确认可玩阈值再决定是否开放。
+- N64 无 BIOS，后缀 `.z64` `.n64` `.v64`。
+- 土星只收 `.chd`；PS1 收 `.chd` `.pbp` `.iso`；PC-FX 只收 `.chd`；
+  3DO 收 `.iso` `.chd`。`.bin` / `.cue` 继续不收。
+- `.chd` 在四台机种间共用，候选顺序按词表；默认项由覆盖表指定为更常见的 PS1。
+- PS1 / 土星核有 HLE BIOS 回退，但兼容性差，按必需处理；PC-FX 的 `pcfx.rom`
+  必须正好 1 MiB；3DO 按 EJS 文档也按必需。
+- 播放 URL 末段必须带真实落盘名（`game.<ext>`），EmulatorJS 才能识别 `.pbp` 等格式。
+- 土星的 wasm 性能最差，仍需实机确认可玩阈值。
+- 512MB 上传上限不变；超大的 ISO 建议先转 CHD 或 PBP。
 
 ### 第 4 档：多文件 / 多碟
 
@@ -124,7 +127,7 @@
 - 新增机种的显示名统一为「公司名 + 空格 + 型号」，由 `tests/test_platforms.py` 钉住。
 - **`.zip` 已被 H5 占用**：不能把 `.zip` 直接加给街机、DOS、Sega CD、Amiga。
 - 多文件类型必须改成「用户选类型优先」，后缀只做提示。
-- 线程开关现在是全局的；按机种开线程要避免影响现有 24 个机种。
+- 线程开关现在是全局的；按机种开线程要避免影响现有 29 个机种。
 - EJS 文档里的 3DS 属于 4.3-pre；本仓库钉死 4.2.3，不接。
 - 不新增 `sega` / `mame` 两个兜底 key 的入口。
 
@@ -133,7 +136,7 @@
 1. ~~先做 `vb`、`ngp`、`ws`、`pce`、`atari2600`，验证「加机种」链路。~~ 已接入。
 2. ~~再做 BIOS 通用化，接 `atari5200`、`lynx`、`coleco`。~~ 已完成。
 3. ~~第 1 档 13 个全部接入，含 Commodore 与类型选择/修改机制。~~ 已完成。
-4. 接 `n64`，跑通第一个重核机种。
+4. ~~接 `n64`，跑通第一个重核机种。~~ 第 3 档 5 个已全部接入。
 5. 最后才做多文件、PSP、DOS、街机。
 
 ## 测试要点
@@ -142,7 +145,7 @@
 - BIOS 档：BIOS 缺失时有中文提示，补齐后可正常启动。
 - 重核档：确认帧率与截图比例，低配设备要有可接受的降级表现。
 - 多文件档：多盘切换、存档、删除时不残留临时文件。
-- 线程档：确认响应头带 COOP/COEP，且现有 24 个机种不受影响。
+- 线程档：确认响应头带 COOP/COEP，且现有 29 个机种不受影响。
 - 每档都要更新 `tests/test_platforms.py` 的词表不变量（显示名格式、扩展名、BIOS 规格）
   与 EJS `getCores()` 一致性断言。
 - 待接清单本身也由测试校验：只允许列 EJS 支持的 key / core，且覆盖全部剩余机种。

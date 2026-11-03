@@ -63,6 +63,7 @@
 |---|---|---|---|
 | GET | `/api/games/{id}/cover` | 需登录 | 封面 inline；`?download=1` 转附件 |
 | GET / HEAD | `/api/games/{id}/play` | 需登录 | 本体下载；`.swf` 用 Flash 类型，其余 `octet-stream` |
+| GET / HEAD | `/api/games/{id}/play/{文件名}` | 需登录 | 同上；文件名段必须是落盘名（如 `game.chd`），供 EmulatorJS 识别格式 |
 | GET / HEAD | `/api/games/{id}/h5/{资源路径}` | **免登录** | H5 资源；沙箱安全头，首次访问触发解包 |
 | GET / HEAD | `/api/games/{id}/guide/{资源路径}` | 需登录 | ZIP 攻略资源；无 CSP sandbox |
 | GET / HEAD | `/api/games/{id}/guide.pdf` | 需登录 | PDF 攻略，`application/pdf` inline |

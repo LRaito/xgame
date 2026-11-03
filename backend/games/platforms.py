@@ -18,8 +18,8 @@ EJS 4.2.3 的 `EmulatorJS.getCores()`
 2. **`label` 是三处共用的显示名**（中文，厂商 + 空格 + 型号；没有厂商名的只写型号），
    前端 `constants/gameTypes.js` 里按 id 保留图标/描述等 UI 元数据，
    label 与扩展名由 `/api/games/status` 从本表派生。
-3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 24 个机种有；其余机种（含 EJS 支持
-   但本项目还没打包 core 的 n64/psx 等）只用来给外部名录「对上号」，不开放上传。
+3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 29 个机种有；其余机种（含 EJS 支持
+   但本项目还没打包 core 的 segaCD/psp 等）只用来给外部名录「对上号」，不开放上传。
 
 `flash` / `h5` **不是机种**（它们是载体类型：Ruffle 播的 SWF 与上传 ZIP 解包的网页游戏），
 所以不在这张表里，它们的 `game_type` 与显示名仍由 `service.py` 自己管。
@@ -96,6 +96,9 @@ PLATFORMS: tuple[Platform, ...] = (
         label="任天堂 N64",
         cores=("mupen64plus_next", "parallel_n64"),
         aliases=("任天堂N64", "N64"),
+        # 单文件卡带镜像；.bin 与 Atari 机种歧义，继续不收
+        extensions=(".z64", ".n64", ".v64"),
+        default_extension=".z64",
     ),
     Platform(
         id="gb",
@@ -178,6 +181,14 @@ PLATFORMS: tuple[Platform, ...] = (
         label="世嘉 土星",
         cores=("yabause",),
         aliases=("世嘉土星", "世嘉土星SS", "SS", "Saturn"),
+        # 只收单文件 CHD；cue+bin 与 ISO 归后续多文件档
+        extensions=(".chd",),
+        default_extension=".chd",
+        # yabause 有 HLE 回退，但兼容性差；按必需处理，缺包时给中文提示
+        bios=BiosSpec(
+            file="segaSaturn.zip",
+            required_files=("saturn_bios.bin",),
+        ),
     ),
     # EJS 的通用世嘉 system（不区分 MD/MS/GG），只作引擎侧的兜底，没有外部名录对应
     Platform(
@@ -192,6 +203,14 @@ PLATFORMS: tuple[Platform, ...] = (
         label="索尼 PS1",
         cores=("pcsx_rearmed", "mednafen_psx_hw"),
         aliases=("索尼PS1", "PS1", "PSX", "PlayStation"),
+        # 单文件镜像；cue+bin 归后续多文件档
+        extensions=(".chd", ".pbp", ".iso"),
+        default_extension=".chd",
+        # 三个区版 BIOS 放同一个 ZIP；.iso 只保留数据轨，CD 音轨会丢
+        bios=BiosSpec(
+            file="psx.zip",
+            required_files=("scph5500.bin", "scph5501.bin", "scph5502.bin"),
+        ),
     ),
     Platform(
         id="psp",
@@ -214,6 +233,11 @@ PLATFORMS: tuple[Platform, ...] = (
         label="日电 PC-FX",
         cores=("mednafen_pcfx",),
         aliases=("PC-FX",),
+        # 核心只接受 cue / ccd / toc / chd；单文件路线用 chd
+        extensions=(".chd",),
+        default_extension=".chd",
+        # pcfx.rom 是硬性必需，且必须正好 1 MiB
+        bios=BiosSpec(file="pcfx.zip", required_files=("pcfx.rom",)),
     ),
     # —— SNK ——
     Platform(
@@ -307,6 +331,11 @@ PLATFORMS: tuple[Platform, ...] = (
         label="松下 3DO",
         cores=("opera",),
         aliases=("松下3DO游戏", "3DO"),
+        # opera 接受 iso / chd；cue+bin 归后续多文件档
+        extensions=(".iso", ".chd"),
+        default_extension=".iso",
+        # EJS 文档列出多种 3DO BIOS；panafz1 是最常见的 FZ-1 版
+        bios=BiosSpec(file="3do.zip", required_files=("panafz1.bin",)),
     ),
     # Commodore 五个共用 .d64 / .prg：后缀不唯一时由用户选类型，
     # 候选顺序取本表的先后，因此默认候选是 c64。
@@ -468,9 +497,23 @@ def playable_platforms_for_extension(extension: str) -> tuple[Platform, ...]:
     )
 
 
+# 多候选后缀的默认选中项：词表顺序第一个不一定是最常见的格式。
+# `.chd` 在土星 / PS1 / PC-FX / 3DO 间共用，实际 PS1 镜像最多，但词表里土星排在 PS1 前。
+# 这里只改「默认选中项」，不改变 `playable_platforms_for_extension()` 的候选顺序。
+_EXTENSION_DEFAULT_OVERRIDES: dict[str, str] = {".chd": "psx"}
+
+
 def default_playable_platform_for_extension(extension: str) -> Platform | None:
-    """默认候选机种（词表顺序第一个）；没有候选返回 None。"""
-    candidates = playable_platforms_for_extension(extension)
+    """默认候选机种：先看覆盖表，再取词表顺序第一个；没有候选返回 None。"""
+    normalized = normalize_extension(extension)
+    if not normalized:
+        return None
+    candidates = playable_platforms_for_extension(normalized)
+    override_id = _EXTENSION_DEFAULT_OVERRIDES.get(normalized)
+    if override_id:
+        override = next((item for item in candidates if item.id == override_id), None)
+        if override is not None:
+            return override
     return candidates[0] if candidates else None
 
 

@@ -119,6 +119,17 @@
             const core = params.get("core");
             const name = params.get("name") || "";
             const version = params.get("v") || "";
+            // ROM 文件名：EmulatorJS 用 EJS_gameUrl 的最后一段当 ROM 文件名，`.pbp` 等
+            // 核会按后缀选加载器。播放页传真实落盘名（game.<ext>），这里只接受安全 basename。
+            const ROM_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/;
+
+            function readRomFile(raw) {
+                const value = String(raw || "").trim();
+                if (!value || value.includes("..")) {
+                    return "";
+                }
+                return ROM_FILE_PATTERN.test(value) ? value : "";
+            }
             // 显示比例（父页面「窗口」选择器里选的那一列）：wide = 4:3，其余 = 像素完美 PP
             const wide = params.get("ratio") === "wide";
             // 复古滤镜：内核选项（`k=v,k=v`，内核加载前写进内核设置文件）与着色器键名
@@ -964,8 +975,13 @@
             function start() {
                 window.EJS_player = "#ejs";
                 window.EJS_core = core;
-                // ROM 直连后端流式接口；带版本参数使重传本体后 EmulatorJS 缓存可失效
-                const romUrl = `/api/games/${encodeURIComponent(id)}/play` + (version ? `?v=${encodeURIComponent(version)}` : "");
+                // ROM 直连后端流式接口；末段带真实落盘名，EmulatorJS 据此识别 ROM 格式
+                // （`.pbp` 必须保留后缀）。带版本参数使重传本体后 EmulatorJS 缓存可失效。
+                const romFile = readRomFile(params.get("file"));
+                const romUrl =
+                    `/api/games/${encodeURIComponent(id)}/play` +
+                    (romFile ? `/${encodeURIComponent(romFile)}` : "") +
+                    (version ? `?v=${encodeURIComponent(version)}` : "");
                 window.EJS_gameUrl = romUrl;
                 window.EJS_pathtodata = "/emulatorjs/data/";
                 window.EJS_gameID = String(id);

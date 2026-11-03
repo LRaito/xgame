@@ -141,6 +141,10 @@ def test_detect_game_type_by_extension():
     assert detect_game_type("demo.a52") == "atari5200"
     assert detect_game_type("demo.lnx") == "lynx"
     assert detect_game_type("demo.col") == "coleco"
+    assert detect_game_type("demo.z64") == "n64"
+    assert detect_game_type("demo.n64") == "n64"
+    assert detect_game_type("demo.v64") == "n64"
+    assert detect_game_type("demo.pbp") == "psx"
     assert detect_game_type("demo.md") == "segaMD"
     assert detect_game_type("demo.gen") == "segaMD"
     assert detect_game_type("demo.gg") == "segaGG"
@@ -162,6 +166,18 @@ def test_detect_game_type_by_extension():
     )
     assert resolve_game_type(".d64", "c128") == "c128"
     assert resolve_game_type(".prg", "vic20") == "vic20"
+    # 第 3 档 CD 镜像也跨机种：.chd 四候选、.iso 两候选，不带选择时有歧义
+    with pytest.raises(Exception):
+        detect_game_type("demo.chd")
+    with pytest.raises(Exception):
+        detect_game_type("demo.iso")
+    with pytest.raises(Exception):
+        detect_game_type("demo.cue")
+    assert game_types_of_extension(".chd") == ("segaSaturn", "psx", "pcfx", "3do")
+    assert game_types_of_extension(".iso") == ("psx", "3do")
+    assert resolve_game_type(".chd", "psx") == "psx"
+    assert resolve_game_type(".iso", "3do") == "3do"
+    assert require_body_type_for_current(".chd", "pcfx") == "pcfx"
     with pytest.raises(Exception):
         resolve_game_type(".d64", "nes")
     with pytest.raises(Exception):
@@ -574,6 +590,16 @@ def test_manage_filter_combines_with_pagination(logged_in_games):
         ("atari5200", ".a52"),
         ("lynx", ".lnx"),
         ("coleco", ".col"),
+        ("n64", ".z64"),
+        ("n64", ".n64"),
+        ("n64", ".v64"),
+        ("segaSaturn", ".chd"),
+        ("psx", ".chd"),
+        ("psx", ".pbp"),
+        ("psx", ".iso"),
+        ("pcfx", ".chd"),
+        ("3do", ".chd"),
+        ("3do", ".iso"),
         ("segaMD", ".md"),
         ("segaMD", ".gen"),
         ("segaGG", ".gg"),
@@ -582,7 +608,13 @@ def test_manage_filter_combines_with_pagination(logged_in_games):
 )
 def test_emulator_types_upload_and_play(logged_in_games, game_type, extension):
     """各主机平台：上传本体即按扩展名定类型，中心 path 走通用播放路由，本体 octet-stream 下发。"""
-    create = _create_game(logged_in_games, "平台测试", f"demo{extension}", b"rom-body")
+    create = _create_game(
+        logged_in_games,
+        "平台测试",
+        f"demo{extension}",
+        b"rom-body",
+        game_type=game_type,
+    )
     assert create.status_code == 201
     assert create.json()["data"]["game_type"] == game_type
     assert create.json()["data"]["game_path"].endswith(f"/game{extension}")
@@ -598,6 +630,31 @@ def test_emulator_types_upload_and_play(logged_in_games, game_type, extension):
     assert play.status_code == 200
     assert play.content == b"rom-body"
     assert play.headers.get("content-type") == "application/octet-stream"
+
+
+def test_play_with_filename_suffix_streams_body(logged_in_games):
+    """播放 URL 末段带落盘名：供 EmulatorJS 识别 ROM 格式，内容与 /play 一致。"""
+    create = _create_game(
+        logged_in_games,
+        "PS1 镜像",
+        "demo.chd",
+        b"chd-body",
+        game_type="psx",
+    )
+    game_id = create.json()["data"]["id"]
+
+    play = logged_in_games.get(f"/api/games/{game_id}/play/game.chd")
+    assert play.status_code == 200
+    assert play.content == b"chd-body"
+    assert play.headers.get("content-type") == "application/octet-stream"
+
+    head = logged_in_games.head(f"/api/games/{game_id}/play/game.chd")
+    assert head.status_code == 200
+    assert head.headers.get("content-length") == str(len(b"chd-body"))
+
+    # 文件名必须与落盘名一致，避免 EJS 缓存/格式识别错位
+    wrong = logged_in_games.get(f"/api/games/{game_id}/play/game.bin")
+    assert wrong.status_code == 404
 
 
 def test_replacing_body_cross_type_rejected(logged_in_games, storage_root):
@@ -1638,6 +1695,17 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
     assert types["atari5200"]["bios"]["optional"] is True
     assert types["lynx"]["bios"]["required_files"] == ["lynxboot.img"]
     assert types["coleco"]["bios"]["required_files"] == ["colecovision.rom"]
+    assert types["n64"]["extensions"] == [".n64", ".v64", ".z64"]
+    assert types["n64"]["bios"] is None
+    assert types["psx"]["extensions"] == [".chd", ".iso", ".pbp"]
+    assert types["psx"]["bios"]["required_files"] == [
+        "scph5500.bin",
+        "scph5501.bin",
+        "scph5502.bin",
+    ]
+    assert types["segaSaturn"]["bios"]["file"] == "segaSaturn.zip"
+    assert types["pcfx"]["bios"]["required_files"] == ["pcfx.rom"]
+    assert types["3do"]["bios"]["required_files"] == ["panafz1.bin"]
     assert types["nes"]["bios"] is None
     assert types["flash"]["kind"] == "flash"
     assert status["extension_candidates"][".d64"] == [
@@ -1647,7 +1715,17 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
         "plus4",
         "vic20",
     ]
+    assert status["extension_candidates"][".chd"] == [
+        "segaSaturn",
+        "psx",
+        "pcfx",
+        "3do",
+    ]
+    assert status["extension_candidates"][".iso"] == ["psx", "3do"]
     assert status["default_game_type_by_extension"][".d71"] == "c128"
+    # 候选顺序按词表，默认项由覆盖表指定为更常见的 PS1
+    assert status["default_game_type_by_extension"][".chd"] == "psx"
+    assert status["default_game_type_by_extension"][".iso"] == "psx"
 
 
 def test_status_bios_metadata_matches_registry(logged_in_games):
@@ -1681,6 +1759,22 @@ def test_games_list_exposes_bios_metadata(logged_in_games):
         "optional": False,
     }
     assert games[nes["id"]]["bios"] is None
+    psx = _create_game(
+        logged_in_games,
+        "PS1 游戏",
+        "c.chd",
+        b"psx-body",
+        game_type="psx",
+    ).json()["data"]
+    games = {
+        item["id"]: item
+        for item in logged_in_games.get("/api/games").json()["data"]
+    }
+    assert games[psx["id"]]["bios"] == {
+        "file": "psx.zip",
+        "required_files": ["scph5500.bin", "scph5501.bin", "scph5502.bin"],
+        "optional": False,
+    }
 
 
 def test_sanitize_game_name_for_import():

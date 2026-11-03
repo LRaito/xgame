@@ -1794,6 +1794,12 @@ async function launchEngine() {
             // 显示比例：宿主页据此设内核选项（只有 FC 认这个参数），与标题栏窗口选择器里选的那列一致
             ratio: aspectMode.value,
         });
+        // ROM 文件名：宿主页拼成 /api/games/{id}/play/<文件名>，EmulatorJS 用末段当 ROM
+        // 文件名（`.pbp` 等核依赖后缀），所以必须传真实落盘名 game.<ext>。
+        const romFile = String(item.game_path || "").split("/").pop();
+        if (romFile) {
+            params.set("file", romFile);
+        }
         // BIOS：列表条目自带（不依赖 /status 是否加载成功），类型元数据兜底。
         // 宿主页只接受 bios/ 下的安全 zip 文件名，自己拼路径。
         const bios = item.bios || meta.value?.bios || null;

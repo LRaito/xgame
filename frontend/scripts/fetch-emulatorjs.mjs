@@ -4,7 +4,7 @@
  *
  * 与 scripts/copy-ruffle.mjs 的分工一致，但 EmulatorJS 没有官方 npm 包、官方 release
  * 是 303MB 的全量 .7z，因此这里只从官方 CDN（与 release 同源同版本）按需拉取最小集：
- *  loader + 引擎（emulator.min.js/.css）+ 本项目 23 个唯一 core（覆盖 24 个可玩机种，wasm.data + report）。
+ *  loader + 引擎（emulator.min.js/.css）+ 本项目 30 个唯一 core（覆盖 29 个可玩机种，wasm.data + report）。
  *
  * core 文件命名规则（EmulatorJS 4.2.3 引擎逻辑）：
  *   cores/<core>[-thread][-legacy]-wasm.data
@@ -41,7 +41,7 @@ const DONE_MARKER = ".emulatorjs.done";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const destRoot = join(root, "public/emulatorjs", "data");
 
-// data/ 目录下相对路径清单（顶层引擎文件 + 23 个唯一 core，覆盖 24 个可玩机种）
+// data/ 目录下相对路径清单（顶层引擎文件 + 30 个唯一 core，覆盖 29 个可玩机种）
 const FILES = [
     "loader.js",
     "emulator.min.js",
@@ -114,6 +114,30 @@ const FILES = [
     "cores/gearcoleco-wasm.data",
     "cores/gearcoleco-legacy-wasm.data",
     "cores/reports/gearcoleco.json",
+    // 第 3 档机种：N64 / 土星 / PS1 / PC-FX / 3DO
+    // N64 打包两个核：iOS Safari 会反转列表后默认选 parallel_n64。
+    "cores/mupen64plus_next-wasm.data",
+    "cores/mupen64plus_next-legacy-wasm.data",
+    "cores/reports/mupen64plus_next.json",
+    "cores/parallel_n64-wasm.data",
+    "cores/parallel_n64-legacy-wasm.data",
+    "cores/reports/parallel_n64.json",
+    "cores/yabause-wasm.data",
+    "cores/yabause-legacy-wasm.data",
+    "cores/reports/yabause.json",
+    // PS1 两个核都打包，设置菜单里切换时不会 404
+    "cores/pcsx_rearmed-wasm.data",
+    "cores/pcsx_rearmed-legacy-wasm.data",
+    "cores/reports/pcsx_rearmed.json",
+    "cores/mednafen_psx_hw-wasm.data",
+    "cores/mednafen_psx_hw-legacy-wasm.data",
+    "cores/reports/mednafen_psx_hw.json",
+    "cores/mednafen_pcfx-wasm.data",
+    "cores/mednafen_pcfx-legacy-wasm.data",
+    "cores/reports/mednafen_pcfx.json",
+    "cores/opera-wasm.data",
+    "cores/opera-legacy-wasm.data",
+    "cores/reports/opera.json",
     // Commodore 五个：VICE 各机种核（c64/c128/pet/plus4/vic20）
     "cores/vice_x64sc-wasm.data",
     "cores/vice_x64sc-legacy-wasm.data",
