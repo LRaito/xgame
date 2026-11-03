@@ -166,7 +166,7 @@ def test_detect_game_type_by_extension():
     )
     assert resolve_game_type(".d64", "c128") == "c128"
     assert resolve_game_type(".prg", "vic20") == "vic20"
-    # 第 3/4/5 档 CD 镜像跨机种：.chd 五候选、.iso 三候选，不带选择时有歧义
+    # CD 镜像跨机种：.chd 五候选、.iso 三候选，不带选择时有歧义
     with pytest.raises(Exception):
         detect_game_type("demo.chd")
     with pytest.raises(Exception):
@@ -1821,7 +1821,7 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
     assert types["3do"]["bios"]["required_files"] == ["panafz1.bin"]
     assert types["nes"]["bios"] is None
     assert types["flash"]["kind"] == "flash"
-    # 第 4 档：多文件本体的字段从词表派生
+    # 多文件本体的字段从词表派生
     assert types["segaCD"]["multi_file"] is True
     assert types["segaCD"]["extensions"] == [".chd"]
     assert types["segaCD"]["bundle_extensions"] == [".cue", ".bin", ".m3u", ".chd"]
@@ -1831,7 +1831,7 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
     assert types["amiga"]["extensions"] == [".adf", ".hdf"]
     assert types["amiga"]["bundle_extensions"] == [".adf", ".hdf", ".m3u"]
     assert types["amiga"]["bundle_entries"] == [".m3u", ".adf", ".hdf"]
-    # 第 5 档：线程核与 ZIP 三义
+    # 线程核与 ZIP 三义
     assert types["psp"]["extensions"] == [".cso", ".iso"]
     assert types["psp"]["threads"] is True
     assert types["psp"]["bios"] is None

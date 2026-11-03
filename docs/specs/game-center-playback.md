@@ -129,7 +129,7 @@
 - 面板里括号中的尺寸是真实窗口像素尺寸，不是帧缓冲像素数。
 - 基准分辨率为：NES 256×224、SNES 256×224、GB/GBC 160×144、GBA 240×160。
 - 基准还含：NDS 默认 256×438、MD 320×224、GG 160×144、SMS 256×192。
-- 第 5 档初始值：PSP 480×272、DOS 640×400、街机 320×240；仍以引擎上报的
+- PSP 480×272、DOS 640×400、街机 320×240 按各核初始 geometry 填写；仍以引擎上报的
   `videoInfo.aspect` 为准。
 - NDS 的 `NDS_NATIVE` 另给 `top` 256×192、`side` 563×192（左右间隙由宿主页合成）。
 - **舞台长宽比取引擎上报的显示宽高比**，即 `__ejsRpc.videoInfo().aspect`。
@@ -151,8 +151,7 @@
 - **复古滤镜。** 选择器是 `frontend/src/components/games/EmuFilterSelect.vue`，清单在 `frontend/src/constants/emuFilters.js`。
 - 清单按游戏类型给出，每个滤镜 = 内核选项键值对 + EmulatorJS 内置 GLSL 着色器键名。
 - 着色器对所有内核通用；内核选项按各内核自身能力配置。
-- 当前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、SMS 七个机种；NDS 与第 1–5 档新增的
-  26 个机种暂未配清单，所以不显示入口。
+- 当前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、SMS 七个机种；NDS 与其余 26 个机种暂未配清单，所以不显示入口。
 - 每张清单第一项恒为「无」，也是表外取值的回落目标。
 - 选择按游戏类型记在 localStorage 的 `games.emu.filter`，整张表存一个 JSON。
 - 拉起引擎前先清掉设置块里滤镜相关的旧值，再写入本次选择。

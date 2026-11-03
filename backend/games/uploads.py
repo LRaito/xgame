@@ -7,7 +7,7 @@
 多文件本体（cue+bin / m3u / 多盘）的每个物理文件各开一个这样的会话，创建/换本体时
 用 `claim_many()` 一次取全，再由 `body_bundle` 校验成组；本节不引入打包格式。
 
-第 5 档的 DOS（`.jsdos` / `.zip`）与街机（romset `.zip`）仍是单文件会话：
+DOS（`.jsdos` / `.zip`）与街机（romset `.zip`）仍是单文件会话：
 DOS 由引擎解包，街机由 FBNeo 直接读 zip；`uploads.create()` 只按所选类型放行
 `.zip`，不在这里做内容校验。
 

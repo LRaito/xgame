@@ -1,4 +1,4 @@
-"""第 4 档多文件本体：cue+bin、m3u 多碟、多 adf 的完整入库与播放链路。"""
+"""多文件本体：cue+bin、m3u 多碟、多 adf 的完整入库与播放链路。"""
 
 import json
 import zlib

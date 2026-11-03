@@ -51,8 +51,6 @@ _EJS_BUNDLE = (
 _FRONTEND_GAME_TYPES = (
     Path(__file__).resolve().parents[1] / "frontend/src/constants/gameTypes.js"
 )
-# 待接机种清单：里面的 key / core 必须都能在 EJS 的 getCores() 里找到。
-_TODO_PATH = Path(__file__).resolve().parents[1] / "docs/specs/todo.md"
 
 # 外部名录里对不上任何 EmulatorJS 机种的写法：这些机种引擎不认，只能保留原文展示。
 # 词表给它们补上别名之后，要从这里删掉（`test_unmatched_*` 会拦住「加了别名却忘了删」）。
@@ -88,27 +86,6 @@ def _emulatorjs_systems() -> set[str]:
     return set(_emulatorjs_cores())
 
 
-def _todo_platform_rows() -> list[tuple[str, tuple[str, ...]]]:
-    """解析 todo.md「机种清单」表里的 key / core。"""
-    text = _TODO_PATH.read_text(encoding="utf-8")
-    marker = "## 机种清单"
-    assert marker in text, "todo.md 缺少「机种清单」小节"
-    section = text.split(marker, 1)[1].split("\n## ", 1)[0]
-    rows: list[tuple[str, tuple[str, ...]]] = []
-    for line in section.splitlines():
-        if not line.startswith("|") or "`" not in line:
-            continue
-        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
-        key_cell = next(
-            (cell for cell in cells if re.search(r"`[^`]+`\s*/", cell)), None
-        )
-        if key_cell is None:
-            continue
-        specs = re.findall(r"`([^`]+)`", key_cell)
-        rows.append((specs[0], tuple(specs[1:])))
-    return rows
-
-
 def _frontend_game_types_source() -> str:
     return _FRONTEND_GAME_TYPES.read_text(encoding="utf-8")
 
@@ -133,31 +110,6 @@ def test_platform_cores_match_emulatorjs_systems():
     for platform in PLATFORMS:
         missing = set(platform.cores) - systems[platform.id]
         assert not missing, f"{platform.id} 声明了 EJS 不支持的 core：{sorted(missing)}"
-
-
-def test_todo_only_lists_emulatorjs_supported_platforms():
-    """待接清单只能列 EJS 4.2.3 支持的机种与 core。"""
-    if not _EJS_BUNDLE.is_file():  # pragma: no cover
-        pytest.skip("还没有拉取 EmulatorJS 资产（npm run dev / make all 时会拉）")
-    systems = _emulatorjs_cores()
-    rows = _todo_platform_rows()
-    # 全部机种接入后待接清单为空，这是正常状态，不是解析失败
-    if not rows:
-        return
-    for key, cores in rows:
-        assert key in systems, f"todo.md 列了 EJS 不支持的机种：{key}"
-        assert cores, f"todo.md 的 {key} 没写 core"
-        missing = set(cores) - systems[key]
-        assert not missing, f"todo.md 的 {key} 列了 EJS 不支持的 core：{sorted(missing)}"
-
-
-def test_todo_covers_the_remaining_platforms():
-    """清单应与词表里「还没可玩、也不是兜底 key」的机种完全一致。"""
-    rows = _todo_platform_rows()
-    remaining = {
-        platform.id for platform in PLATFORMS if not platform.extensions
-    } - {"sega", "mame"}
-    assert {key for key, _ in rows} == remaining
 
 
 def test_platform_ids_are_unique():
@@ -295,8 +247,8 @@ def test_bundle_extensions_resolve_to_platforms():
     assert [p.id for p in playable_platforms_for_extension(".hdf")] == ["amiga"]
 
 
-def test_new_platform_extensions_resolve_uniquely():
-    """第 2 档三台机种后缀各自唯一，不会与现有词表重叠。"""
+def test_atari5200_lynx_coleco_extensions_resolve():
+    """Atari 5200 / Lynx / ColecoVision 的后缀各自唯一，不与现有词表重叠。"""
     assert [p.id for p in playable_platforms_for_extension(".a52")] == ["atari5200"]
     assert [p.id for p in playable_platforms_for_extension(".lnx")] == ["lynx"]
     assert [p.id for p in playable_platforms_for_extension(".col")] == ["coleco"]
@@ -305,8 +257,8 @@ def test_new_platform_extensions_resolve_uniquely():
     assert default_playable_platform_for_extension(".col").id == "coleco"
 
 
-def test_tier3_platform_extensions_resolve():
-    """第 3 档：N64 三个后缀各自唯一；CD 镜像按候选集消歧，默认项可被覆盖。"""
+def test_n64_and_cd_image_extensions_resolve():
+    """N64 三个后缀各自唯一；CD 镜像按候选集消歧，默认项可被覆盖。"""
     for extension in (".z64", ".n64", ".v64"):
         assert [p.id for p in playable_platforms_for_extension(extension)] == ["n64"]
     assert default_playable_platform_for_extension(".z64").id == "n64"
@@ -336,8 +288,8 @@ def test_tier3_platform_extensions_resolve():
     assert playable_platforms_for_extension(".bin") == ()
 
 
-def test_tier5_platform_extensions_resolve():
-    """第 5 档：PSP 的 .cso 唯一，DOS 的 .jsdos 唯一，.zip 由 DOS / 街机共用。"""
+def test_psp_dos_arcade_extensions_resolve():
+    """PSP 的 .cso 唯一，DOS 的 .jsdos 唯一，.zip 由 DOS / 街机共用。"""
     assert [p.id for p in playable_platforms_for_extension(".cso")] == ["psp"]
     assert [p.id for p in playable_platforms_for_extension(".jsdos")] == ["dos"]
     assert [p.id for p in playable_platforms_for_extension(".zip")] == [

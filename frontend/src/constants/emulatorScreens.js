@@ -41,13 +41,13 @@ export const EMU_NATIVE = {
     pet: { width: 320, height: 200 },
     plus4: { width: 320, height: 200 },
     vic20: { width: 384, height: 272 },
-    // 第 3 档：初值来自各 core 源码的初始 geometry；运行时可能随游戏/内核选项变化
+    // N64 / 土星 / PS1 / PC-FX / 3DO：初值来自各 core 源码的初始 geometry，运行时可能随游戏/内核选项变化
     n64: { width: 640, height: 480 },
     segaSaturn: { width: 320, height: 240 },
     psx: { width: 320, height: 240 },
     pcfx: { width: 288, height: 240 },
     "3do": { width: 320, height: 240 },
-    // 第 4 档：世嘉 CD 与 MD 同核；Amiga 先按 PAL 常见值，运行时以 videoInfo.aspect 校准
+    // 世嘉 CD 与 MD 同核；Amiga 先按 PAL 常见值，运行时以 videoInfo.aspect 校准
     segaCD: { width: 320, height: 224 },
     amiga: { width: 320, height: 256 },
     psp: { width: 480, height: 272 },
@@ -87,9 +87,9 @@ export const NDS_SCREEN_MODES = ["dual", "top", "side"];
  * NDS 固定按 dual 的 256:438 展示：在 top / side 模式截的图尺寸不同，会在框内
  * 以 object-fit: contain 居中显示（不变形、留黑边），这是已知限制。
  *
- * 第 1、2 档新增的机种填的是常见帧缓冲值（Atari 5200 320×224、Lynx 160×102、
- * ColecoVision 256×192 来自各自核心源码）；第 3 档的 N64 640×480、土星/PS1/3DO
- * 320×240、PC-FX 288×240 取 core 源码的初始 geometry。个别游戏的输出高度会随区域
+ * Atari 5200 320×224、Lynx 160×102、ColecoVision 256×192 等填的是常见帧缓冲值，
+ * 来自各自核心源码；N64 640×480、土星/PS1/3DO 320×240、PC-FX 288×240 取 core
+ * 源码的初始 geometry。个别游戏的输出高度会随区域
  * 或内核选项变化，以引擎上报的 videoInfo 为准，截图框比例如有偏差按实测图校准这里。
  */
 export function screenshotAspect(gameType) {

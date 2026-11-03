@@ -200,7 +200,7 @@ PLATFORMS: tuple[Platform, ...] = (
         label="世嘉 土星",
         cores=("yabause",),
         aliases=("世嘉土星", "世嘉土星SS", "SS", "Saturn"),
-        # 只收单文件 CHD；cue+bin 与 ISO 归后续多文件档
+        # 只收单文件 CHD；cue+bin 不支持
         extensions=(".chd",),
         default_extension=".chd",
         # yabause 有 HLE 回退，但兼容性差；按必需处理，缺包时给中文提示
@@ -222,7 +222,7 @@ PLATFORMS: tuple[Platform, ...] = (
         label="索尼 PS1",
         cores=("pcsx_rearmed", "mednafen_psx_hw"),
         aliases=("索尼PS1", "PS1", "PSX", "PlayStation"),
-        # 单文件镜像；cue+bin 归后续多文件档
+        # 单文件镜像；cue+bin 不支持
         extensions=(".chd", ".pbp", ".iso"),
         default_extension=".chd",
         # 三个区版 BIOS 放同一个 ZIP；.iso 只保留数据轨，CD 音轨会丢
@@ -355,7 +355,7 @@ PLATFORMS: tuple[Platform, ...] = (
         label="松下 3DO",
         cores=("opera",),
         aliases=("松下3DO游戏", "3DO"),
-        # opera 接受 iso / chd；cue+bin 归后续多文件档
+        # opera 接受 iso / chd；cue+bin 不支持
         extensions=(".iso", ".chd"),
         default_extension=".iso",
         # EJS 文档列出多种 3DO BIOS；panafz1 是最常见的 FZ-1 版
