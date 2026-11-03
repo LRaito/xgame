@@ -7,6 +7,7 @@
 - 机种名称与先后都取词表顺序，接入后就是游戏类型下拉的展示顺序。
 - 下拉顺序 = `/status.game_types` = `flash`、`h5` + 词表里的可玩机种。
 - 引擎基线固定 EmulatorJS **4.2.3**，system key 与 core 取自其 `getCores()`。
+- 下表只列 EmulatorJS 支持的机种；key / core 与 `getCores()` 一致，由 `tests/test_platforms.py` 钉住。
 - 词表当前共 36 个机种，已可玩 24 个，剩余 12 个。
 - 剩余 12 个中 `sega` / `mame` 是引擎兜底 key，不单独接，真正可新增 **10 个**。
 - 第 1 档 13 个已全部接入，包括 Commodore 五个：
@@ -32,24 +33,25 @@
 已可玩的 24 个不在下表重复列出。下表是剩余 10 个待接机种，按其在词表中的先后排列，
 接入后在下拉里的相对位置与此一致。
 
-| # | 机种 | key / core | 扩展名 | 档 | 说明 |
-|---|---|---|---|---|---|
-| 1 | 任天堂 N64 | `n64` / `mupen64plus_next` | `.z64` `.n64` `.v64` | 3 | 无 BIOS；核约 1.45 MB |
-| 3 | 世嘉 CD | `segaCD` / `genesis_plus_gx` | cue+bin / `.chd` | 4 | BIOS `bios_CD_E/U/J.bin` |
-| 5 | 世嘉 土星 | `segaSaturn` / `yabause` | `.chd` | 3 | BIOS `saturn_bios.bin` |
-| 6 | 索尼 PS1 | `psx` / `pcsx_rearmed` | `.chd` `.pbp` `.iso` | 3 | BIOS `scph5500/5501/5502.bin` |
-| 7 | 索尼 PSP | `psp` / `ppsspp` | `.iso` `.cso` | 5 | 强制线程 + WebGL2 |
-| 9 | 日电 PC-FX | `pcfx` / `mednafen_pcfx` | `.chd` | 3 | BIOS `pcfx.rom` |
-| 18 | 松下 3DO | `3do` / `opera` | `.iso` `.chd` | 3 | BIOS `panafz1.bin` 等 |
-| 24 | Amiga | `amiga` / `puae` | adf/hdf 多盘或 zip | 4 | Kickstart 必需 |
-| 25 | DOS | `dos` / `dosbox_pure` | jsdos zip | 5 | 强制线程；键鼠 |
-| 26 | 街机 | `arcade` / `fbneo`、`mame` | romset zip | 5 | 数据治理最重 |
+| 机种 | key / core | 扩展名 | 档 | 说明 |
+|---|---|---|---|---|
+| 任天堂 N64 | `n64` / `mupen64plus_next` | `.z64` `.n64` `.v64` | 3 | 无 BIOS；核约 1.45 MB |
+| 世嘉 CD | `segaCD` / `genesis_plus_gx` | cue+bin / `.chd` | 4 | BIOS `bios_CD_E/U/J.bin` |
+| 世嘉 土星 | `segaSaturn` / `yabause` | `.chd` | 3 | BIOS `saturn_bios.bin` |
+| 索尼 PS1 | `psx` / `pcsx_rearmed` | `.chd` `.pbp` `.iso` | 3 | BIOS `scph5500/5501/5502.bin` |
+| 索尼 PSP | `psp` / `ppsspp` | `.iso` `.cso` | 5 | 强制线程 + WebGL2 |
+| 日电 PC-FX | `pcfx` / `mednafen_pcfx` | `.chd` | 3 | BIOS `pcfx.rom` |
+| 松下 3DO | `3do` / `opera` | `.iso` `.chd` | 3 | BIOS `panafz1.bin` 等 |
+| Amiga | `amiga` / `puae` | adf/hdf 多盘或 zip | 4 | Kickstart 必需 |
+| DOS | `dos` / `dosbox_pure` | jsdos zip | 5 | 强制线程；键鼠 |
+| 街机 | `arcade` / `fbneo` | romset zip | 5 | `mame` 是独立兜底 key，不单独接；数据治理最重 |
 
 ## 各档说明
 
 ### 第 1 档：纯配表（已全部接入）
 
-对应 `#`：2、4、8、10、11、12、14、15、19、20、21、22、23，均已接入。
+13 个均已接入：`vb`、`sega32x`、`pce`、`ngp`、`ws`、`atari2600`、`atari7800`、
+`jaguar`、`c64`、`c128`、`pet`、`plus4`、`vic20`。
 
 单文件 ROM、无必须 BIOS、非线程核。加机种要同步：
 
@@ -65,7 +67,7 @@
 
 ### 第 2 档：需要 BIOS 机制（已全部接入）
 
-对应 `#`：13、16、17，均已接入。
+`atari5200`、`lynx`、`coleco`，均已接入。
 
 仍是单文件 ROM，但核启动缺 BIOS 会黑屏。已完成一次通用化：
 
@@ -79,7 +81,7 @@
 
 ### 第 3 档：单文件但重
 
-对应 `#`：1、5、6、9、18。
+对应：`n64`、`segaSaturn`、`psx`、`pcfx`、`3do`。
 
 建议只收单文件镜像，cue+bin 归到第 4 档。
 
@@ -89,7 +91,7 @@
 
 ### 第 4 档：多文件 / 多碟
 
-对应 `#`：3、24。
+对应：`segaCD`、`amiga`。
 
 当前上传只收单文件，播放只服务 `game.{后缀}` 一个文件。
 
@@ -105,7 +107,7 @@
 
 ### 第 5 档：需要改运行环境或数据模型
 
-对应 `#`：7、25、26。
+对应：`psp`、`dos`、`arcade`。
 
 - 宿主页现在固定 `EJS_threads=false`。
 - PSP 与 DOS 要开线程，同时补齐 COOP/COEP，`SharedArrayBuffer` 才可用。
@@ -113,7 +115,7 @@
 - PSP 核只有线程变体，约 4.5 MB；ISO/CSO 容易撞 512 MB 上传上限。
 - DOS 核也只有线程变体，游戏要打成 jsdos ZIP。
 - 街机不需要线程，但 romset 与 FBNeo/MAME 版本绑定，数据治理最重。
-- 街机核体积：FBNeo 约 8.3 MB，MAME 2003 约 5.4 MB。
+- 街机核体积：FBNeo 约 8.3 MB，MAME 2003 Plus 约 5.4 MB。
 
 ## 共性注意事项
 
@@ -130,8 +132,8 @@
 
 1. ~~先做 `vb`、`ngp`、`ws`、`pce`、`atari2600`，验证「加机种」链路。~~ 已接入。
 2. ~~再做 BIOS 通用化，接 `atari5200`、`lynx`、`coleco`。~~ 已完成。
-3. 接 `n64`，跑通第一个重核机种。
-4. ~~第 1 档 13 个全部接入，含 Commodore 与类型选择/修改机制。~~ 已完成。
+3. ~~第 1 档 13 个全部接入，含 Commodore 与类型选择/修改机制。~~ 已完成。
+4. 接 `n64`，跑通第一个重核机种。
 5. 最后才做多文件、PSP、DOS、街机。
 
 ## 测试要点
@@ -141,7 +143,9 @@
 - 重核档：确认帧率与截图比例，低配设备要有可接受的降级表现。
 - 多文件档：多盘切换、存档、删除时不残留临时文件。
 - 线程档：确认响应头带 COOP/COEP，且现有 24 个机种不受影响。
-- 每档都要更新 `tests/test_platforms.py` 的显示名镜像断言。
+- 每档都要更新 `tests/test_platforms.py` 的词表不变量（显示名格式、扩展名、BIOS 规格）
+  与 EJS `getCores()` 一致性断言。
+- 待接清单本身也由测试校验：只允许列 EJS 支持的 key / core，且覆盖全部剩余机种。
 
 ## 相关文档
 

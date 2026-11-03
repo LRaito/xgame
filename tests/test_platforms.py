@@ -45,6 +45,8 @@ _EJS_BUNDLE = (
 _FRONTEND_GAME_TYPES = (
     Path(__file__).resolve().parents[1] / "frontend/src/constants/gameTypes.js"
 )
+# 待接机种清单：里面的 key / core 必须都能在 EJS 的 getCores() 里找到。
+_TODO_PATH = Path(__file__).resolve().parents[1] / "docs/specs/todo.md"
 
 # 外部名录里对不上任何 EmulatorJS 机种的写法：这些机种引擎不认，只能保留原文展示。
 # 词表给它们补上别名之后，要从这里删掉（`test_unmatched_*` 会拦住「加了别名却忘了删」）。
@@ -62,13 +64,43 @@ _UNMATCHED_SEARCH_CONSOLES = {
 _UNMATCHED_RANKING_CONSOLES = {"3DS", "CD-I"}
 
 
-def _emulatorjs_systems() -> set[str]:
-    """从 EJS 引擎里抠出 system 表（`getCores()` 返回的那个对象的键）。"""
+def _emulatorjs_cores() -> dict[str, set[str]]:
+    """从 EJS 引擎里抠出 system → core 集合（`getCores()` 返回的那个对象）。"""
     source = _EJS_BUNDLE.read_text(encoding="utf-8", errors="replace")
     match = re.search(r"getCores\(\)\{let \w+=\{([^}]*)\}", source)
     if match is None:  # pragma: no cover - 引擎换了写法才会走到
         pytest.fail(f"没能在 {_EJS_BUNDLE} 里找到 getCores() 的机种表")
-    return set(re.findall(r'"?([A-Za-z0-9_]+)"?\s*:\s*\[', match.group(1)))
+    pairs = re.findall(r'"?([A-Za-z0-9_]+)"?\s*:\s*\[([^\]]*)\]', match.group(1))
+    return {
+        key: set(re.findall(r'"([^"]+)"', cores))
+        for key, cores in pairs
+    }
+
+
+def _emulatorjs_systems() -> set[str]:
+    """从 EJS 引擎里抠出 system 表（`getCores()` 返回的那个对象的键）。"""
+    return set(_emulatorjs_cores())
+
+
+def _todo_platform_rows() -> list[tuple[str, tuple[str, ...]]]:
+    """解析 todo.md「机种清单」表里的 key / core。"""
+    text = _TODO_PATH.read_text(encoding="utf-8")
+    marker = "## 机种清单"
+    assert marker in text, "todo.md 缺少「机种清单」小节"
+    section = text.split(marker, 1)[1].split("\n## ", 1)[0]
+    rows: list[tuple[str, tuple[str, ...]]] = []
+    for line in section.splitlines():
+        if not line.startswith("|") or "`" not in line:
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        key_cell = next(
+            (cell for cell in cells if re.search(r"`[^`]+`\s*/", cell)), None
+        )
+        if key_cell is None:
+            continue
+        specs = re.findall(r"`([^`]+)`", key_cell)
+        rows.append((specs[0], tuple(specs[1:])))
+    return rows
 
 
 def _frontend_game_types_source() -> str:
@@ -85,6 +117,39 @@ def test_platforms_match_emulatorjs_systems():
     if not _EJS_BUNDLE.is_file():  # pragma: no cover - 没跑过 fetch-emulatorjs 的机器
         pytest.skip("还没有拉取 EmulatorJS 资产（npm run dev / make all 时会拉）")
     assert {platform.id for platform in PLATFORMS} == _emulatorjs_systems()
+
+
+def test_platform_cores_match_emulatorjs_systems():
+    """词表声明的 core 必须是 EJS 该 system 真实支持的 core。"""
+    if not _EJS_BUNDLE.is_file():  # pragma: no cover
+        pytest.skip("还没有拉取 EmulatorJS 资产（npm run dev / make all 时会拉）")
+    systems = _emulatorjs_cores()
+    for platform in PLATFORMS:
+        missing = set(platform.cores) - systems[platform.id]
+        assert not missing, f"{platform.id} 声明了 EJS 不支持的 core：{sorted(missing)}"
+
+
+def test_todo_only_lists_emulatorjs_supported_platforms():
+    """待接清单只能列 EJS 4.2.3 支持的机种与 core。"""
+    if not _EJS_BUNDLE.is_file():  # pragma: no cover
+        pytest.skip("还没有拉取 EmulatorJS 资产（npm run dev / make all 时会拉）")
+    systems = _emulatorjs_cores()
+    rows = _todo_platform_rows()
+    assert rows, "没从 todo.md 的机种清单里解析到任何条目"
+    for key, cores in rows:
+        assert key in systems, f"todo.md 列了 EJS 不支持的机种：{key}"
+        assert cores, f"todo.md 的 {key} 没写 core"
+        missing = set(cores) - systems[key]
+        assert not missing, f"todo.md 的 {key} 列了 EJS 不支持的 core：{sorted(missing)}"
+
+
+def test_todo_covers_the_remaining_platforms():
+    """清单应与词表里「还没可玩、也不是兜底 key」的机种完全一致。"""
+    rows = _todo_platform_rows()
+    remaining = {
+        platform.id for platform in PLATFORMS if not platform.extensions
+    } - {"sega", "mame"}
+    assert {key for key, _ in rows} == remaining
 
 
 def test_platform_ids_are_unique():
