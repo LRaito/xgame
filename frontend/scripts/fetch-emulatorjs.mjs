@@ -4,7 +4,7 @@
  *
  * 与 scripts/copy-ruffle.mjs 的分工一致，但 EmulatorJS 没有官方 npm 包、官方 release
  * 是 303MB 的全量 .7z，因此这里只从官方 CDN（与 release 同源同版本）按需拉取最小集：
- *  loader + 引擎（emulator.min.js/.css）+ 本项目 20 个平台/机种 core（wasm.data + report）。
+ *  loader + 引擎（emulator.min.js/.css）+ 本项目 23 个唯一 core（覆盖 24 个可玩机种，wasm.data + report）。
  *
  * core 文件命名规则（EmulatorJS 4.2.3 引擎逻辑）：
  *   cores/<core>[-thread][-legacy]-wasm.data
@@ -41,7 +41,7 @@ const DONE_MARKER = ".emulatorjs.done";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const destRoot = join(root, "public/emulatorjs", "data");
 
-// data/ 目录下相对路径清单（顶层引擎文件 + 20 个平台/机种 core）
+// data/ 目录下相对路径清单（顶层引擎文件 + 23 个唯一 core，覆盖 24 个可玩机种）
 const FILES = [
     "loader.js",
     "emulator.min.js",
@@ -104,6 +104,16 @@ const FILES = [
     "cores/virtualjaguar-wasm.data",
     "cores/virtualjaguar-legacy-wasm.data",
     "cores/reports/virtualjaguar.json",
+    // 第 2 档机种：Atari 5200 / Lynx / ColecoVision
+    "cores/a5200-wasm.data",
+    "cores/a5200-legacy-wasm.data",
+    "cores/reports/a5200.json",
+    "cores/handy-wasm.data",
+    "cores/handy-legacy-wasm.data",
+    "cores/reports/handy.json",
+    "cores/gearcoleco-wasm.data",
+    "cores/gearcoleco-legacy-wasm.data",
+    "cores/reports/gearcoleco.json",
     // Commodore 五个：VICE 各机种核（c64/c128/pet/plus4/vic20）
     "cores/vice_x64sc-wasm.data",
     "cores/vice_x64sc-legacy-wasm.data",

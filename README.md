@@ -136,11 +136,19 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 ## 玩游戏
 
 三种游戏都是点开即玩、不装插件：**Flash**（`.swf`）、**HTML5**（`.zip`，浏览器里当网页游戏跑）、
-**主机**（NES / SNES / GB / GBC / GBA / NDS / MD / GG / SMS，浏览器里跑模拟器，不需要外网）。
+**主机**（NES / SNES / GB / GBA / NDS / MD / Atari / Commodore 等，浏览器里跑模拟器，不需要外网）。
 
-> **NDS 额外需要 BIOS。** 把 `bios7.bin`、`bios9.bin`、`firmware.bin` 打包成 `nds.zip`，放到
-> `frontend/public/emulatorjs/bios/nds.zip` 后重建 web 镜像（Windows 包放到 `web/emulatorjs/bios/nds.zip`）。
-> 它是用户自备文件、不随仓库提交；缺失时播放页会直接给出中文提示。
+> **部分机种额外需要 BIOS。** 用户自备 ZIP 放到 `frontend/public/emulatorjs/bios/` 后重建 web 镜像
+> （Windows 包放到 `web/emulatorjs/bios/`），不随仓库提交；缺失时播放页会直接给出中文提示。
+>
+> | 机种 | ZIP | 包内文件 | 必需性 |
+> |---|---|---|---|
+> | 任天堂 NDS | `nds.zip` | `bios7.bin`、`bios9.bin`、`firmware.bin` | 必需 |
+> | 雅达利 5200 | `atari5200.zip` | `5200.rom` | 可选（缺包回退内置 AltirraOS） |
+> | 雅达利 Lynx | `lynx.zip` | `lynxboot.img` | 必需 |
+> | ColecoVision | `coleco.zip` | `colecovision.rom` | 必需 |
+>
+> ZIP 根目录直接放上面这些文件，不要套子目录。
 
 ### 播放页
 

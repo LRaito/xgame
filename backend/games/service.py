@@ -37,7 +37,11 @@ from backend.games.models import (
     GameUserStat,
     cover_types_for,
 )
-from backend.games.platforms import all_body_extensions, playable_platforms
+from backend.games.platforms import (
+    PLATFORM_BY_ID,
+    all_body_extensions,
+    playable_platforms,
+)
 from backend.games.runtime_assets import RuntimeAssets
 from backend.storage.types import StorageBackend
 
@@ -51,7 +55,7 @@ GAME_TYPE_H5 = "h5"
 #
 # **机种那部分从 `backend/games/platforms.py` 的机种词表派生**（id 就是 EJS 的 system key，
 # 也就是 game_type 的值），所以「哪些机种能上传」只需要改那张表——但 `extensions` 非空的
-# 机种才会出现在这里：词表里还有 20 个 EJS 支持、本项目还没打包 core 的机种（n64/psx…），
+# 机种才会出现在这里：词表里还有 12 个 EJS 支持、本项目还没打包 core 的机种（n64/psx…），
 # 它们只用来给游戏发现的外部名录「对上号」，不开放上传。
 #
 # flash 与 h5 **不是机种**（是载体类型），所以不来自词表、写在这里，永远排在最前。
@@ -78,8 +82,7 @@ _DEFAULT_EXTENSIONS: dict[str, str] = {
 }
 
 # 各类型的显示名，只用于后端拼中文报错文案（与 COVER_TYPE_LABELS 同一用途）。
-# 前端展示层镜像在 `frontend/src/constants/gameTypes.js` 的 label 字段（可玩机种那 16 条），
-# 两边必须逐字一致，由 `tests/test_platforms.py` 钉住。
+# 前端展示层的 label 与扩展名由 `/api/games/status` 从词表派生，不在这里维护镜像。
 GAME_TYPE_LABELS: dict[str, str] = {
     GAME_TYPE_FLASH: "Flash",
     GAME_TYPE_H5: "HTML5",
@@ -241,6 +244,22 @@ def validate_game_type(raw: str) -> str:
     return value
 
 
+def bios_descriptor(game_type: str) -> dict | None:
+    """一个类型的 BIOS 元数据；没有 BIOS 需求返回 None。
+
+    `/status.types[]` 与游戏列表条目共用这一份，播放页不必依赖状态接口。
+    """
+    platform = PLATFORM_BY_ID.get(game_type or "")
+    spec = platform.bios if platform else None
+    if spec is None:
+        return None
+    return {
+        "file": spec.file,
+        "required_files": list(spec.required_files),
+        "optional": spec.optional,
+    }
+
+
 def game_type_descriptors() -> list[dict]:
     """`/status` 用的类型元数据，顺序与 `GAME_TYPES` 一致。
 
@@ -261,6 +280,7 @@ def game_type_descriptors() -> list[dict]:
                 "kind": kind,
                 "extensions": sorted(_GAME_TYPE_EXTENSIONS[game_type]),
                 "default_extension": _DEFAULT_EXTENSIONS[game_type],
+                "bios": bios_descriptor(game_type),
             }
         )
     return descriptors

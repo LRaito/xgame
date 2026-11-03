@@ -22,6 +22,7 @@ from backend.games.models import (
     GameGalleryImage,
     GameScreenshot,
 )
+from backend.games.platforms import playable_platforms
 from backend.games.service import (
     GAME_TYPES,
     GameItem,
@@ -137,6 +138,9 @@ def test_detect_game_type_by_extension():
     assert detect_game_type("demo.gbc") == "gb"
     assert detect_game_type("demo.gba") == "gba"
     assert detect_game_type("demo.nds") == "nds"
+    assert detect_game_type("demo.a52") == "atari5200"
+    assert detect_game_type("demo.lnx") == "lynx"
+    assert detect_game_type("demo.col") == "coleco"
     assert detect_game_type("demo.md") == "segaMD"
     assert detect_game_type("demo.gen") == "segaMD"
     assert detect_game_type("demo.gg") == "segaGG"
@@ -567,6 +571,9 @@ def test_manage_filter_combines_with_pagination(logged_in_games):
         ("gb", ".gbc"),
         ("gba", ".gba"),
         ("nds", ".nds"),
+        ("atari5200", ".a52"),
+        ("lynx", ".lnx"),
+        ("coleco", ".col"),
         ("segaMD", ".md"),
         ("segaMD", ".gen"),
         ("segaGG", ".gg"),
@@ -1625,6 +1632,13 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
     assert types["c64"]["label"] == "Commodore 64"
     assert types["c64"]["extensions"] == [".crt", ".d64", ".prg", ".tap"]
     assert types["c64"]["default_extension"] == ".d64"
+    assert types["atari5200"]["extensions"] == [".a52"]
+    assert types["lynx"]["extensions"] == [".lnx"]
+    assert types["coleco"]["extensions"] == [".col"]
+    assert types["atari5200"]["bios"]["optional"] is True
+    assert types["lynx"]["bios"]["required_files"] == ["lynxboot.img"]
+    assert types["coleco"]["bios"]["required_files"] == ["colecovision.rom"]
+    assert types["nes"]["bios"] is None
     assert types["flash"]["kind"] == "flash"
     assert status["extension_candidates"][".d64"] == [
         "c64",
@@ -1634,6 +1648,39 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
         "vic20",
     ]
     assert status["default_game_type_by_extension"][".d71"] == "c128"
+
+
+def test_status_bios_metadata_matches_registry(logged_in_games):
+    """/status 的 BIOS 元数据必须与词表逐项一致。"""
+    status = logged_in_games.get("/api/games/status").json()["data"]
+    types = {item["id"]: item for item in status["types"]}
+    for platform in playable_platforms():
+        expected = (
+            {
+                "file": platform.bios.file,
+                "required_files": list(platform.bios.required_files),
+                "optional": platform.bios.optional,
+            }
+            if platform.bios
+            else None
+        )
+        assert types[platform.id]["bios"] == expected, platform.id
+
+
+def test_games_list_exposes_bios_metadata(logged_in_games):
+    """BIOS 随游戏列表下发，播放页不依赖 /status 是否加载成功。"""
+    nds = _create_game(logged_in_games, "NDS 游戏", "a.nds", b"nds-body").json()["data"]
+    nes = _create_game(logged_in_games, "FC 游戏", "b.nes", b"nes-body").json()["data"]
+    games = {
+        item["id"]: item
+        for item in logged_in_games.get("/api/games").json()["data"]
+    }
+    assert games[nds["id"]]["bios"] == {
+        "file": "nds.zip",
+        "required_files": ["bios7.bin", "bios9.bin", "firmware.bin"],
+        "optional": False,
+    }
+    assert games[nes["id"]]["bios"] is None
 
 
 def test_sanitize_game_name_for_import():

@@ -35,6 +35,20 @@ function iconOf(id) {
     return "🎮";
 }
 
+/** 后端 BIOS 元数据 → 前端可用形状；没有 BIOS 需求时统一为 null。 */
+function normalizeBios(raw) {
+    if (!raw || typeof raw.file !== "string" || !raw.file) {
+        return null;
+    }
+    return {
+        file: raw.file,
+        required_files: Array.isArray(raw.required_files)
+            ? raw.required_files.filter((name) => typeof name === "string")
+            : [],
+        optional: raw.optional === true,
+    };
+}
+
 /** 后端 `types` 的一条 → 前端可直接消费的元数据（补 core / icon）。 */
 function decorateType(item) {
     const kind = item.kind || kindOf(item.id);
@@ -44,6 +58,7 @@ function decorateType(item) {
         core: kind === "emulator" ? item.id : null,
         label: item.label || item.id,
         extensions: Array.isArray(item.extensions) ? item.extensions : [],
+        bios: normalizeBios(item.bios),
         icon: iconOf(item.id),
     };
 }
@@ -58,6 +73,7 @@ function fallbackMeta(id) {
         core: kind === "emulator" ? id : null,
         extensions: [],
         default_extension: "",
+        bios: null,
         icon: iconOf(id),
     };
 }

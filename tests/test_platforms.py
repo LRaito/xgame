@@ -23,6 +23,7 @@ from backend.games.platforms import (
     PLATFORM_BY_ALIAS,
     PLATFORM_BY_ID,
     PLATFORMS,
+    BiosSpec,
     default_playable_platform_for_extension,
     normalize_name,
     platform_label,
@@ -116,6 +117,46 @@ def test_playable_platforms_declare_extensions_and_defaults():
     for platform in playable:
         assert platform.extensions, platform.id
         assert platform.default_extension in platform.extensions, platform.id
+
+
+def test_bios_specs_are_well_formed():
+    """BIOS 只在词表里声明一次，文件名与包内文件都必须是安全的 basename。"""
+    seen: set[str] = set()
+    for platform in PLATFORMS:
+        spec = platform.bios
+        if spec is None:
+            continue
+        assert platform.extensions, f"不可玩机种不该声明 BIOS：{platform.id}"
+        assert spec.file == f"{platform.id}.zip", platform.id
+        assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*\.zip", spec.file), spec.file
+        assert spec.required_files, platform.id
+        for name in spec.required_files:
+            assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", name), name
+        assert len(set(spec.required_files)) == len(spec.required_files), platform.id
+        assert spec.file not in seen, f"BIOS 包文件名重复：{spec.file}"
+        seen.add(spec.file)
+
+    assert PLATFORM_BY_ID["nds"].bios == BiosSpec(
+        "nds.zip", ("bios7.bin", "bios9.bin", "firmware.bin")
+    )
+    assert PLATFORM_BY_ID["atari5200"].bios == BiosSpec(
+        "atari5200.zip", ("5200.rom",), optional=True
+    )
+    assert PLATFORM_BY_ID["lynx"].bios == BiosSpec("lynx.zip", ("lynxboot.img",))
+    assert PLATFORM_BY_ID["coleco"].bios == BiosSpec(
+        "coleco.zip", ("colecovision.rom",)
+    )
+    assert PLATFORM_BY_ID["nes"].bios is None
+
+
+def test_new_platform_extensions_resolve_uniquely():
+    """第 2 档三台机种后缀各自唯一，不会与现有词表重叠。"""
+    assert [p.id for p in playable_platforms_for_extension(".a52")] == ["atari5200"]
+    assert [p.id for p in playable_platforms_for_extension(".lnx")] == ["lynx"]
+    assert [p.id for p in playable_platforms_for_extension(".col")] == ["coleco"]
+    assert default_playable_platform_for_extension(".a52").id == "atari5200"
+    assert default_playable_platform_for_extension(".lnx").id == "lynx"
+    assert default_playable_platform_for_extension(".col").id == "coleco"
 
 
 def test_extension_candidates_follow_registry_order():
@@ -325,7 +366,21 @@ def test_ranking_consoles_do_not_share_a_platform():
 def test_registry_is_serializable_to_json():
     """词表要能原样吐给别的消费方（现在是测试用，将来若加接口也是这个形状）。"""
     payload = [
-        {"id": p.id, "label": p.label, "cores": list(p.cores), "extensions": list(p.extensions)}
+        {
+            "id": p.id,
+            "label": p.label,
+            "cores": list(p.cores),
+            "extensions": list(p.extensions),
+            "bios": (
+                {
+                    "file": p.bios.file,
+                    "required_files": list(p.bios.required_files),
+                    "optional": p.bios.optional,
+                }
+                if p.bios
+                else None
+            ),
+        }
         for p in PLATFORMS
     ]
     assert len(json.loads(json.dumps(payload, ensure_ascii=False))) == len(PLATFORMS)

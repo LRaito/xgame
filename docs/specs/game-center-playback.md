@@ -23,10 +23,13 @@
 - 主机播放页外层是 SPA 壳，内嵌 `/emulator-host.html`，EmulatorJS 官方要求 iframe 隔离。
 - 引擎资产由 `frontend/scripts/fetch-emulatorjs.mjs` 在构建期拉到 `frontend/public/emulatorjs/`。
 - 引擎资产以固定版本随镜像发布，nginx 与 `static_site.py` 按 immutable 缓存，运行时不依赖外网。
-- NDS 使用 melonDS 核，BIOS 是用户自备的 `frontend/public/emulatorjs/bios/nds.zip`，不进 git。
-- BIOS 包根目录需含 `bios7.bin`、`bios9.bin`、`firmware.bin`。
+- 需要 BIOS 的机种在 `platforms.py` 的 `BiosSpec` 里声明，元数据随 `/status.types[].bios`
+  与游戏列表条目的 `bios` 下发。
+- BIOS 是用户自备 ZIP，放在 `frontend/public/emulatorjs/bios/<id>.zip`，不进 git。
+- 播放页把 `bios` / `biosfiles` / `biosoptional` 传给宿主页；宿主页只接受安全文件名，
+  自己拼 `/emulatorjs/bios/<file>`。
 - `emulatorjs/bios/` 前缀在 nginx 与 `static_site.py` 里单独 no-cache。
-- 宿主页启动前对 BIOS 做 HEAD 预检；缺失时给中文提示，不静默黑屏。
+- 宿主页启动前对 BIOS 做 HEAD 预检；必需包缺失时给中文提示，可选包缺失时跳过并继续启动。
 - H5 解包产物在运行时根的 `game/{类型}/{卡带ID}/h5/`，首次访问资源接口时按需生成。
 - 攻略解包产物在运行时根的 `game/{类型}/{卡带ID}/guide/`，首次访问攻略资源时按需生成。
 
@@ -113,8 +116,8 @@
 - **复古滤镜。** 选择器是 `frontend/src/components/games/EmuFilterSelect.vue`，清单在 `frontend/src/constants/emuFilters.js`。
 - 清单按游戏类型给出，每个滤镜 = 内核选项键值对 + EmulatorJS 内置 GLSL 着色器键名。
 - 着色器对所有内核通用；内核选项按各内核自身能力配置。
-- 当前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、SMS 七个机种；NDS 与第 1 档新增的
-  13 个机种暂未配清单，所以不显示入口。
+- 当前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、SMS 七个机种；NDS 与第 1、2 档新增的
+  16 个机种暂未配清单，所以不显示入口。
 - 每张清单第一项恒为「无」，也是表外取值的回落目标。
 - 选择按游戏类型记在 localStorage 的 `games.emu.filter`，整张表存一个 JSON。
 - 拉起引擎前先清掉设置块里滤镜相关的旧值，再写入本次选择。
@@ -230,7 +233,7 @@
 - 截图失败返回「截图失败，请重试。」；没有可截画面时宿主页返回中文错误。
 - 滤镜切换失败返回「切换滤镜失败。」；引擎未开始时提示「请先开始游戏再切换滤镜。」。
 - NDS 布局切换失败回滚并提示「切换屏幕布局失败。」。
-- NDS BIOS 缺失时播放页给中文安装提示，不会只留黑屏。
+- 需要 BIOS 的机种缺包时，播放页给中文安装提示，不会只留黑屏。
 - H5 资源解包或读取写盘失败返回 500，并提示检查运行时目录是否可写、空间是否充足。
 - 攻略资源与 PDF 文件不存在、形态不符时返回 404。
 - 本体未上传时 play 接口返回 400「游戏文件尚未上传。」。
@@ -244,7 +247,7 @@
 - 后端：`python -m pytest tests/test_games.py -k "emulator_types_upload_and_play or play_path"`。
 - 上述用例覆盖各主机类型按扩展名入库、列表 `path` 与播放路由一致、本体 `octet-stream` 下发。
 - 后端：`python -m pytest tests/test_static_site.py -k "emulatorjs or bios"`。
-- 上述用例覆盖引擎资产 immutable、BIOS 前缀 no-cache、BIOS 缺失时 404。
+- 上述用例覆盖引擎资产 immutable、BIOS 前缀 no-cache、每个 BIOS 包缺失时 404。
 - 后端：`python -m pytest tests/test_platforms.py`，确认机种 id 与 EmulatorJS system key 一致。
 - 手工：三种播放页都能从游戏中心进入，误入其它类型会跳到正确路由。
 - 手工：H5 首次播放触发解包，重复播放不再解包；沙箱内拿不到本站 cookie。

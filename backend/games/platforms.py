@@ -18,7 +18,7 @@ EJS 4.2.3 的 `EmulatorJS.getCores()`
 2. **`label` 是三处共用的显示名**（中文，厂商 + 空格 + 型号；没有厂商名的只写型号），
    前端 `constants/gameTypes.js` 里按 id 保留图标/描述等 UI 元数据，
    label 与扩展名由 `/api/games/status` 从本表派生。
-3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 21 个机种有；其余机种（含 EJS 支持
+3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 24 个机种有；其余机种（含 EJS 支持
    但本项目还没打包 core 的 n64/psx 等）只用来给外部名录「对上号」，不开放上传。
 
 `flash` / `h5` **不是机种**（它们是载体类型：Ruffle 播的 SWF 与上传 ZIP 解包的网页游戏），
@@ -26,6 +26,19 @@ EJS 4.2.3 的 `EmulatorJS.getCores()`
 """
 
 from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class BiosSpec:
+    """一个机种需要的用户自备 BIOS 包。
+
+    ZIP 放在 `frontend/public/emulatorjs/bios/`，包根目录直接放 `required_files`，
+    不能套一层子目录。`optional=True` 表示核心有内置回退，缺包也能启动。
+    """
+
+    file: str  # emulatorjs/bios/ 下的 ZIP 文件名
+    required_files: tuple[str, ...]  # ZIP 根目录必须包含的文件名
+    optional: bool = False  # True = 缺包不阻塞启动
 
 
 @dataclass(frozen=True)
@@ -42,6 +55,7 @@ class Platform:
     aliases: tuple[str, ...] = ()
     extensions: tuple[str, ...] = ()  # 非空 = 本项目已收录可玩；值即 game_type
     default_extension: str = ""  # 网络直链看不出后缀时补的那个（只有可玩机种有）
+    bios: BiosSpec | None = None  # 需要 BIOS 的机种在这里声明
 
 
 # 顺序即下拉展示顺序：按厂商分组。
@@ -53,7 +67,8 @@ class Platform:
 #
 # 前端展示层的 label 与扩展名不再手写镜像：由 `/api/games/status` 从本表派生，
 # 前端只保留图标、描述这类纯 UI 元数据。
-# 加机种：id / label / aliases / cores / extensions 只改这里；另补 core 资产与前端帧缓冲。
+# 加机种：id / label / aliases / cores / extensions / bios 只改这里；
+# 另补 core 资产、前端帧缓冲与 `emulatorjs/bios/<id>.zip`（需要 BIOS 时）。
 # 扩展名**允许跨机种重叠**（Commodore 的 `.d64` / `.prg`），
 # 重叠时由 `playable_platforms_for_extension()` 给出候选，用户在创建时选。
 #
@@ -106,6 +121,10 @@ PLATFORMS: tuple[Platform, ...] = (
         # 只打包 melonds 核（EJS 的 nds 默认核），desmume / desmume2015 不在资产清单里
         extensions=(".nds",),
         default_extension=".nds",
+        bios=BiosSpec(
+            file="nds.zip",
+            required_files=("bios7.bin", "bios9.bin", "firmware.bin"),
+        ),
     ),
     Platform(
         id="vb",
@@ -229,6 +248,14 @@ PLATFORMS: tuple[Platform, ...] = (
         label="雅达利 5200",
         cores=("a5200",),
         aliases=("雅达利5200", "ATARI 5200"),
+        extensions=(".a52",),
+        default_extension=".a52",
+        # a5200 内置 AltirraOS；5200.rom 缺失时自动回退，因此 BIOS 可选
+        bios=BiosSpec(
+            file="atari5200.zip",
+            required_files=("5200.rom",),
+            optional=True,
+        ),
     ),
     Platform(
         id="atari7800",
@@ -253,6 +280,13 @@ PLATFORMS: tuple[Platform, ...] = (
         label="雅达利 Lynx",
         cores=("handy",),
         aliases=("雅达利Lynx", "LYNX", "Atari Lynx"),
+        extensions=(".lnx",),
+        default_extension=".lnx",
+        # EJS 文档正文写无 BIOS、表格标 Required；按必需处理，缺包时给中文提示
+        bios=BiosSpec(
+            file="lynx.zip",
+            required_files=("lynxboot.img",),
+        ),
     ),
     # —— 其他 ——
     Platform(
@@ -260,6 +294,13 @@ PLATFORMS: tuple[Platform, ...] = (
         label="ColecoVision",
         cores=("gearcoleco",),
         aliases=("COLECOVISION",),
+        extensions=(".col",),
+        default_extension=".col",
+        # GearColeco 的 BIOS 必需
+        bios=BiosSpec(
+            file="coleco.zip",
+            required_files=("colecovision.rom",),
+        ),
     ),
     Platform(
         id="3do",

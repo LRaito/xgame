@@ -29,7 +29,7 @@
 - `runtime_dir` 不填就跟着 `data_dir` 走。
 - 可直接指向以前 WSL 的数据目录；切过来前先 `docker compose down`。
 - 版本号同时写进包根 `version.txt` 与前端 `web/version.txt`。
-- NDS BIOS 是用户自备文件，不随仓库提交。
+- 模拟器 BIOS 是用户自备文件，不随仓库提交。
 
 ## 行为与规则
 
@@ -144,7 +144,7 @@
 | 后端配置 | 只认 `STORAGE_ROOT` | 启动器另设 `STATIC_DIR` |
 
 - EmulatorJS 不需要跨源隔离（`EJS_threads=false`），不用 COOP/COEP。
-- NDS BIOS 缺失时播放页会在启动前给中文提示。
+- 需要 BIOS 的机种缺包时，播放页会在启动前给中文提示。
 
 ## 边界与错误
 

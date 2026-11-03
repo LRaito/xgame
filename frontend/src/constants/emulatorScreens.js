@@ -31,8 +31,11 @@ export const EMU_NATIVE = {
     ngp: { width: 160, height: 152 },
     ws: { width: 224, height: 144 },
     atari2600: { width: 160, height: 192 },
+    atari5200: { width: 320, height: 224 },
     atari7800: { width: 320, height: 240 },
     jaguar: { width: 320, height: 240 },
+    lynx: { width: 160, height: 102 },
+    coleco: { width: 256, height: 192 },
     c64: { width: 384, height: 272 },
     c128: { width: 384, height: 272 },
     pet: { width: 320, height: 200 },
@@ -72,7 +75,8 @@ export const NDS_SCREEN_MODES = ["dual", "top", "side"];
  * NDS 固定按 dual 的 256:438 展示：在 top / side 模式截的图尺寸不同，会在框内
  * 以 object-fit: contain 居中显示（不变形、留黑边），这是已知限制。
  *
- * 第 1 档新增的 8 个机种填的是常见帧缓冲值；个别游戏的输出高度会随区域或内核选项变化，
+ * 第 1、2 档新增的机种填的是常见帧缓冲值（Atari 5200 320×224、Lynx 160×102、
+ * ColecoVision 256×192 来自各自核心源码）；个别游戏的输出高度会随区域或内核选项变化，
  * 以引擎上报的 videoInfo 为准，截图框比例如有偏差按实测图校准这里。
  */
 export function screenshotAspect(gameType) {

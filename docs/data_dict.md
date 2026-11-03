@@ -180,7 +180,7 @@
 | payload | TEXT | NOT NULL, 默认 `''` | `{controlSettings, settings, cheats}` |
 | updated_at | DATETIME | NOT NULL | |
 
-- 只覆盖 21 个主机平台，不含 flash/h5。
+- 只覆盖 24 个主机平台，不含 flash/h5。
 - 内容只存 SQLite，不落文件。
 - 行为见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
 

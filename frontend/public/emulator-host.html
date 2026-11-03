@@ -126,9 +126,40 @@
             const filterOptions = parseFilterOptions(params.get("copts"));
             const filterShader = params.get("shader") || "";
 
-            // NDS BIOS：用户自备的静态包（zip 根目录放 bios7.bin / bios9.bin / firmware.bin），
-            // 不进 git；/emulatorjs/ 整体 immutable，bios/ 单独 no-cache（见 nginx 与 static_site.py）。
-            const NDS_BIOS_URL = "/emulatorjs/bios/nds.zip";
+            // BIOS 包由播放页按机种元数据传入：?bios=<zip 文件名>，?biosoptional=1 表示
+            // 缺包也可启动，?biosfiles=<包内必需文件，逗号分隔> 只用于缺失提示。
+            // 宿主页只接受 bios/ 下的安全文件名并自己拼路径，不信任父页面传完整 URL。
+            // /emulatorjs/ 整体 immutable，bios/ 单独 no-cache（见 nginx 与 static_site.py）。
+            const BIOS_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.zip$/;
+            const BIOS_ENTRY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+            function readBiosFile(raw) {
+                const value = String(raw || "").trim();
+                if (value.length > 120 || value.includes("..")) {
+                    return "";
+                }
+                return BIOS_FILE_PATTERN.test(value) ? value : "";
+            }
+
+            function readBiosEntries(raw) {
+                return String(raw || "")
+                    .split(",")
+                    .map((item) => item.trim())
+                    .filter(
+                        (item) =>
+                            item.length <= 80 &&
+                            !item.includes("..") &&
+                            BIOS_ENTRY_PATTERN.test(item),
+                    )
+                    .slice(0, 8);
+            }
+
+            const biosFile = readBiosFile(params.get("bios"));
+            let biosUrl = biosFile
+                ? `/emulatorjs/bios/${encodeURIComponent(biosFile)}`
+                : "";
+            const biosOptional = params.get("biosoptional") === "1";
+            const biosRequiredFiles = readBiosEntries(params.get("biosfiles"));
             // NDS 三种屏幕布局（父页面 - / = 循环切换，模式经 ?nds= 传进来）。
             // 与 frontend/src/constants/emulatorScreens.js 的 NDS_NATIVE 一一对应，必须同步：
             //   dual = 上下双屏 + gap 54（帧缓冲 256×438）
@@ -159,6 +190,10 @@
 
             if (!id || !core) {
                 showError("缺少游戏参数，请从游戏中心进入。");
+                return;
+            }
+            if (params.has("bios") && !biosFile) {
+                showError("BIOS 参数不合法，请从游戏中心重新进入。");
                 return;
             }
 
@@ -961,12 +996,15 @@
                     window.EJS_defaultOptions.fceumm_overscan_v_top = wide ? "0" : "8";
                     window.EJS_defaultOptions.fceumm_overscan_v_bottom = wide ? "0" : "8";
                 }
-                // NDS（melonDS）：BIOS 由引擎解压到虚拟文件系统；屏幕布局由父页面 ?nds= 决定
+                // BIOS：有就交给引擎解压到虚拟文件系统；与机种无关，没有 BIOS 的机种不会传
+                if (biosUrl) {
+                    window.EJS_biosUrl = biosUrl;
+                }
+                // NDS（melonDS）：屏幕布局由父页面 ?nds= 决定
                 // （dual / top / side，见上面的 NDS_LAYOUTS）。布局的两项内核选项从引擎设置
                 // 菜单里隐藏——布局只能由父页面 - / = / setNdsLayout 控制，避免用户从菜单
                 // 改出与机壳、遮罩不一致的几何。父页面写云端设置前也会剔除这两个键。
                 if (core === "nds") {
-                    window.EJS_biosUrl = NDS_BIOS_URL;
                     window.EJS_hideSettings = [
                         "melonds_screen_layout",
                         "melonds_screen_gap",
@@ -1008,7 +1046,7 @@
                 document.body.appendChild(script);
             }
 
-            // 引擎与（NDS 的）BIOS 就绪检查；缺失时给出可执行的修复提示而非白屏
+            // 引擎与 BIOS 就绪检查；缺失时给出可执行的修复提示而非白屏
             async function preflight() {
                 const loaderOk = await fetch("/emulatorjs/data/loader.js", { method: "HEAD" })
                     .then((response) => response.ok)
@@ -1017,17 +1055,25 @@
                     showError("模拟器引擎缺失：请先运行 npm run fetch:emulatorjs（Docker 镜像会自动拉取）后重试。");
                     return false;
                 }
-                if (core === "nds") {
-                    const biosOk = await fetch(NDS_BIOS_URL, { method: "HEAD" })
+                if (biosUrl) {
+                    const biosOk = await fetch(biosUrl, { method: "HEAD" })
                         .then((response) => response.ok)
                         .catch(() => false);
                     if (!biosOk) {
-                        showError(
-                            "NDS BIOS 缺失：请把 bios7.bin、bios9.bin、firmware.bin 打包成 nds.zip，" +
-                                "放到 frontend/public/emulatorjs/bios/（Docker 需重建 web 镜像；" +
-                                "Windows 包放到 web/emulatorjs/bios/）后重试。",
-                        );
-                        return false;
+                        if (biosOptional) {
+                            // 核心有内置回退：不传 EJS_biosUrl，继续启动
+                            biosUrl = "";
+                        } else {
+                            const detail = biosRequiredFiles.length
+                                ? `请把 ${biosRequiredFiles.join("、")} 打包成 ${biosFile}，`
+                                : `请准备 ${biosFile}，`;
+                            showError(
+                                `模拟器 BIOS 缺失：${detail}` +
+                                    "放到 frontend/public/emulatorjs/bios/（Docker 需重建 web 镜像；" +
+                                    "Windows 包放到 web/emulatorjs/bios/）后重试。",
+                            );
+                            return false;
+                        }
                     }
                 }
                 return true;

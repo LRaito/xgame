@@ -1794,6 +1794,18 @@ async function launchEngine() {
             // 显示比例：宿主页据此设内核选项（只有 FC 认这个参数），与标题栏窗口选择器里选的那列一致
             ratio: aspectMode.value,
         });
+        // BIOS：列表条目自带（不依赖 /status 是否加载成功），类型元数据兜底。
+        // 宿主页只接受 bios/ 下的安全 zip 文件名，自己拼路径。
+        const bios = item.bios || meta.value?.bios || null;
+        if (bios?.file) {
+            params.set("bios", bios.file);
+            if (bios.required_files?.length) {
+                params.set("biosfiles", bios.required_files.join(","));
+            }
+            if (bios.optional) {
+                params.set("biosoptional", "1");
+            }
+        }
         // NDS 屏幕布局：宿主页据此在启动前写 melonds_screen_layout / melonds_screen_gap
         if (item.category === "nds") {
             params.set("nds", ndsScreenMode.value);

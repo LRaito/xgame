@@ -27,9 +27,10 @@ curl / zip**。
 镜像 tag 是「Dockerfile + 上面这几个输入文件」的哈希：改了任一处就自动重建，没改就一直复用。
 要强制刷新（比如拿传递依赖的安全更新）：`WINBUILD_NO_CACHE=1 make win-image`。
 
-**NDS BIOS 不在这份预置资产里**：它是用户自备文件（`bios7.bin`、`bios9.bin`、`firmware.bin`
-打成 `nds.zip`），不随仓库提交。组装时如果宿主机有 `frontend/public/emulatorjs/bios/`，会原样拷进
-包里的 `web/emulatorjs/bios/`；没有就跳过，包里的 NDS 播放页会在启动前提示缺少 BIOS。
+**模拟器 BIOS 不在这份预置资产里**：它们是用户自备文件（NDS 的 `nds.zip`、Lynx 的 `lynx.zip`、
+ColecoVision 的 `coleco.zip`，以及可选的 `atari5200.zip`），不随仓库提交。组装时如果宿主机有
+`frontend/public/emulatorjs/bios/`，会原样拷进包里的 `web/emulatorjs/bios/`；没有就跳过，
+需要 BIOS 的机种会在启动前提示缺少对应 ZIP。
 
 由 `build-in-docker.sh` 驱动：容器以宿主机用户身份跑（产出的 `dist-win/` 与前端产物属主正常，
 不会变成 root 所有）；前端在容器内的临时目录里构建，**宿主机自己的 `frontend/node_modules`

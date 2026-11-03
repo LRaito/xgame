@@ -13,7 +13,7 @@
 
 ## 数据与路径
 
-- `Platform` 字段：`id` / `label` / `cores` / `aliases` / `extensions` / `default_extension`。
+- `Platform` 字段：`id` / `label` / `cores` / `aliases` / `extensions` / `default_extension` / `bios`。
 - `label` 是统一中文显示名，格式为「厂商 + 空格 + 型号」，如「任天堂 FC」「世嘉 土星」。
 - 没有厂商名的机种只写型号，如 `Amiga`、`DOS`。
 - 认不出机种的原始名展示时也按同一格式补空格，如 `任天堂3DS` → `任天堂 3DS`。
@@ -22,6 +22,7 @@
 - `extensions` 非空才代表本项目已收录、可上传可玩；值就是 `game_type`。
 - 同一后缀可以出现在多个机种里；候选顺序就是本表顺序，第 1 个是默认项。
 - `default_extension` 在网络直链看不出后缀时补上，只有可玩机种有。
+- `bios` 声明该机种需要的用户自备 BIOS 包（`BiosSpec`）；不需要 BIOS 的机种为 `None`。
 - 候选查询入口：`playable_platforms_for_extension()` / `default_playable_platform_for_extension()`。
 - 别名冲突在导入时抛 `ValueError`，不会静默覆盖。
 - 解析入口：`resolve_platform()` / `platform_label()` / `platform_order()` / `playable_platforms()`。
@@ -30,7 +31,7 @@
 
 ## 行为与规则
 
-### 可玩机种（21 个）
+### 可玩机种（24 个）
 
 | game_type | 显示名 | 扩展名 | 默认后缀 | EmulatorJS core |
 |---|---|---|---|---|
@@ -48,8 +49,11 @@
 | `ngp` | SNK NGPC | `.ngc` `.ngp` | `.ngc` | `mednafen_ngp` |
 | `ws` | 万代 WS | `.ws` `.wsc` | `.ws` | `mednafen_wswan` |
 | `atari2600` | 雅达利 2600 | `.a26` | `.a26` | `stella2014` |
+| `atari5200` | 雅达利 5200 | `.a52` | `.a52` | `a5200` |
 | `atari7800` | 雅达利 7800 | `.a78` | `.a78` | `prosystem` |
 | `jaguar` | 雅达利 Jaguar | `.j64` `.jag` | `.j64` | `virtualjaguar` |
+| `lynx` | 雅达利 Lynx | `.lnx` | `.lnx` | `handy` |
+| `coleco` | ColecoVision | `.col` | `.col` | `gearcoleco` |
 | `c64` | Commodore 64 | `.d64` `.tap` `.crt` `.prg` | `.d64` | `vice_x64sc` |
 | `c128` | Commodore 128 | `.d64` `.d71` `.prg` | `.d64` | `vice_x128` |
 | `pet` | Commodore PET | `.prg` `.d64` | `.prg` | `vice_xpet` |
@@ -59,15 +63,29 @@
 - `cores` 记录引擎支持的全部 core，不代表本项目都打包了资产；NDS 只打包 `melonds`。
 - **扩展名可以跨机种重叠**：Commodore 共用 `.d64` / `.prg`。
   判定时取「后缀候选集」，候选第 1 个（词表顺序）是默认项；唯一候选自动确定。
-- `GAME_TYPES` 派生为 `flash`、`h5` 加 21 个可玩机种 id，顺序与词表一致。
+- `GAME_TYPES` 派生为 `flash`、`h5` 加 24 个可玩机种 id，顺序与词表一致。
 - 后端扩展名白名单、默认后缀表、候选表与 `GAME_TYPE_LABELS` 都从词表派生。
 - 前端不保存映射：`GET /api/games/status` 的 `types` / `extension_candidates` /
   `default_game_type_by_extension` 是唯一来源。
 - 加机种要同步：本表（词表）、`fetch-emulatorjs.mjs` 的 core 资产、前端
-  `constants/emulatorScreens.js` 的帧缓冲尺寸。label 与扩展名不用再抄。
+  `constants/emulatorScreens.js` 的帧缓冲尺寸；需要 BIOS 时再补 `BiosSpec` 与
+  `emulatorjs/bios/<id>.zip`。label 与扩展名不用再抄。
 - 不再收 `.bin`：2600/5200/7800 都用它，没法判型，各自用专属后缀。
 - 改词表不会挪动任何文件；`id` 同时是磁盘目录名与库里的 `game_type`。
   已有游戏改类型走显式迁移接口（见 `game-storage.md`）。
+
+### 需要 BIOS 的机种
+
+| game_type | BIOS ZIP | 包内必需文件 | 必需性 |
+|---|---|---|---|
+| `nds` | `nds.zip` | `bios7.bin`、`bios9.bin`、`firmware.bin` | 必需 |
+| `atari5200` | `atari5200.zip` | `5200.rom` | 可选（核心内置 AltirraOS） |
+| `lynx` | `lynx.zip` | `lynxboot.img` | 必需 |
+| `coleco` | `coleco.zip` | `colecovision.rom` | 必需 |
+
+- ZIP 放在 `frontend/public/emulatorjs/bios/`，包根目录直接放必需文件，不能套子目录。
+- BIOS 是用户自备文件，不随仓库提交；Docker 需重建 web 镜像，Windows 包需重新组装。
+- 元数据经 `/status.types[].bios` 与游戏列表条目的 `bios` 下发，播放页不手写映射。
 
 ### 检索与榜单
 

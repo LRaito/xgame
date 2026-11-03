@@ -25,7 +25,7 @@
 - 下载名规则：`name` 含点则原样，否则补 `.sol`，空名回退「存档」。
 - 快照行有 `remark`（上限 100 字）与 `created_at`；前者超长报错，后者只判定「最新一条」。
 - `game_cloud_snapshot_files.sort_order` 是快照内文件序号，不是展示分数。
-- 模拟器设置只覆盖 21 个主机平台，不含 flash/h5；只存 SQLite，不落文件。
+- 模拟器设置只覆盖 24 个主机平台，不含 flash/h5；只存 SQLite，不落文件。
 - 设置 payload 必须是 `{controlSettings, settings, cheats}` 且 ≤64KB，否则 400。
 - 最近游玩一行只记最后一次 `played_at`，重玩只刷新时间。
 - 统计行与游戏类型无关；Flash、H5、主机 ROM 共用同一张表。

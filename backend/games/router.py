@@ -17,6 +17,7 @@ from backend.games.service import (
     RECENT_LIMIT_DEFAULT,
     GameUpload,
     allowed_body_extensions,
+    bios_descriptor,
     default_game_types_by_extension,
     extension_candidates,
     game_type_descriptors,
@@ -65,6 +66,8 @@ def _center_payload(item, stat=None) -> dict:
         "cover_type": item.cover_type,
         "description": item.description,
         "category": item.game_type,
+        # BIOS 规格随条目下发：播放页用它拼宿主页参数，不依赖 /status 是否加载成功
+        "bios": bios_descriptor(item.game_type),
         "path": item.path,
         "size": item.size,
         "cover_path": item.cover_path,

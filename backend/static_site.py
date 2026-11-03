@@ -46,7 +46,7 @@ _INDEX = "index.html"
 _IMMUTABLE_PREFIXES = ("assets/", "ruffle/", "emulatorjs/")
 _IMMUTABLE_NAMES = tuple(prefix.rstrip("/") for prefix in _IMMUTABLE_PREFIXES)
 # 比 immutable 前缀更具体的 no-cache 前缀：长缓存的前缀下也有「文件名固定、内容随时会被
-# 用户替换」的文件（NDS BIOS 包）。顺序无关，判断时先看这个集合再看 immutable。
+# 用户替换」的文件（模拟器 BIOS 包）。顺序无关，判断时先看这个集合再看 immutable。
 _NO_CACHE_PREFIXES = ("emulatorjs/bios/",)
 # 文件名固定、不带内容哈希，一旦被启发式缓存就会与换名的新产物错配
 _NO_CACHE_FILES = frozenset({_INDEX, "emulator-host.html", "version.txt"})

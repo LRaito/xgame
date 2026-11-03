@@ -30,12 +30,16 @@
 | 方法 | 路径 | 登录 | 用途 / 关键字段 |
 |---|---|---|---|
 | GET | `/api/games` | 需登录 | 游戏中心列表，含统计字段与攻略形态 |
-| GET | `/api/games/status` | 需登录 | 类型元数据、可上传后缀、后缀候选与默认类型 |
+| GET | `/api/games/status` | 需登录 | 类型元数据、可上传后缀、后缀候选、默认类型与 BIOS 规格 |
 | GET / POST | `/api/games/recent` | 需登录 | 最近游玩；POST body `{game_id}`，`limit` 默认 20 |
 | POST | `/api/games/stats/playtime` | 需登录 | body `{game_id, seconds}`，单次收敛到 0..300 |
 | PUT | `/api/games/stats/{id}/playtime` | 需登录 | body `{hours}`，覆盖总时长 |
 | PUT | `/api/games/stats/{id}/progress` | 需登录 | body `{progress}`：三个固定取值 |
 | GET / PUT | `/api/games/emulator-settings` | 需登录 | `game_type` 查询 / body，按平台读写整块设置 |
+
+`/api/games` 与 `/api/games/recent` 的每条游戏都带 `bios`：无 BIOS 需求时为 `null`，
+否则为 `{file, required_files, optional}`；`/api/games/status.types[]` 的每条类型也带同形状字段。
+`file` 是 `emulatorjs/bios/` 下的 ZIP 文件名，`required_files` 是包内必需文件。
 
 ### 游戏管理与入库
 
