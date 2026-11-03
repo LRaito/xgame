@@ -17,6 +17,9 @@ from backend.games.service import (
     RECENT_LIMIT_DEFAULT,
     GameUpload,
     allowed_body_extensions,
+    default_game_types_by_extension,
+    extension_candidates,
+    game_type_descriptors,
 )
 from backend.http import iso, json_err, json_ok
 from backend.storage.access import build_download_response, content_disposition
@@ -40,6 +43,10 @@ class UpdateGameBody(BaseModel):
 class RenameCartridgeBody(BaseModel):
     # 缺字段时给空串、走业务侧的中文 400，不要 FastAPI 那句英文 422（与 ImportGameBody.url 同一套）
     cartridge_id: str = ""
+
+
+class ChangeGameTypeBody(BaseModel):
+    game_type: str = ""
 
 
 class ImportGameBody(BaseModel):
@@ -116,11 +123,15 @@ def _upload_of(file: UploadFile) -> GameUpload:
 
 @router.get("/status")
 def games_status(_user: CurrentUser):
-    """类型列表与可上传格式（前端只用于筛选与 accept 提示）。"""
+    """类型元数据与可上传格式：前端据此渲染下拉、accept 与类型提示。"""
     return json_ok(
         {
             "game_types": list(GAME_TYPES),
             "body_extensions": list(allowed_body_extensions()),
+            # 下面三项都从机种词表派生，前端不再手写扩展名映射
+            "types": game_type_descriptors(),
+            "extension_candidates": extension_candidates(),
+            "default_game_type_by_extension": default_game_types_by_extension(),
         }
     )
 
@@ -282,6 +293,25 @@ def games_rename_cartridge_id(
     return json_ok(_manage_payload(item))
 
 
+@router.put("/manage/{game_id}/game-type")
+def games_change_game_type(
+    game_id: int, body: ChangeGameTypeBody, _user: CurrentUser, service: GameServiceDep
+):
+    """改游戏类型：磁盘目录与各账号的存档/截图目录一起迁移，库里的路径列同步改写。
+
+    独立接口——普通编辑（PUT /manage/{id}）不接受这个字段。
+    目标类型必须属于当前本体后缀的候选集；唯一候选的后缀不能改。
+    """
+    try:
+        item = service.change_game_type(game_id, body.game_type)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    logger.info("已改游戏类型 game_id=%s game_type=%s", game_id, item.game_type)
+    return json_ok(_manage_payload(item))
+
+
 @router.delete("/manage/{game_id}")
 def games_delete(game_id: int, _user: CurrentUser, service: GameServiceDep):
     try:
@@ -305,7 +335,8 @@ def games_upload_asset(
     """一步上传游戏本体或封面：校验类型 → 流式写入存储目录 → 更新游戏行 → 删旧文件。
 
     来源可以是本地文件（`file`）或网络直链（`url`）。**换本体只接受与当前游戏类型
-    相同的本体**（按扩展名判定，创建后类型不可变），跨类型返回 400 且旧档不动；
+    相同的本体**（按后缀候选集判定），跨类型返回 400 且旧档不动；改类型走独立的
+    `PUT /manage/{id}/game-type` 接口。
     成功后重算并更新 `crc32`/`size`/`game_path`。直链的 `game_type` 必须等于当前类型。
 
     `cover_type`（封面样式 id）**只在 kind="cover" 且非空时生效**，供「美化封面」

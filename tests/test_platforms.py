@@ -23,10 +23,12 @@ from backend.games.platforms import (
     PLATFORM_BY_ALIAS,
     PLATFORM_BY_ID,
     PLATFORMS,
+    default_playable_platform_for_extension,
     normalize_name,
     platform_label,
     platform_order,
     playable_platforms,
+    playable_platforms_for_extension,
     resolve_platform,
 )
 from backend.games.service import GAME_TYPES, GAME_TYPE_LABELS
@@ -37,6 +39,8 @@ _EJS_BUNDLE = (
     Path(__file__).resolve().parents[1]
     / "frontend/public/emulatorjs/data/emulator.min.js"
 )
+# 前端展示层的类型注册表来自 `/api/games/status`，不再手写 label / 扩展名镜像。
+# 这里只检查前端没有把映射写回去（常量文件里不应出现类型条目定义）。
 _FRONTEND_GAME_TYPES = (
     Path(__file__).resolve().parents[1] / "frontend/src/constants/gameTypes.js"
 )
@@ -66,13 +70,8 @@ def _emulatorjs_systems() -> set[str]:
     return set(re.findall(r'"?([A-Za-z0-9_]+)"?\s*:\s*\[', match.group(1)))
 
 
-def _frontend_game_type_labels() -> dict[str, str]:
-    """从 `gameTypes.js` 的 GAME_TYPE_LIST 里抠出 slug → label。"""
-    source = _FRONTEND_GAME_TYPES.read_text(encoding="utf-8")
-    slugs = re.findall(r'slug:\s*"([^"]+)"', source)
-    labels = re.findall(r'label:\s*"([^"]+)"', source)
-    assert len(slugs) == len(labels), "GAME_TYPE_LIST 里 slug 与 label 的条数对不上"
-    return dict(zip(slugs, labels))
+def _frontend_game_types_source() -> str:
+    return _FRONTEND_GAME_TYPES.read_text(encoding="utf-8")
 
 
 # --------------------------------------------------------------------------
@@ -106,17 +105,48 @@ def test_every_platform_declares_its_cores():
         assert platform.label, platform.id
 
 
-def test_playable_platforms_are_complete():
-    """可玩机种必须有扩展名白名单与默认后缀，且扩展名互不重叠（判定不能有歧义）。"""
+def test_playable_platforms_declare_extensions_and_defaults():
+    """可玩机种必须有扩展名白名单与默认后缀，且默认后缀在白名单内。
+
+    扩展名允许跨机种重叠（Commodore 的 `.d64` / `.prg`），重叠时由候选集消歧，
+    所以这里不再断言「扩展名互不重叠」。
+    """
     playable = playable_platforms()
     assert playable, "一个可玩机种都没有"
-    seen: dict[str, str] = {}
     for platform in playable:
         assert platform.extensions, platform.id
         assert platform.default_extension in platform.extensions, platform.id
-        for extension in platform.extensions:
-            assert extension not in seen, f"{extension} 同时属于 {seen[extension]} 与 {platform.id}"
-            seen[extension] = platform.id
+
+
+def test_extension_candidates_follow_registry_order():
+    """同一后缀的候选按词表顺序给出，第 1 个就是默认选中项。"""
+    assert [p.id for p in playable_platforms_for_extension(".d64")] == [
+        "c64",
+        "c128",
+        "pet",
+        "plus4",
+        "vic20",
+    ]
+    assert [p.id for p in playable_platforms_for_extension("d64")] == [
+        "c64",
+        "c128",
+        "pet",
+        "plus4",
+        "vic20",
+    ]
+    assert [p.id for p in playable_platforms_for_extension(".prg")] == [
+        "c64",
+        "c128",
+        "pet",
+        "plus4",
+        "vic20",
+    ]
+    assert [p.id for p in playable_platforms_for_extension(".d71")] == ["c128"]
+    assert [p.id for p in playable_platforms_for_extension(".tap")] == ["c64"]
+    assert playable_platforms_for_extension(".bin") == ()
+    assert default_playable_platform_for_extension(".d64").id == "c64"
+    assert default_playable_platform_for_extension(".d71").id == "c128"
+    assert default_playable_platform_for_extension(".bin") is None
 
 
 def test_resolve_platform_ignores_case_and_whitespace():
@@ -202,12 +232,15 @@ def test_game_type_labels_match_the_registry():
         assert GAME_TYPE_LABELS[platform.id] == platform.label
 
 
-def test_frontend_labels_match_the_registry():
-    """前端展示层是词表的镜像（与 coverStyles 同一套约定），两边必须逐字一致。"""
-    labels = _frontend_game_type_labels()
-    assert set(labels) == set(GAME_TYPES)
-    for game_type, label in labels.items():
-        assert label == GAME_TYPE_LABELS[game_type], game_type
+def test_frontend_does_not_hardcode_the_type_registry():
+    """前端不再保存 label / 扩展名映射：它们只从 `/api/games/status` 读取。
+
+    机种与后缀的映射只在 `backend/games/platforms.py` 维护，避免第二份表漂移。
+    """
+    source = _frontend_game_types_source()
+    assert "GAME_TYPE_LIST" not in source
+    assert not re.search(r'slug:\s*"', source)
+    assert "extensions: [" not in source
 
 
 # --------------------------------------------------------------------------

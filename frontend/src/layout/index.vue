@@ -41,16 +41,23 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { APP_VERSION } from "@/constants/version";
 import { buildMenuFromRoutes } from "@/router";
 import { useAuthStore } from "@/store/auth";
+import { useGameTypesStore } from "@/store/gameTypes";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const gameTypes = useGameTypesStore();
 const menus = buildMenuFromRoutes();
+
+// 类型注册表只拉一次：各页面直接读缓存；失败静默，页面各自有回退
+onMounted(() => {
+    void gameTypes.ensureLoaded();
+});
 
 // 侧栏常驻收起、以浮层形式盖在内容之上（不占位、不挤压页面），
 // 鼠标靠近屏幕左边缘或移到侧栏上时滑出，移开即收起。

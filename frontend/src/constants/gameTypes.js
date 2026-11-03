@@ -1,136 +1,50 @@
 /**
- * 游戏类型（game_type）展示层配置。
+ * 游戏类型展示适配器。
  *
- * 后端 backend/games/service.py 的 GAME_TYPES / 扩展名白名单是「可上传、可落库」
- * 的权威来源；这里只负责 UI 展示与播放器接线：显示名（纯展示，不进键名/路径）、
- * 中心分组文案、上传 accept 提示、以及 EmulatorJS 的 core（system key）。
- * 两者新增/修改类型时需同步。
+ * **这里不再保存任何机种映射**：label、extensions、默认后缀全部来自
+ * `GET /api/games/status`（后端由 `backend/games/platforms.py` 派生），
+ * 缓存与查询在 `@/store/gameTypes`。本文件只保留同名函数，减少调用方改动。
  *
- * **label 是 backend/games/platforms.py 那份机种词表的镜像**：机种的 slug 就是 EmulatorJS
- * 的 system key，label 是词表里的统一显示名（游戏管理、游戏检索、游戏榜单三处共用同一个名字，
- * 所以「任天堂 FC」在哪儿都写作「任天堂 FC」）。`flash` / `h5` 不是机种（是载体类型），
- * 名字不来自词表。`tests/test_platforms.py` 钉住两边逐字一致。
+ * 唯一留在前端的类型信息是图标与角标这类纯 UI 元数据，见 store 的 `iconOf()`。
  */
+import { extensionOfFilename, useGameTypesStore } from "@/store/gameTypes";
 
-const GAME_TYPE_LIST = [
-    {
-        slug: "flash",
-        label: "Flash",
-        kind: "flash",
-        core: null,
-        extensions: [".swf"],
-        icon: "⚡",
-        description: "经典 Flash 作品，通过 Ruffle 模拟器运行。",
-    },
-    {
-        slug: "h5",
-        label: "HTML5",
-        kind: "h5",
-        core: null,
-        extensions: [".zip"],
-        icon: "🌐",
-        description:
-            "HTML5 网页游戏，上传 ZIP 后在浏览器内直接运行；沙箱运行，不支持云存档。",
-        uploadHint: "仅支持 .zip，且压缩包根目录需包含 index.html",
-    },
-    {
-        slug: "nes",
-        label: "任天堂 FC",
-        kind: "emulator",
-        core: "nes",
-        extensions: [".nes"],
-        icon: "🎮",
-        description: "通过 EmulatorJS 在浏览器内运行；支持账号云存档。",
-    },
-    {
-        slug: "snes",
-        label: "任天堂 SFC",
-        kind: "emulator",
-        core: "snes",
-        extensions: [".sfc", ".smc"],
-        icon: "🎮",
-        description: "通过 EmulatorJS 在浏览器内运行；支持账号云存档。",
-    },
-    {
-        slug: "gb",
-        label: "任天堂 GB/GBC",
-        kind: "emulator",
-        core: "gb",
-        extensions: [".gb", ".gbc"],
-        icon: "🎮",
-        description: "通过 EmulatorJS 在浏览器内运行；支持账号云存档。",
-    },
-    {
-        slug: "gba",
-        label: "任天堂 GBA",
-        kind: "emulator",
-        core: "gba",
-        extensions: [".gba"],
-        icon: "🎮",
-        description: "通过 EmulatorJS 在浏览器内运行；支持账号云存档。",
-    },
-    {
-        slug: "nds",
-        label: "任天堂 NDS",
-        kind: "emulator",
-        // 系统 key（EJS 的 nds），不是内核名 melonds——内核由引擎自己按 system key 选
-        core: "nds",
-        extensions: [".nds"],
-        icon: "🎮",
-        description: "通过 EmulatorJS（melonDS）在浏览器内运行；支持账号云存档。",
-    },
-    {
-        slug: "segaMD",
-        label: "世嘉 MD",
-        kind: "emulator",
-        core: "segaMD",
-        extensions: [".md", ".gen"],
-        icon: "🎮",
-        description: "通过 EmulatorJS 在浏览器内运行；支持账号云存档。",
-    },
-    {
-        slug: "segaGG",
-        label: "世嘉 GG",
-        kind: "emulator",
-        core: "segaGG",
-        extensions: [".gg"],
-        icon: "🎮",
-        description: "通过 EmulatorJS 在浏览器内运行；支持账号云存档。",
-    },
-    {
-        slug: "segaMS",
-        label: "世嘉 SMS",
-        kind: "emulator",
-        core: "segaMS",
-        extensions: [".sms"],
-        icon: "🎮",
-        description: "通过 EmulatorJS 在浏览器内运行；支持账号云存档。",
-    },
-];
-
-/** 全部可上传的本体扩展名（供上传控件的 accept 提示）。 */
-const ALL_GAME_EXTENSIONS = GAME_TYPE_LIST.flatMap((type) => type.extensions);
-
-/** 按本体文件名的扩展名猜类型，仅用于表单即时提示；落库类型以后端判定为准。 */
-function gameTypeByExtension(filename) {
-    const name = String(filename || "").toLowerCase();
-    const dot = name.lastIndexOf(".");
-    if (dot < 0) {
-        return null;
-    }
-    const extension = name.slice(dot);
-    const meta = GAME_TYPE_LIST.find((type) => type.extensions.includes(extension));
-    return meta ? meta.slug : null;
-}
-
-/** 按类型取展示配置；未知类型返回 null。 */
+/** 按类型取展示元数据（id / label / kind / core / extensions / icon）。 */
 export function gameTypeMeta(slug) {
-    return GAME_TYPE_LIST.find((type) => type.slug === slug) || null;
+    return useGameTypesStore().metaOf(slug);
 }
 
 /** 类型的中文名（用于下拉/表格），未知类型回退为类型值本身。 */
 export function gameTypeLabel(slug) {
-    return gameTypeMeta(slug)?.label || slug;
+    return useGameTypesStore().labelOf(slug);
 }
 
-export { ALL_GAME_EXTENSIONS, GAME_TYPE_LIST, gameTypeByExtension };
+/** 该后缀的全部候选类型，顺序即后端 `GAME_TYPES` 顺序。 */
+export function gameTypeCandidatesByExtension(extension) {
+    return useGameTypesStore().candidatesOfExtension(extension);
+}
+
+/** 按本体文件名取候选类型（空数组 = 未收录格式）。 */
+export function gameTypeCandidatesByFilename(filename) {
+    return useGameTypesStore().candidatesOfFilename(filename);
+}
+
+/** 按本体文件名取默认类型（候选第 1 个）；未收录返回 null。 */
+export function gameTypeByExtension(filename) {
+    return gameTypeCandidatesByFilename(filename)[0] || null;
+}
+
+/** 地址路径里的扩展名（小写、含点），解析不出来返回空串。 */
+export function extensionOfUrl(url) {
+    try {
+        const name = decodeURIComponent(new URL(String(url || "").trim()).pathname.split("/").pop() || "");
+        return extensionOfFilename(name);
+    } catch {
+        return "";
+    }
+}
+
+/** 按下载地址取候选类型；地址看不出后缀时返回空数组。 */
+export function gameTypeCandidatesByUrl(url) {
+    return gameTypeCandidatesByExtension(extensionOfUrl(url));
+}

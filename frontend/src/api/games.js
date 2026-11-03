@@ -98,6 +98,18 @@ export function renameCartridgeIdAPI(id, cartridgeId) {
     });
 }
 
+/** 改游戏类型：后端会把游戏目录、存档与截图目录一起迁移并改写库里的路径列。
+
+    独立接口——普通编辑（updateManageGameAPI）不接受这个字段。
+    目标类型必须属于当前本体后缀的候选集。 */
+export function updateManageGameTypeAPI(id, gameType) {
+    return request({
+        url: `/api/games/manage/${id}/game-type`,
+        method: "put",
+        data: { game_type: gameType },
+    });
+}
+
 /** 从 7k7k / 4399 / flash.homes 游戏页地址搬运游戏（服务端解析、下载并入库，耗时较长）。
 
     卡带ID 由服务端按本体 CRC32 自动生成（F-{CRC32}），不用前端传。 */

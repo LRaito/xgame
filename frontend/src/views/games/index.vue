@@ -126,7 +126,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from "vue";
 import { ElMessage } from "element-plus";
 import {
-    gamesStatusAPI,
     guideEntryPath,
     guidePdfPath,
     listGamesAPI,
@@ -137,7 +136,8 @@ import {
 import { CARD_ASPECT_RAIL } from "@/constants/gameCardAspect";
 import { coverTypesFor } from "@/constants/coverStyles";
 import { GAME_PROGRESS_LIST, PROGRESS_NOT_STARTED } from "@/constants/gameProgress";
-import { GAME_TYPE_LIST, gameTypeLabel } from "@/constants/gameTypes";
+import { gameTypeLabel } from "@/constants/gameTypes";
+import { useGameTypesStore } from "@/store/gameTypes";
 import { ensureGameAssetSw } from "@/utils/gameAssetCache";
 import { playSecondsToHours } from "@/utils/gamePlaytime";
 import AppDialog from "@components/common/AppDialog.vue";
@@ -151,8 +151,20 @@ const loading = ref(false);
 const loadError = ref(false);
 const saving = ref(false);
 
-// 类型筛选下拉的候选顺序：以 /status.game_types 为准（后端单一来源），兜底用前端常量顺序
-const typeOrder = ref(GAME_TYPE_LIST.map((type) => type.slug));
+// 类型筛选下拉的候选顺序：以 /status.game_types 为准（后端单一来源）。
+// 状态接口还没回来或失败时，用当前列表里实际出现的类型兜底，保证只读页面仍可用。
+const gameTypesStore = useGameTypesStore();
+const typeOrder = computed(() => {
+    const order = [...gameTypesStore.gameTypes];
+    const seen = new Set(order);
+    for (const game of games.value) {
+        if (game.category && !seen.has(game.category)) {
+            seen.add(game.category);
+            order.push(game.category);
+        }
+    }
+    return order;
+});
 
 // 空串 = 全部；keyword 仅按游戏名称本地实时过滤（数据已整体在本地，无需再请求后端）
 const activeType = ref("");
@@ -383,10 +395,8 @@ onMounted(async () => {
     try {
         // SW 只用于封面/本体的缓存加速；初始化失败也不应挡住列表展示（见 gameAssetCache）
         await ensureGameAssetSw();
-        const status = await gamesStatusAPI();
-        if (Array.isArray(status.game_types) && status.game_types.length) {
-            typeOrder.value = status.game_types;
-        }
+        // 类型注册表失败不挡列表：typeOrder 会退回列表里实际出现的类型
+        await gameTypesStore.ensureLoaded();
         games.value = await listGamesAPI();
         // 最近游玩是锦上添花：单独兜错，失败只丢这一块，不能把整页带进 loadError 空态
         const recent = await listRecentGamesAPI().catch(() => []);

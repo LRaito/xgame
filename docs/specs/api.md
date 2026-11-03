@@ -30,7 +30,7 @@
 | 方法 | 路径 | 登录 | 用途 / 关键字段 |
 |---|---|---|---|
 | GET | `/api/games` | 需登录 | 游戏中心列表，含统计字段与攻略形态 |
-| GET | `/api/games/status` | 需登录 | 类型列表与可上传本体扩展名 |
+| GET | `/api/games/status` | 需登录 | 类型元数据、可上传后缀、后缀候选与默认类型 |
 | GET / POST | `/api/games/recent` | 需登录 | 最近游玩；POST body `{game_id}`，`limit` 默认 20 |
 | POST | `/api/games/stats/playtime` | 需登录 | body `{game_id, seconds}`，单次收敛到 0..300 |
 | PUT | `/api/games/stats/{id}/playtime` | 需登录 | body `{hours}`，覆盖总时长 |
@@ -47,6 +47,7 @@
 | POST | `/api/games/manage/import` | 需登录 | 搬运，body `{url}`；卡带 ID 服务端自动生成 |
 | PUT | `/api/games/manage/{id}` | 需登录 | 改名 / 描述 / `cover_type` / `clear_cover` |
 | PUT | `/api/games/manage/{id}/cartridge-id` | 需登录 | body `{cartridge_id}`，显式迁移磁盘与路径 |
+| PUT | `/api/games/manage/{id}/game-type` | 需登录 | body `{game_type}`，显式迁移游戏/存档/截图目录 |
 | DELETE | `/api/games/manage/{id}` | 需登录 | 删游戏，连同所有账号的存档与截图 |
 | POST | `/api/games/manage/{id}/assets` | 需登录 | `kind=game\|cover`，`file` 或 `url`[+类型字段] |
 | POST | `/api/games/manage/{id}/guide` | 需登录 | multipart 单个 `file`，ZIP 或 PDF |

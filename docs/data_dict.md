@@ -180,7 +180,7 @@
 | payload | TEXT | NOT NULL, 默认 `''` | `{controlSettings, settings, cheats}` |
 | updated_at | DATETIME | NOT NULL | |
 
-- 只覆盖 8 个主机平台，不含 flash/h5。
+- 只覆盖 21 个主机平台，不含 flash/h5。
 - 内容只存 SQLite，不落文件。
 - 行为见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
 
@@ -234,7 +234,7 @@
   [`DEVELOP.md`](../DEVELOP.md)。
 
 目录名一律用「游戏类型键 + 卡带 ID」，不随游戏名变化。
-改卡带 ID 的迁移范围见 [`game-storage.md`](specs/game-storage.md)。
+改卡带 ID 与改游戏类型的迁移范围见 [`game-storage.md`](specs/game-storage.md)。
 
 ### 路径规则
 
@@ -261,6 +261,8 @@
 说明：
 
 - **类型目录名**用 `game_type` 的键值，与 SQLite 字段一致。
+- **改类型**是显式迁移：游戏目录、存档目录、截图目录一起搬，并改写五处路径列；
+  旧运行时解包产物作废。
 - **本体 / 封面**路径固定，不随上传文件名变；同名重复上传会覆盖。
 - **换本体**只允许同类型；跨类型 400 且旧档不动。
 - **H5** 上传只校验不解压；播放时按需解到运行时根。

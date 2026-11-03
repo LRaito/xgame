@@ -31,6 +31,7 @@ import { useRoute, useRouter } from "vue-router";
 import { ElMessage } from "element-plus";
 import { getPlayableGameAPI, h5EntryPath } from "@/api/games";
 import { gameTypeMeta } from "@/constants/gameTypes";
+import { useGameTypesStore } from "@/store/gameTypes";
 import GameShell from "@components/games/GameShell.vue";
 import StartGate from "@components/games/StartGate.vue";
 import { hasUserGesture } from "@/utils/userActivation";
@@ -141,6 +142,7 @@ function onSyncCloudHotkey(event) {
 }
 
 onMounted(() => {
+    void useGameTypesStore().ensureLoaded();
     window.addEventListener("keydown", onSyncCloudHotkey);
     loadGame();
 });

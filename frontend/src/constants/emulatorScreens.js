@@ -25,6 +25,19 @@ export const EMU_NATIVE = {
     segaMD: { width: 320, height: 224 },
     segaGG: { width: 160, height: 144 },
     segaMS: { width: 256, height: 192 },
+    vb: { width: 384, height: 224 },
+    sega32x: { width: 320, height: 224 },
+    pce: { width: 256, height: 240 },
+    ngp: { width: 160, height: 152 },
+    ws: { width: 224, height: 144 },
+    atari2600: { width: 160, height: 192 },
+    atari7800: { width: 320, height: 240 },
+    jaguar: { width: 320, height: 240 },
+    c64: { width: 384, height: 272 },
+    c128: { width: 384, height: 272 },
+    pet: { width: 320, height: 200 },
+    plus4: { width: 320, height: 200 },
+    vic20: { width: 384, height: 272 },
 };
 
 /**
@@ -55,9 +68,12 @@ export const NDS_SCREEN_MODES = ["dual", "top", "side"];
  * 该游戏类型截图的宽高比（宽 / 高）；未知类型按 1:1。
  *
  * 详情图片栏与截图管理只用它决定**截图**格子的形状；封面与图集仍保持 1:1，
- * 所以加竖屏机种（NDS）不会改变现有 7 个机种的观感。
+ * 所以加竖屏机种（NDS）不会改变其余机种的观感。
  * NDS 固定按 dual 的 256:438 展示：在 top / side 模式截的图尺寸不同，会在框内
  * 以 object-fit: contain 居中显示（不变形、留黑边），这是已知限制。
+ *
+ * 第 1 档新增的 8 个机种填的是常见帧缓冲值；个别游戏的输出高度会随区域或内核选项变化，
+ * 以引擎上报的 videoInfo 为准，截图框比例如有偏差按实测图校准这里。
  */
 export function screenshotAspect(gameType) {
     const size = EMU_NATIVE[gameType];

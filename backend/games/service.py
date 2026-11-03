@@ -37,7 +37,7 @@ from backend.games.models import (
     GameUserStat,
     cover_types_for,
 )
-from backend.games.platforms import playable_platforms
+from backend.games.platforms import all_body_extensions, playable_platforms
 from backend.games.runtime_assets import RuntimeAssets
 from backend.storage.types import StorageBackend
 
@@ -51,7 +51,7 @@ GAME_TYPE_H5 = "h5"
 #
 # **机种那部分从 `backend/games/platforms.py` 的机种词表派生**（id 就是 EJS 的 system key，
 # 也就是 game_type 的值），所以「哪些机种能上传」只需要改那张表——但 `extensions` 非空的
-# 机种才会出现在这里：词表里还有 28 个 EJS 支持、本项目还没打包 core 的机种（n64/psx…），
+# 机种才会出现在这里：词表里还有 20 个 EJS 支持、本项目还没打包 core 的机种（n64/psx…），
 # 它们只用来给游戏发现的外部名录「对上号」，不开放上传。
 #
 # flash 与 h5 **不是机种**（是载体类型），所以不来自词表、写在这里，永远排在最前。
@@ -78,7 +78,7 @@ _DEFAULT_EXTENSIONS: dict[str, str] = {
 }
 
 # 各类型的显示名，只用于后端拼中文报错文案（与 COVER_TYPE_LABELS 同一用途）。
-# 前端展示层镜像在 `frontend/src/constants/gameTypes.js` 的 label 字段（可玩机种那 7 条），
+# 前端展示层镜像在 `frontend/src/constants/gameTypes.js` 的 label 字段（可玩机种那 16 条），
 # 两边必须逐字一致，由 `tests/test_platforms.py` 钉住。
 GAME_TYPE_LABELS: dict[str, str] = {
     GAME_TYPE_FLASH: "Flash",
@@ -115,17 +115,41 @@ _GUIDE_PDF_HEADER_BYTES = 1024
 
 
 def allowed_body_extensions() -> tuple[str, ...]:
-    """全部允许的本体扩展名（供前端 accept 与错误提示使用，已排序）。"""
-    extensions = {ext for exts in _GAME_TYPE_EXTENSIONS.values() for ext in exts}
+    """全部允许的本体扩展名（供前端 accept 与错误提示使用，已排序）。
+
+    机种部分只从词表取，flash / h5 这两个载体类型各补自己的后缀。
+    """
+    extensions = set(all_body_extensions())
+    extensions.update(_GAME_TYPE_EXTENSIONS[GAME_TYPE_FLASH])
+    extensions.update(_GAME_TYPE_EXTENSIONS[GAME_TYPE_H5])
     return tuple(sorted(extensions))
 
 
+def game_types_of_extension(extension: str) -> tuple[str, ...]:
+    """该后缀的全部候选类型，顺序即 `GAME_TYPES` 顺序（第 1 个是默认项）。
+
+    后缀可以跨机种重叠（Commodore 的 `.d64` / `.prg`），所以这里返回的是候选集，
+    不再假设「一个后缀只对应一个类型」。
+    """
+    normalized = (extension or "").strip().lower()
+    if normalized and not normalized.startswith("."):
+        normalized = f".{normalized}"
+    if not normalized:
+        return ()
+    return tuple(
+        game_type for game_type, extensions in _GAME_TYPE_EXTENSIONS.items() if normalized in extensions
+    )
+
+
 def game_type_of_extension(extension: str) -> str | None:
-    """扩展名对应的游戏类型；不是已收录的本体格式时返回 None。"""
-    for game_type, extensions in _GAME_TYPE_EXTENSIONS.items():
-        if extension in extensions:
-            return game_type
-    return None
+    """兼容旧调用：候选集的第 1 个；不是已收录的本体格式时返回 None。"""
+    candidates = game_types_of_extension(extension)
+    return candidates[0] if candidates else None
+
+
+def _type_labels(game_types: Sequence[str]) -> str:
+    """把类型键拼成中文显示名，供报错文案用（不用 `nes` / `segaMD` 这种内部键）。"""
+    return "、".join(f"「{GAME_TYPE_LABELS.get(item, item)}」" for item in game_types)
 
 
 def _remote_extension(url: str) -> str:
@@ -143,46 +167,133 @@ def _remote_extension(url: str) -> str:
 def _remote_body_filename(url: str, game_type: str) -> str:
     """按用户选定的类型定远程本体的文件名（这里只用到它的扩展名）。
 
-    网络上传时类型以下拉选择为准：地址自带的扩展名能认出类型就必须与所选一致，
-    不一致当场报错（选错存进去也是放不出来）；认不出（没扩展名，或不是已收录的
-    格式）就用该类型的默认后缀补上。
+    地址自带已收录的后缀时保留它（`.d64` 仍存成 `.d64`）；看不出（没有后缀或
+    不是已收录格式）就用所选类型的默认后缀补上。类型与后缀是否匹配由
+    `resolve_game_type()` 在下载前统一校验。
     """
-    extensions = _GAME_TYPE_EXTENSIONS.get(game_type)
-    if extensions is None:
+    if game_type not in _GAME_TYPE_EXTENSIONS:
         raise ValidationError("请选择游戏类型。")
     extension = _remote_extension(url)
-    detected = game_type_of_extension(extension) if extension else None
-    if detected is not None and detected != game_type:
-        # 报错文案用显示名（任天堂 FC / 世嘉 MD…），不用 `nes`/`segaMD` 这种内部键值
-        raise ValidationError(
-            f"该地址的文件属于「{GAME_TYPE_LABELS[detected]}」，"
-            f"与所选的「{GAME_TYPE_LABELS[game_type]}」不符，请确认后重试。"
-        )
-    return f"remote{extension if detected else _DEFAULT_EXTENSIONS[game_type]}"
+    if not extension or not game_types_of_extension(extension):
+        extension = _DEFAULT_EXTENSIONS[game_type]
+    return f"remote{extension}"
+
+
+def resolve_game_type(
+    extension: str,
+    requested: str = "",
+    *,
+    allow_unknown_extension: bool = False,
+) -> str:
+    """创建时判型的唯一入口：后缀候选集 + 用户选择。
+
+    - 后缀没有候选：本地文件直接拒绝；直链在 `allow_unknown_extension=True` 时
+      允许用户任选一个已收录类型（地址可能根本看不出后缀）。
+    - 候选唯一：自动确定；用户传了不同的类型仍拒绝。
+    - 候选多个：必须由用户选择，且必须落在候选集内。
+    """
+    candidates = game_types_of_extension(extension)
+    if not candidates:
+        if allow_unknown_extension and requested:
+            return validate_game_type(requested)
+        allowed = "、".join(allowed_body_extensions())
+        raise ValidationError(f"无法识别的游戏文件格式，仅支持 {allowed}。")
+    if requested:
+        value = validate_game_type(requested)
+        if value not in candidates:
+            raise ValidationError(
+                f"该文件属于{_type_labels(candidates)}，与所选的"
+                f"「{GAME_TYPE_LABELS.get(value, value)}」不符，请确认后重试。"
+            )
+        return value
+    if len(candidates) == 1:
+        return candidates[0]
+    raise ValidationError(f"该后缀对应多个机种（{_type_labels(candidates)}），请选择游戏类型。")
 
 
 def detect_game_type(filename: str) -> str:
-    """按本体文件名判定游戏类型——类型只由本体决定，不接受手动指定。
+    """按本体文件名判定游戏类型。
 
-    各类型的扩展名互不重叠（见 _GAME_TYPE_EXTENSIONS），因此判定无歧义；
-    未收录的扩展名一律拒绝，并在提示里列出支持的格式。
+    后缀只有一个候选时自动确定；多个候选（Commodore）时不带选择直接报错，
+    需要走 `resolve_game_type()` 并由用户指定类型。
     """
-    game_type = game_type_of_extension(Path(filename or "").suffix.lower())
-    if game_type is None:
+    return resolve_game_type(Path(filename or "").suffix.lower())
+
+
+def require_body_type_for_current(extension: str, current: str) -> str:
+    """换本体：只要当前类型在该后缀的候选集内就接受（多候选后缀也能正常换本）。"""
+    candidates = game_types_of_extension(extension)
+    if not candidates:
         allowed = "、".join(allowed_body_extensions())
         raise ValidationError(f"无法识别的游戏文件格式，仅支持 {allowed}。")
-    return game_type
+    if current not in candidates:
+        raise _body_type_mismatch(current, candidates)
+    return current
 
 
-def _body_type_mismatch(current: str, detected: str) -> ValidationError:
-    """换本体时新文件与游戏当前类型不一致的中文错误（类型创建后不可变）。"""
+def validate_game_type(raw: str) -> str:
+    """校验一个类型键是否可上传/可落库（flash / h5 / 可玩机种）。"""
+    value = (raw or "").strip()
+    if not value:
+        raise ValidationError("请选择游戏类型。")
+    if value not in _GAME_TYPE_EXTENSIONS:
+        raise ValidationError("不支持的游戏类型。")
+    return value
+
+
+def game_type_descriptors() -> list[dict]:
+    """`/status` 用的类型元数据，顺序与 `GAME_TYPES` 一致。
+
+    前端据此渲染下拉、上传 accept 与类型提示，不再自己维护镜像表。
+    """
+    descriptors: list[dict] = []
+    for game_type in GAME_TYPES:
+        if game_type == GAME_TYPE_FLASH:
+            kind = "flash"
+        elif game_type == GAME_TYPE_H5:
+            kind = "h5"
+        else:
+            kind = "emulator"
+        descriptors.append(
+            {
+                "id": game_type,
+                "label": GAME_TYPE_LABELS[game_type],
+                "kind": kind,
+                "extensions": sorted(_GAME_TYPE_EXTENSIONS[game_type]),
+                "default_extension": _DEFAULT_EXTENSIONS[game_type],
+            }
+        )
+    return descriptors
+
+
+def extension_candidates() -> dict[str, list[str]]:
+    """后缀 → 候选类型（顺序即 `GAME_TYPES` 顺序），供前端创建时弹下拉。"""
+    result: dict[str, list[str]] = {}
+    for game_type in GAME_TYPES:
+        for extension in sorted(_GAME_TYPE_EXTENSIONS[game_type]):
+            result.setdefault(extension, []).append(game_type)
+    return result
+
+
+def default_game_types_by_extension() -> dict[str, str]:
+    """后缀 → 默认类型（候选第 1 个）。"""
+    return {
+        extension: candidates[0]
+        for extension, candidates in extension_candidates().items()
+    }
+
+
+def _body_type_mismatch(current: str, detected: str | Sequence[str]) -> ValidationError:
+    """换本体时新文件与游戏当前类型不一致的中文错误。"""
     current_label = GAME_TYPE_LABELS.get(current, current)
-    detected_label = GAME_TYPE_LABELS.get(detected, detected)
+    detected_labels = (
+        _type_labels([detected]) if isinstance(detected, str) else _type_labels(detected)
+    )
     allowed = "、".join(sorted(_GAME_TYPE_EXTENSIONS.get(current, ())))
     suffix = f"（支持 {allowed}）" if allowed else ""
     return ValidationError(
         f"该游戏的本体类型是「{current_label}」，只能更换同一游戏类型的本体{suffix}；"
-        f"上传的文件是「{detected_label}」，类型不一致，已拒绝。"
+        f"上传的文件属于{detected_labels}，类型不一致，已拒绝。"
     )
 
 
@@ -555,35 +666,49 @@ class GameService:
         上传管线，原始文件名不落盘。
 
         **不接受封面类型**：新建一律留空，只有编辑弹框手动选或美化封面时才落值。
+
+        本体类型由「后缀候选集 + `body_game_type`」确定：后缀只有一个候选时可以不传；
+        Commodore 这种多候选后缀必须由用户选。
         """
         cartridge_id = validate_cartridge_id(cartridge_id)
         self._ensure_cartridge_free(cartridge_id)
+        if body is not None:
+            game_type = resolve_game_type(
+                Path(body.filename or "").suffix.lower(), body_game_type
+            )
+        elif body_url:
+            # 直链在下载前就把类型定下来：看得出后缀就按候选校验，看不出则允许用户任选
+            game_type = resolve_game_type(
+                _remote_extension(body_url),
+                body_game_type,
+                allow_unknown_extension=True,
+            )
+        else:
+            raise ValidationError("请选择本体文件或填写本体下载地址。")
         if not (body_url or cover_url):
-            if body is None:
-                raise ValidationError("请选择本体文件或填写本体下载地址。")
             return self._create(
                 name,
                 description,
                 body,
                 cover,
                 cartridge_id=cartridge_id,
+                game_type=game_type,
             )
         # 下载来的文件要在整个上传期间保持可读，所以临时目录与句柄都包住 _create
         with tempfile.TemporaryDirectory(prefix="x-game-fetch-") as tmp:
             with ExitStack() as stack:
                 work = Path(tmp)
                 if body is None and body_url:
-                    body = self._remote_body(stack, work / "body", body_url, body_game_type)
+                    body = self._remote_body(stack, work / "body", body_url, game_type)
                 if cover is None and cover_url:
                     cover = self._remote_cover(stack, work / "cover", cover_url)
-                if body is None:
-                    raise ValidationError("请选择本体文件或填写本体下载地址。")
                 return self._create(
                     name,
                     description,
                     body,
                     cover,
                     cartridge_id=cartridge_id,
+                    game_type=game_type,
                 )
 
     def _create(
@@ -594,11 +719,11 @@ class GameService:
         cover: GameUpload | None = None,
         *,
         cartridge_id: str,
+        game_type: str,
     ) -> GameItem:
-        """建条目并上传本体（可选封面）：类型由本体文件名判定，封面类型留空。"""
+        """建条目并上传本体（可选封面）：类型已在 `create()` 里判定，封面类型留空。"""
         name = validate_game_name(name)
         description = validate_description(description)
-        game_type = detect_game_type(body.filename)
         self._ensure_name_free(game_type, name)
         now = datetime.now(timezone.utc)
         row = Game(
@@ -687,6 +812,129 @@ class GameService:
         # 数据根那棵树已经被 move_tree 搬走了，这里只管运行时根。
         self._assets.drop_tree(paths.game_dir(row.game_type, old_id))
         return self._to_item(row)
+
+    def change_game_type(self, game_id: int, game_type: str) -> GameItem:
+        """改游戏类型：游戏目录与各账号的存档/截图目录一起迁到新类型下。
+
+        类型是路径的一级目录，所以这是一次**显式迁移**，与改卡带ID 同一套做法：
+        先校验、查重、算清目录清单并把行里的路径改成新值，再搬目录
+        （中途失败按相反顺序搬回来），最后提交。
+
+        目标类型必须属于当前本体后缀的候选集；唯一候选的后缀因此不能改类型。
+        """
+        row = self._session.get(Game, game_id)
+        if row is None:
+            raise NotFoundError("游戏不存在。")
+        target = validate_game_type(game_type)
+        if target == row.game_type:
+            # 没变就是空操作：不碰磁盘，也不刷 updated_at
+            return self._to_item(row)
+        if not row.game_path:
+            raise ValidationError("该游戏还没有本体，不能修改类型。")
+        extension = Path(row.game_path).suffix.lower()
+        candidates = game_types_of_extension(extension)
+        if target not in candidates:
+            raise ValidationError(
+                f"该游戏的本体后缀 {extension} 只支持{_type_labels(candidates)}，"
+                f"不能改成「{GAME_TYPE_LABELS[target]}」。"
+            )
+        self._ensure_name_free(target, row.name, exclude_id=row.id)
+
+        old_type = row.game_type
+        cartridge_id = row.cartridge_id
+        old_dir = paths.game_dir_of(row.game_path, cartridge_id) or paths.game_dir(
+            old_type, cartridge_id
+        )
+        new_dir = paths.game_dir(target, cartridge_id)
+
+        moves = self._plan_type_moves(row, target, old_dir, new_dir)
+        done = self._move_dirs_for_rename(moves)
+        try:
+            self._apply_type_change(row, target)
+            self._session.add(row)
+            self._session.commit()
+        except IntegrityError:
+            # 并发下目标类型里刚有人占了同名：唯一索引兜底，磁盘搬回去、行不留痕
+            self._session.rollback()
+            self._rollback_dirs_for_rename(done)
+            raise ValidationError(
+                f"「{GAME_TYPE_LABELS[target]}」下已经有叫「{row.name}」的游戏了，换个名字吧。"
+            ) from None
+        except Exception:
+            self._session.rollback()
+            self._rollback_dirs_for_rename(done)
+            raise
+        self._session.refresh(row)
+        # 解包产物按类型分目录，旧类型的那份作废（下次访问按新类型重新解包）。
+        # 数据根那棵树已经被 move_tree 搬走了，这里只管运行时根。
+        self._assets.drop_tree(old_dir)
+        return self._to_item(row)
+
+    def _plan_type_moves(
+        self, row: Game, target: str, old_dir: str, new_dir: str
+    ) -> list[_CartridgeMove]:
+        """算清改类型要搬哪些目录；源目录一律从 `file_path` 反推，不按当前类型硬拼。"""
+        moves: list[_CartridgeMove] = []
+        seen: set[str] = set()
+        targets: dict[str, str] = {}
+
+        def add(source: str | None, destination: str | None) -> None:
+            if not source or not destination or source == destination or source in seen:
+                return
+            seen.add(source)
+            if destination in targets and targets[destination] != source:
+                raise ValidationError(
+                    f"改类型会把「{source}」和「{targets[destination]}」合并到同一目录"
+                    f"「{destination}」，请先手工整理这两个目录再重试。"
+                )
+            targets[destination] = source
+            self._fit_type_path(source)
+            self._fit_type_path(destination)
+            moves.append(_CartridgeMove(source=source, target=destination))
+
+        add(old_dir, new_dir)
+        for asset in (*self._snapshot_file_rows(row.id), *self._screenshot_rows(row.id)):
+            source = paths.scoped_dir_of(asset.file_path, row.cartridge_id)
+            add(source, paths.retarget_game_type(source, target) if source else None)
+
+        # 运行时根的新目录也先算长度，免得搬完才在解包时撞长度上限
+        for maker in (paths.h5_dir, paths.guide_dir):
+            self._fit_type_path(maker(target, row.cartridge_id), root=self._assets.root())
+        return moves
+
+    def _apply_type_change(self, row: Game, target: str) -> None:
+        """把行与各资产路径列里的类型段改成新类型（只改内存，提交由调用方负责）。"""
+        row.game_type = target
+        row.updated_at = datetime.now(timezone.utc)
+        for attr in ("game_path", "cover_path"):
+            value = getattr(row, attr)
+            if value:
+                setattr(row, attr, self._fit_type_path(paths.retarget_game_type(value, target)))
+        for asset in self._gallery_rows(row.id):
+            if asset.file_path:
+                asset.file_path = self._fit_type_path(
+                    paths.retarget_game_type(asset.file_path, target)
+                )
+                self._session.add(asset)
+        for asset in (*self._snapshot_file_rows(row.id), *self._screenshot_rows(row.id)):
+            if asset.file_path:
+                asset.file_path = self._fit_type_path(
+                    paths.retarget_game_type(asset.file_path, target)
+                )
+                self._session.add(asset)
+        # 新类型不支持美化封面，或现有样式不在新类型里，就清空（封面文件随目录搬走）
+        if row.cover_type and row.cover_type not in cover_types_for(target):
+            row.cover_type = None
+
+    def _fit_type_path(self, value: str, *, root: str | None = None) -> str:
+        """改类型后的路径过一遍 Windows 总长守卫，原样返回。"""
+        archive.ensure_path_fits(
+            root if root is not None else self._storage_root(),
+            value,
+            where="改类型后",
+            hint="或把卡带 ID 改短一点",
+        )
+        return value
 
     def _plan_cartridge_rename(self, row: Game, new_id: str) -> list[_CartridgeMove]:
         """算清这次改名要搬哪些目录，并把行里所有引用旧卡带ID 的路径改成新值。
@@ -866,7 +1114,7 @@ class GameService:
     ) -> GameItem:
         """一步完成：校验类型/后缀 → 分块上传 → 更新行 → 删旧对象。
 
-        换本体只接受与游戏当前 `game_type` 相同的本体（类型创建后不可变），成功后
+        换本体只接受与游戏当前 `game_type` 相同的本体（改类型走 `change_game_type()`），成功后
         重算并覆盖 `crc32`/`size`/`game_path`；失败整体回滚，旧档不动。
         来源可以是本地文件（`upload`）或网络直链（`url`，本体要带上 `game_type`）。
 
@@ -951,10 +1199,9 @@ class GameService:
             raise ValidationError("文件大小无效。")
         crc32 = ""
         if kind == "game":
-            # 类型创建后不可变：先按扩展名判类型，跨类型时连流都不读、旧档不动
-            detected = detect_game_type(filename)
-            if detected != row.game_type:
-                raise _body_type_mismatch(row.game_type, detected)
+            # 换本体不改变类型：只看当前类型是否在该后缀的候选集内
+            # （Commodore 的 .d64 有 5 个候选，当前是哪个就仍用哪个）
+            require_body_type_for_current(extension, row.game_type)
             # 同类型才算摘要；它只是当前本体的记录，不再作为更换的锁
             crc32 = _crc32_stream(upload.stream)
             _rewind(upload.stream)

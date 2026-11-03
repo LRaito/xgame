@@ -182,6 +182,7 @@ import {
 } from "@/api/games";
 import { EMU_NATIVE, NDS_NATIVE, NDS_SCREEN_MODES } from "@/constants/emulatorScreens";
 import { gameTypeMeta } from "@/constants/gameTypes";
+import { useGameTypesStore } from "@/store/gameTypes";
 import {
     EMU_FILTER_NONE,
     EMU_FILTER_SETTING_KEYS,
@@ -1974,6 +1975,8 @@ watch(shotDialogVisible, (visible) => {
 });
 
 onMounted(() => {
+    // 类型元数据用于标题与 kind 校验；即使还没加载，metaOf 也会回退到以 game_type 为 core
+    void useGameTypesStore().ensureLoaded();
     // 机壳用视口坐标定位：窗口缩放、页面/游戏区滚动都要重新同步。
     // 滚动用捕获阶段监听：滚动发生在内层容器（.game-shell__body 等）上，不冒泡到 window
     window.addEventListener("resize", syncStageRect);

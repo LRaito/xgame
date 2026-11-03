@@ -174,7 +174,7 @@ class GameGalleryImage(SQLModel, table=True):
     与截图相反，图集**按游戏共享**——不记上传者，任何登录用户都能看、能改。
     排序与截图同一套分数机制（sort_order 是浮点分数，见 GameScreenshot 的说明），
     所以同样不加 (game_id, sort_order) 唯一约束。字节落在
-    game/{类型}/{卡带ID}/image/ 下（**游戏目录内**，类型创建后不可变），
+    game/{类型}/{卡带ID}/image/ 下（**游戏目录内**，随游戏类型迁移），
     file_path 存相对路径。
     """
 

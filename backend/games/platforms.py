@@ -16,9 +16,9 @@ EJS 4.2.3 的 `EmulatorJS.getCores()`
 1. **`id` 就是 `game_type` 的值**（对已收录可玩的机种而言），所以磁盘目录名、库里已有的
    `games.game_type`、EJS 的 `EJS_core` 天然一致，改这张表**不会**挪动任何文件。
 2. **`label` 是三处共用的显示名**（中文，厂商 + 空格 + 型号；没有厂商名的只写型号），
-   前端 `constants/gameTypes.js` 里那 8 个可玩机种的 label 是它的镜像，
-   `tests/test_platforms.py` 钉住两边逐字一致，也钉住这个格式。
-3. **`extensions` 非空才代表本项目已收录、可上传可玩**——只有 8 个机种有；其余机种（含 EJS 支持
+   前端 `constants/gameTypes.js` 里按 id 保留图标/描述等 UI 元数据，
+   label 与扩展名由 `/api/games/status` 从本表派生。
+3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 21 个机种有；其余机种（含 EJS 支持
    但本项目还没打包 core 的 n64/psx 等）只用来给外部名录「对上号」，不开放上传。
 
 `flash` / `h5` **不是机种**（它们是载体类型：Ruffle 播的 SWF 与上传 ZIP 解包的网页游戏），
@@ -50,6 +50,12 @@ class Platform:
 # 所以可玩机种在表里的先后 = 管理页下拉与游戏中心分组的先后。可玩机种刻意保持
 # 项目既有顺序（`nes` `snes` `gb` `gba` `nds` `segaMD` `segaGG` `segaMS`，世嘉那三个 GG 在 SMS 前），
 # NDS 插在 GBA 之后，免得这次统一顺手把界面顺序也改了。
+#
+# 前端展示层的 label 与扩展名不再手写镜像：由 `/api/games/status` 从本表派生，
+# 前端只保留图标、描述这类纯 UI 元数据。
+# 加机种：id / label / aliases / cores / extensions 只改这里；另补 core 资产与前端帧缓冲。
+# 扩展名**允许跨机种重叠**（Commodore 的 `.d64` / `.prg`），
+# 重叠时由 `playable_platforms_for_extension()` 给出候选，用户在创建时选。
 #
 # **加机种只改这里**：id 必须是 EJS 的 system key，cores 照抄 EJS，别名要覆盖外部名录的写法。
 PLATFORMS: tuple[Platform, ...] = (
@@ -106,6 +112,8 @@ PLATFORMS: tuple[Platform, ...] = (
         label="任天堂 Virtual Boy",
         cores=("beetle_vb",),
         aliases=("任天堂Virtual Boy", "VB", "Virtual Boy"),
+        extensions=(".vb",),
+        default_extension=".vb",
     ),
     # —— 世嘉 ——
     Platform(
@@ -143,6 +151,8 @@ PLATFORMS: tuple[Platform, ...] = (
         label="世嘉 32X",
         cores=("picodrive",),
         aliases=("世嘉32x", "32X"),
+        extensions=(".32x",),
+        default_extension=".32x",
     ),
     Platform(
         id="segaSaturn",
@@ -176,6 +186,9 @@ PLATFORMS: tuple[Platform, ...] = (
         label="日电 PCE",
         cores=("mednafen_pce",),
         aliases=("日电PCE", "日电pcecd", "PCE", "PC Engine"),
+        # 只开 HuCard；CD 游戏要先有多文件上传与 syscard3.pce，暂不开放
+        extensions=(".pce", ".sgx"),
+        default_extension=".pce",
     ),
     Platform(
         id="pcfx",
@@ -189,6 +202,8 @@ PLATFORMS: tuple[Platform, ...] = (
         label="SNK NGPC",
         cores=("mednafen_ngp",),
         aliases=("SNK公司NGPC", "NGPC", "Neo Geo Pocket"),
+        extensions=(".ngc", ".ngp"),
+        default_extension=".ngc",
     ),
     # —— 万代 ——
     Platform(
@@ -196,6 +211,8 @@ PLATFORMS: tuple[Platform, ...] = (
         label="万代 WS",
         cores=("mednafen_wswan",),
         aliases=("万代WS,WSC", "WS", "WSC", "WonderSwan"),
+        extensions=(".ws", ".wsc"),
+        default_extension=".ws",
     ),
     # —— 雅达利 ——
     Platform(
@@ -203,6 +220,9 @@ PLATFORMS: tuple[Platform, ...] = (
         label="雅达利 2600",
         cores=("stella2014",),
         aliases=("雅达利2600", "ATARI 2600"),
+        # 不收 .bin：2600/5200/7800 都用它，没法判型
+        extensions=(".a26",),
+        default_extension=".a26",
     ),
     Platform(
         id="atari5200",
@@ -215,12 +235,18 @@ PLATFORMS: tuple[Platform, ...] = (
         label="雅达利 7800",
         cores=("prosystem",),
         aliases=("雅达利7800", "ATARI 7800"),
+        # BIOS 可选；缺 BIOS 时少数游戏黑屏，先按无 BIOS 开放
+        extensions=(".a78",),
+        default_extension=".a78",
     ),
     Platform(
         id="jaguar",
         label="雅达利 Jaguar",
         cores=("virtualjaguar",),
         aliases=("雅达利Jaguar", "JAGUAR", "Atari Jaguar"),
+        # 核兼容性较差，先开放再按实际 ROM 回归
+        extensions=(".j64", ".jag"),
+        default_extension=".j64",
     ),
     Platform(
         id="lynx",
@@ -241,11 +267,48 @@ PLATFORMS: tuple[Platform, ...] = (
         cores=("opera",),
         aliases=("松下3DO游戏", "3DO"),
     ),
-    Platform(id="c64", label="Commodore 64", cores=("vice_x64sc",), aliases=("C64",)),
-    Platform(id="c128", label="Commodore 128", cores=("vice_x128",), aliases=("C128",)),
-    Platform(id="pet", label="Commodore PET", cores=("vice_xpet",), aliases=("PET",)),
-    Platform(id="plus4", label="Commodore Plus/4", cores=("vice_xplus4",), aliases=("PLUS/4",)),
-    Platform(id="vic20", label="Commodore VIC-20", cores=("vice_xvic",), aliases=("VIC-20",)),
+    # Commodore 五个共用 .d64 / .prg：后缀不唯一时由用户选类型，
+    # 候选顺序取本表的先后，因此默认候选是 c64。
+    Platform(
+        id="c64",
+        label="Commodore 64",
+        cores=("vice_x64sc",),
+        aliases=("C64",),
+        extensions=(".d64", ".tap", ".crt", ".prg"),
+        default_extension=".d64",
+    ),
+    Platform(
+        id="c128",
+        label="Commodore 128",
+        cores=("vice_x128",),
+        aliases=("C128",),
+        extensions=(".d64", ".d71", ".prg"),
+        default_extension=".d64",
+    ),
+    Platform(
+        id="pet",
+        label="Commodore PET",
+        cores=("vice_xpet",),
+        aliases=("PET",),
+        extensions=(".prg", ".d64"),
+        default_extension=".prg",
+    ),
+    Platform(
+        id="plus4",
+        label="Commodore Plus/4",
+        cores=("vice_xplus4",),
+        aliases=("PLUS/4",),
+        extensions=(".prg", ".d64"),
+        default_extension=".prg",
+    ),
+    Platform(
+        id="vic20",
+        label="Commodore VIC-20",
+        cores=("vice_xvic",),
+        aliases=("VIC-20",),
+        extensions=(".prg", ".d64"),
+        default_extension=".prg",
+    ),
     Platform(id="amiga", label="Amiga", cores=("puae",), aliases=("AMIGA",)),
     Platform(id="dos", label="DOS", cores=("dosbox_pure",), aliases=("DOS",)),
     Platform(
@@ -338,6 +401,46 @@ def platform_label(platform_id: str | None, fallback: str = "") -> str:
 def playable_platforms() -> tuple[Platform, ...]:
     """本项目已收录、可上传可玩的机种（有本体扩展名白名单的那些）。"""
     return tuple(platform for platform in PLATFORMS if platform.extensions)
+
+
+def normalize_extension(extension: str) -> str:
+    """扩展名的比较口径：去空白、转小写、补前导点；空串返回空串。"""
+    value = (extension or "").strip().lower()
+    if not value:
+        return ""
+    return value if value.startswith(".") else f".{value}"
+
+
+def playable_platforms_for_extension(extension: str) -> tuple[Platform, ...]:
+    """该后缀的全部候选机种，顺序即词表顺序（候选第 1 个就是默认选中项）。
+
+    同一后缀可以属于多个机种（Commodore 的 `.d64` / `.prg`），
+    所以调用方不能假设「一个后缀只对应一个类型」。
+    """
+    normalized = normalize_extension(extension)
+    if not normalized:
+        return ()
+    return tuple(
+        platform
+        for platform in playable_platforms()
+        if normalized in {normalize_extension(ext) for ext in platform.extensions}
+    )
+
+
+def default_playable_platform_for_extension(extension: str) -> Platform | None:
+    """默认候选机种（词表顺序第一个）；没有候选返回 None。"""
+    candidates = playable_platforms_for_extension(extension)
+    return candidates[0] if candidates else None
+
+
+def all_body_extensions() -> tuple[str, ...]:
+    """全部可玩机种的本体扩展名（去重、排序），供上传 accept 与报错文案。"""
+    extensions = {
+        normalize_extension(ext)
+        for platform in playable_platforms()
+        for ext in platform.extensions
+    }
+    return tuple(sorted(extensions))
 
 
 def platform_cores(platform_id: str) -> tuple[str, ...]:

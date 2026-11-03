@@ -121,7 +121,7 @@ const props = defineProps({
     // 本人该游戏的截图，已按后端给的展示顺序排好
     screenshots: { type: Array, default: () => [] },
     // 截图的宽高比（宽 / 高）：只有截图格子按它变高（NDS 双屏是竖版），
-    // 封面与图集仍保持 1:1，现有 7 个机种的观感不变
+    // 封面与图集仍保持 1:1，其余机种的观感不变
     screenshotAspect: { type: Number, default: 1 },
 });
 

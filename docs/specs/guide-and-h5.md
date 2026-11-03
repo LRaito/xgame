@@ -18,6 +18,7 @@
 - PDF 攻略存数据根 `game/{game_type}/{卡带ID}/guide.pdf`。
 - 攻略 ZIP 的解包产物在运行时根 `game/{game_type}/{卡带ID}/guide/{包内相对路径}`。
 - 路径里的 `{game_type}` 用键值（如 `h5` / `gba`），不是中文显示名。
+- 改游戏类型时攻略包随游戏目录一起迁移；路径里没有攻略列，按新类型现拼。
 - 两个根下相对路径逐字一致，只换拼的根。
 - 所有读写经 `LocalStorage`，路径拼接集中在 `games/paths.py`。
 

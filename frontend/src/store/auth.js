@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { loginAPI, logoutAPI, meAPI, registerAPI } from "@/api/auth";
+import { useGameTypesStore } from "@/store/gameTypes";
 import { clearSession, getUsername, setUsername } from "@/utils/auth";
 
 export const useAuthStore = defineStore("auth", {
@@ -34,6 +35,8 @@ export const useAuthStore = defineStore("auth", {
             } finally {
                 this.username = "";
                 clearSession();
+                // 类型注册表跟着账号走，登出时清掉，换账号后重新拉取
+                useGameTypesStore().reset();
             }
         },
     },

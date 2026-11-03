@@ -4,7 +4,7 @@
  *
  * 与 scripts/copy-ruffle.mjs 的分工一致，但 EmulatorJS 没有官方 npm 包、官方 release
  * 是 303MB 的全量 .7z，因此这里只从官方 CDN（与 release 同源同版本）按需拉取最小集：
- *  loader + 引擎（emulator.min.js/.css）+ 本项目 7 个平台/机种 core（wasm.data + report）。
+ *  loader + 引擎（emulator.min.js/.css）+ 本项目 20 个平台/机种 core（wasm.data + report）。
  *
  * core 文件命名规则（EmulatorJS 4.2.3 引擎逻辑）：
  *   cores/<core>[-thread][-legacy]-wasm.data
@@ -41,7 +41,7 @@ const DONE_MARKER = ".emulatorjs.done";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const destRoot = join(root, "public/emulatorjs", "data");
 
-// data/ 目录下相对路径清单（顶层引擎文件 + 7 个平台/机种 core）
+// data/ 目录下相对路径清单（顶层引擎文件 + 20 个平台/机种 core）
 const FILES = [
     "loader.js",
     "emulator.min.js",
@@ -78,6 +78,48 @@ const FILES = [
     "cores/melonds-wasm.data",
     "cores/melonds-legacy-wasm.data",
     "cores/reports/melonds.json",
+    // 第 1 档机种：Virtual Boy / 32X / PCE / NGPC / WS / Atari 2600 / 7800 / Jaguar
+    // 32X 用的就是 picodrive；PCE / NGPC / WS 是 Mednafen 系核
+    "cores/beetle_vb-wasm.data",
+    "cores/beetle_vb-legacy-wasm.data",
+    "cores/reports/beetle_vb.json",
+    "cores/picodrive-wasm.data",
+    "cores/picodrive-legacy-wasm.data",
+    "cores/reports/picodrive.json",
+    "cores/mednafen_pce-wasm.data",
+    "cores/mednafen_pce-legacy-wasm.data",
+    "cores/reports/mednafen_pce.json",
+    "cores/mednafen_ngp-wasm.data",
+    "cores/mednafen_ngp-legacy-wasm.data",
+    "cores/reports/mednafen_ngp.json",
+    "cores/mednafen_wswan-wasm.data",
+    "cores/mednafen_wswan-legacy-wasm.data",
+    "cores/reports/mednafen_wswan.json",
+    "cores/stella2014-wasm.data",
+    "cores/stella2014-legacy-wasm.data",
+    "cores/reports/stella2014.json",
+    "cores/prosystem-wasm.data",
+    "cores/prosystem-legacy-wasm.data",
+    "cores/reports/prosystem.json",
+    "cores/virtualjaguar-wasm.data",
+    "cores/virtualjaguar-legacy-wasm.data",
+    "cores/reports/virtualjaguar.json",
+    // Commodore 五个：VICE 各机种核（c64/c128/pet/plus4/vic20）
+    "cores/vice_x64sc-wasm.data",
+    "cores/vice_x64sc-legacy-wasm.data",
+    "cores/reports/vice_x64sc.json",
+    "cores/vice_x128-wasm.data",
+    "cores/vice_x128-legacy-wasm.data",
+    "cores/reports/vice_x128.json",
+    "cores/vice_xpet-wasm.data",
+    "cores/vice_xpet-legacy-wasm.data",
+    "cores/reports/vice_xpet.json",
+    "cores/vice_xplus4-wasm.data",
+    "cores/vice_xplus4-legacy-wasm.data",
+    "cores/reports/vice_xplus4.json",
+    "cores/vice_xvic-wasm.data",
+    "cores/vice_xvic-legacy-wasm.data",
+    "cores/reports/vice_xvic.json",
 ];
 
 // 本地化合并的输入（官方语言包，仅构建期下载、不入 data/）与合并产物输出（相对 data/）

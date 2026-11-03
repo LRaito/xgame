@@ -28,8 +28,11 @@ from backend.games.service import (
     GameService,
     GameUpload,
     detect_game_type,
+    game_types_of_extension,
     normalize_cartridge_id,
     play_path,
+    require_body_type_for_current,
+    resolve_game_type,
     sanitize_game_name,
     validate_cartridge_id,
     validate_game_name,
@@ -101,10 +104,12 @@ def _create_game(
     cartridge_id: str | None = None,
     description: str = "",
     cover_type: str | None = None,
+    game_type: str | None = None,
 ):
-    """按新流程建游戏：一次请求提交名称/卡带ID/描述/本体（可选封面），类型由后端识别。
+    """按新流程建游戏：一次请求提交名称/卡带ID/描述/本体（可选封面）。
 
-    `cover_type` 只是给「新建不接受这个字段」的用例硬塞用的，正常调用别传。
+    类型由后端按「后缀候选集 + `game_type`」判定；`.d64` / `.prg` 这类多候选后缀
+    必须传 `game_type`，唯一候选可省略。
     """
     files = {"file": (filename, body, mime)}
     if cover is not None:
@@ -114,6 +119,8 @@ def _create_game(
         "cartridge_id": cartridge_id or _next_cartridge_id(),
         "description": description,
     }
+    if game_type is not None:
+        data["body_game_type"] = game_type
     if cover_type is not None:
         data["cover_type"] = cover_type
     return client.post("/api/games/manage", data=data, files=files)
@@ -134,6 +141,31 @@ def test_detect_game_type_by_extension():
     assert detect_game_type("demo.gen") == "segaMD"
     assert detect_game_type("demo.gg") == "segaGG"
     assert detect_game_type("demo.sms") == "segaMS"
+    assert detect_game_type("demo.d71") == "c128"
+    assert detect_game_type("demo.tap") == "c64"
+    assert detect_game_type("demo.crt") == "c64"
+    # Commodore 的 .d64 / .prg 跨机种重叠：不带选择时有歧义
+    with pytest.raises(Exception):
+        detect_game_type("demo.d64")
+    with pytest.raises(Exception):
+        detect_game_type("demo.prg")
+    assert game_types_of_extension(".d64") == (
+        "c64",
+        "c128",
+        "pet",
+        "plus4",
+        "vic20",
+    )
+    assert resolve_game_type(".d64", "c128") == "c128"
+    assert resolve_game_type(".prg", "vic20") == "vic20"
+    with pytest.raises(Exception):
+        resolve_game_type(".d64", "nes")
+    with pytest.raises(Exception):
+        resolve_game_type(".d64")
+    # 换本体：当前类型在候选集内即可
+    assert require_body_type_for_current(".d64", "c128") == "c128"
+    with pytest.raises(Exception):
+        require_body_type_for_current(".d64", "nes")
     with pytest.raises(Exception):
         detect_game_type("demo.txt")
     with pytest.raises(Exception):
@@ -1336,6 +1368,272 @@ def test_rename_cartridge_id_keeps_crc32_and_cover_type(
     assert body["crc32"] == _crc32_of(replacement)
     assert _read(storage_root, "game/nes/LOCK-2/game.nes") == replacement
     assert body["cover_type"] == "nes"
+
+
+def _change_type(client, game_id: int, game_type: str):
+    return client.put(
+        f"/api/games/manage/{game_id}/game-type",
+        json={"game_type": game_type},
+    )
+
+
+def test_local_multi_candidate_requires_game_type(logged_in_games, storage_root):
+    """`.d64` 有 5 个候选：不选类型直接拒绝，不落任何文件。"""
+    response = _create_game(logged_in_games, "多候选", "demo.d64")
+    assert response.status_code == 400
+    assert "游戏类型" in response.json()["message"]
+    assert _files(storage_root) == set()
+
+
+def test_local_multi_candidate_accepts_selected_type(logged_in_games, storage_root):
+    """用户选了 c128：按所选类型落库，目录与后缀都用它。"""
+    response = _create_game(
+        logged_in_games,
+        "选 C128",
+        "demo.d64",
+        b"d64-body",
+        cartridge_id="TYPE-1",
+        game_type="c128",
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()["data"]
+    assert body["game_type"] == "c128"
+    assert body["game_path"] == "game/c128/TYPE-1/game.d64"
+    assert _read(storage_root, "game/c128/TYPE-1/game.d64") == b"d64-body"
+
+
+def test_local_unique_candidate_auto_and_rejects_wrong_selection(logged_in_games):
+    """.tap 只属于 c64：不传类型自动确定，传别的类型拒绝。"""
+    ok = _create_game(logged_in_games, "TAP", "demo.tap", cartridge_id="TAP-1")
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["data"]["game_type"] == "c64"
+
+    bad = _create_game(
+        logged_in_games, "错选", "other.tap", game_type="c128", cartridge_id="TAP-2"
+    )
+    assert bad.status_code == 400
+    assert "Commodore 64" in bad.json()["message"]
+
+
+def test_local_d71_is_c128_and_d64_wrong_type_rejected(logged_in_games):
+    d71 = _create_game(logged_in_games, "D71", "a.d71", cartridge_id="D71-1")
+    assert d71.status_code == 201
+    assert d71.json()["data"]["game_type"] == "c128"
+
+    wrong = _create_game(
+        logged_in_games, "D64 错选", "a.d64", game_type="nes", cartridge_id="D64-1"
+    )
+    assert wrong.status_code == 400
+    assert "任天堂 FC" in wrong.json()["message"]
+
+
+def test_create_game_from_body_url_multi_candidate(logged_in_games, remote_files):
+    """直链 `.d64` + 用户选的类型：按所选类型落库，后缀保留 .d64。"""
+    remote_files["https://cdn.test/roms/demo.d64"] = b"d64-rom"
+    response = _create_from_url(
+        logged_in_games, "网络 D64", "https://cdn.test/roms/demo.d64", "pet"
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()["data"]
+    assert body["game_type"] == "pet"
+    assert body["game_path"].endswith("/game.d64")
+
+
+def test_change_game_type_moves_dirs_and_rewrites_paths(
+    logged_in_games, app, storage_root
+):
+    """改类型 = 搬游戏目录 + 各账号的存档/截图目录，并把库里的路径列全部改写。"""
+    created = _create_game(
+        logged_in_games,
+        "改类型主用例",
+        "a.d64",
+        b"d64-body",
+        cartridge_id="MOVE-1",
+        game_type="c64",
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_image(logged_in_games, "/api/games/gallery", game_id)
+    _upload_image(logged_in_games, "/api/games/screenshots", game_id)
+    _upload_save(logged_in_games, game_id)
+
+    before = _files(storage_root)
+    assert any(path.startswith("game/c64/MOVE-1/") for path in before)
+    assert any(path.startswith("save/alice/c64/MOVE-1/") for path in before)
+    assert any(path.startswith("image/alice/c64/MOVE-1/") for path in before)
+
+    response = _change_type(logged_in_games, game_id, "c128")
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["game_type"] == "c128"
+    assert body["game_path"] == "game/c128/MOVE-1/game.d64"
+
+    after = _files(storage_root)
+    assert any(path.startswith("game/c128/MOVE-1/") for path in after)
+    assert any(path.startswith("save/alice/c128/MOVE-1/") for path in after)
+    assert any(path.startswith("image/alice/c128/MOVE-1/") for path in after)
+    assert not any("/c64/MOVE-1/" in path for path in after)
+    assert all("c128" in value for value in _path_rows(app, game_id))
+
+
+def test_change_game_type_moves_historical_type_dirs(
+    logged_in_games, app, storage_root
+):
+    """存档/截图目录里的类型是写入当时的：按 file_path 反推，不能按当前类型拼。"""
+    created = _create_game(
+        logged_in_games,
+        "历史类型",
+        "a.d64",
+        b"x",
+        cartridge_id="HIST-T1",
+        game_type="c64",
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_image(logged_in_games, "/api/games/screenshots", game_id)
+    _upload_save(logged_in_games, game_id)
+
+    # 造出「历史换过类型」的状态：游戏目录仍是 c64，存档/截图却在 nes 下
+    for prefix in ("save/alice", "image/alice"):
+        src = Path(storage_root) / prefix / "c64" / "HIST-T1"
+        dst = Path(storage_root) / prefix / "nes" / "HIST-T1"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
+    with Session(app.state.engine) as session:
+        for model in (GameScreenshot, GameCloudSnapshotFile):
+            query = select(model)
+            if model is GameScreenshot:
+                query = query.where(GameScreenshot.game_id == game_id)
+            else:
+                query = query.join(
+                    GameCloudSnapshot,
+                    GameCloudSnapshot.id == GameCloudSnapshotFile.snapshot_id,
+                ).where(GameCloudSnapshot.game_id == game_id)
+            for row in session.exec(query).all():
+                row.file_path = row.file_path.replace("/c64/", "/nes/")
+                session.add(row)
+        session.commit()
+    assert any(path.startswith("save/alice/nes/HIST-T1/") for path in _files(storage_root))
+
+    response = _change_type(logged_in_games, game_id, "c128")
+    assert response.status_code == 200, response.text
+    files = _files(storage_root)
+    assert any(path.startswith("save/alice/c128/HIST-T1/") for path in files)
+    assert any(path.startswith("image/alice/c128/HIST-T1/") for path in files)
+    assert not any("/nes/HIST-T1/" in path for path in files)
+
+
+def test_change_game_type_rejects_unique_extension(logged_in_games, storage_root):
+    """.tap 只有 c64 一个候选：类型不可改（改到 c128 直接 400，磁盘不动）。"""
+    created = _create_game(
+        logged_in_games, "TAP 不可改", "a.tap", cartridge_id="TAP-U1"
+    ).json()["data"]
+    before = _files(storage_root)
+    response = _change_type(logged_in_games, created["id"], "c128")
+    assert response.status_code == 400
+    assert "Commodore 64" in response.json()["message"]
+    assert _files(storage_root) == before
+
+
+def test_change_game_type_same_value_is_noop(logged_in_games, storage_root):
+    created = _create_game(
+        logged_in_games,
+        "同类型",
+        "a.d64",
+        cartridge_id="SAME-1",
+        game_type="c64",
+    ).json()["data"]
+    before = _files(storage_root)
+    response = _change_type(logged_in_games, created["id"], "c64")
+    assert response.status_code == 200
+    assert response.json()["data"]["updated_at"] == created["updated_at"]
+    assert _files(storage_root) == before
+
+
+def test_change_game_type_rejects_name_conflict(logged_in_games, storage_root):
+    """目标类型下已有同名游戏：400，且两边目录都不动。"""
+    _create_game(
+        logged_in_games,
+        "同名游戏",
+        "a.d64",
+        cartridge_id="CONF-1",
+        game_type="c128",
+    )
+    other = _create_game(
+        logged_in_games,
+        "同名游戏",
+        "b.d64",
+        cartridge_id="CONF-2",
+        game_type="c64",
+    ).json()["data"]
+    before = _files(storage_root)
+    response = _change_type(logged_in_games, other["id"], "c128")
+    assert response.status_code == 400
+    assert "同名游戏" in response.json()["message"]
+    assert _files(storage_root) == before
+
+
+def test_change_game_type_rolls_back_when_move_fails(
+    logged_in_games, app, storage_root, monkeypatch
+):
+    """搬存档目录时失败：游戏目录要搬回去，库里的类型与路径一个字节都不能变。"""
+    from backend.games import service as games_service
+    from backend.storage.local import LocalStorage
+
+    created = _create_game(
+        logged_in_games,
+        "搬不动类型",
+        "a.d64",
+        b"x",
+        cartridge_id="FAIL-T1",
+        game_type="c64",
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_save(logged_in_games, game_id)
+    before = _files(storage_root)
+
+    original = LocalStorage.move_tree
+    calls = {"n": 0}
+
+    def flaky(self, source_key, target_key):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise games_service.StorageError("磁盘炸了")
+        return original(self, source_key, target_key)
+
+    monkeypatch.setattr(LocalStorage, "move_tree", flaky)
+    with Session(app.state.engine) as session:
+        service = GameService(session, app.state.storage, app.state.runtime_storage)
+        with pytest.raises(games_service.StorageError):
+            service.change_game_type(game_id, "c128")
+
+    assert calls["n"] == 3
+    assert _files(storage_root) == before
+    with Session(app.state.engine) as session:
+        row = session.get(Game, game_id)
+        assert row.game_type == "c64"
+        assert row.game_path == "game/c64/FAIL-T1/game.d64"
+
+
+def test_change_game_type_unknown_game(logged_in_games):
+    response = _change_type(logged_in_games, 99999, "c128")
+    assert response.status_code == 404
+
+
+def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
+    """`/status` 下发类型元数据与后缀候选，前端不再自己维护映射。"""
+    status = logged_in_games.get("/api/games/status").json()["data"]
+    types = {item["id"]: item for item in status["types"]}
+    assert types["c64"]["label"] == "Commodore 64"
+    assert types["c64"]["extensions"] == [".crt", ".d64", ".prg", ".tap"]
+    assert types["c64"]["default_extension"] == ".d64"
+    assert types["flash"]["kind"] == "flash"
+    assert status["extension_candidates"][".d64"] == [
+        "c64",
+        "c128",
+        "pet",
+        "plus4",
+        "vic20",
+    ]
+    assert status["default_game_type_by_extension"][".d71"] == "c128"
 
 
 def test_sanitize_game_name_for_import():
@@ -3186,12 +3484,13 @@ def test_create_game_from_body_url_type_mismatch_rejected(logged_in_games, remot
 
 
 def test_create_game_from_body_url_requires_game_type(logged_in_games, remote_files):
-    """没选类型就提交：直接拒绝，不去下载。"""
+    """多候选后缀没选类型：直接拒绝，不去下载。"""
     response = _create_from_url(
-        logged_in_games, "缺类型", "https://cdn.test/whatever.gba", ""
+        logged_in_games, "缺类型", "https://cdn.test/whatever.d64", ""
     )
     assert response.status_code == 400
     assert "游戏类型" in response.json()["message"]
+    assert remote_files == {}
 
 
 def test_create_game_from_body_url_rejects_download_failure(
