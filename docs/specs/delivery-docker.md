@@ -43,7 +43,10 @@
 - 只开一个 443 server，只支持 HTTPS。
 - 不发布 80，也没有 http→https 跳转。
 - 宿主端口由 `WEB_HTTPS_PORT` 决定，容器内固定听 443。
-- `client_max_body_size 512m` 是上传网关。
+- `client_max_body_size 130m` 是上传网关（128MB 内容 + multipart 余量）。
+- `/api/` 关闭 `proxy_request_buffering`：请求体边收边转发，不再落 nginx 临时文件。
+- `/api/` 同时用 `proxy_http_version 1.1`，没有长度的流式请求可用 chunked 转给后端。
+- 本体超过 30MB 由前端切 16MB 分片；攻略 ZIP/PDF 仍限 128MB。
 - `/assets/`、`/ruffle/`、`/emulatorjs/` 是 immutable 长缓存。
 - 这些前缀未命中就 404，不回落 `index.html`。
 - `index.html` 与 `emulator-host.html` 是 no-cache。

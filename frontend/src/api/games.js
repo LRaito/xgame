@@ -136,6 +136,54 @@ export function uploadGameAssetAPI(id, formData) {
     });
 }
 
+/** 开启一次本体分片上传会话；返回 upload_id、分片大小与分片数。 */
+export function createGameUploadAPI(data) {
+    return request({
+        url: "/api/games/uploads",
+        method: "post",
+        data,
+        timeout: 0,
+        notShowError: true,
+    });
+}
+
+/** 上传一个分片：原始字节流，长度必须等于会话约定的分片大小。 */
+export function uploadGameChunkAPI(uploadId, index, blob, { signal, onUploadProgress } = {}) {
+    return request({
+        url: `/api/games/uploads/${uploadId}/chunks/${index}`,
+        method: "put",
+        data: blob,
+        headers: { "Content-Type": "application/octet-stream" },
+        timeout: 0,
+        notShowError: true,
+        signal,
+        onUploadProgress,
+    });
+}
+
+/** 分片到齐后标记会话可提交。 */
+export function completeGameUploadAPI(uploadId, { signal } = {}) {
+    return request({
+        url: `/api/games/uploads/${uploadId}/complete`,
+        method: "post",
+        // 带一个空 JSON 体，确保经过 nginx/HTTP2 时仍有 Content-Length
+        data: {},
+        timeout: 0,
+        notShowError: true,
+        signal,
+    });
+}
+
+/** 放弃整次上传并删除暂存目录；清理请求刻意不带 signal，取消后也要尽量发出去。 */
+export function abortGameUploadAPI(uploadId) {
+    return request({
+        url: `/api/games/uploads/${uploadId}`,
+        method: "delete",
+        timeout: 0,
+        notShowError: true,
+    });
+}
+
 /** 上传攻略：multipart 里只有一个 file 字段（ZIP 解压后根目录需含 index.html，或单个 PDF）。 */
 export function uploadGuideAPI(id, formData) {
     return request({

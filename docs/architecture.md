@@ -309,7 +309,7 @@ JSON 一律在 `/api/` 下。信封：
 - 写操作（除 register/login/csrf/health）校验 `X-CSRFToken`。
 - 免登录面只有注册/登录、`/health` 与 H5 资源；攻略资源需登录。
 - H5 内容按不可信处理：CSP `sandbox` + `nosniff` + `Referrer-Policy: no-referrer`。
-- 上传有大小上限与后缀白名单；ZIP 另有条目数、总量、压缩比、加密条目校验。
+- 上传有大小上限、后缀白名单与分片会话；ZIP 另有条目数、总量、压缩比、加密条目校验。
 - 所有落盘路径经 `LocalStorage._resolve()`，拒绝绝对路径与 `..`。
 - 搬运只接受白名单站点域名，避免被当作任意 URL 代理。
 
@@ -353,7 +353,7 @@ SQLite 路径、备份间隔、证书路径、session cookie 策略。
 v1 单用户。不要在应用内加缓存、队列或 CDN。
 
 - 列表来自 SQLite；文件按相对路径直接读。
-- 上传/下载分块流式，不把文件整读进内存。
+- 上传/下载分块流式，不把文件整读进内存；超过 30MB 的本体走分片，直写暂存文件。
 - SQLite 单文件 + Gunicorn `--workers 1 --threads 8`。
 
 ## 测试策略

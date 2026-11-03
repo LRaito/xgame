@@ -223,7 +223,8 @@
 - `app.state.runtime_storage`：运行时根。
 
 `LocalStorage._resolve()` 负责拼根并挡掉越界：绝对路径与 `..` 一律拒绝。
-浏览器从不直连磁盘，上传/下载都由 API 分块流式代理。
+浏览器从不直连磁盘，上传/下载都由 API 分块流式代理；超过 30MB 的本体由前端分片，
+后端按偏移直接写入暂存文件。
 
 根目录下可能有一个 `.mounted`：
 
@@ -249,6 +250,7 @@
 | 游戏图集 | `game/{game_type}/{卡带ID}/image/{uuid}.{后缀}` | `paths.py::gallery_file_path` |
 | 云端存档 | `save/{用户名}/{game_type}/{卡带ID}/{uuid}.state` | `paths.py::save_file_path` |
 | 游戏截图 | `image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀}` | `paths.py::screenshot_file_path` |
+| 分片上传暂存 | `upload/{upload_id}/{meta.json,body.part,chunks/*}` | `paths.py::upload_session_dir` |
 
 **运行时根**（派生物，删了会自动重建）：
 
@@ -271,6 +273,8 @@
   绝不用当前类型拼目录。
 - **图集**在游戏目录内，随游戏类型迁移。
 - **云端存档**目录带快照当时的类型；同样按 `file_path` 反推。
+- **分片上传暂存**是可丢弃的临时数据：提交后立即删除，未完成的会话在启动时按 24 小时 TTL 清理。
+  它和数据根在同一文件系统，提交只是把 `body.part` 改名进 `game/…`。
 - 具体行为见 [`game-storage.md`](specs/game-storage.md)、
   [`guide-and-h5.md`](specs/guide-and-h5.md)、
   [`game-assets.md`](specs/game-assets.md)、

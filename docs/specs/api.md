@@ -30,7 +30,7 @@
 | 方法 | 路径 | 登录 | 用途 / 关键字段 |
 |---|---|---|---|
 | GET | `/api/games` | 需登录 | 游戏中心列表，含统计字段与攻略形态 |
-| GET | `/api/games/status` | 需登录 | 类型元数据、可上传后缀、后缀候选、默认类型与 BIOS 规格 |
+| GET | `/api/games/status` | 需登录 | 类型元数据、可上传后缀、后缀候选、默认类型、BIOS 规格与上传阈值 |
 | GET / POST | `/api/games/recent` | 需登录 | 最近游玩；POST body `{game_id}`，`limit` 默认 20 |
 | POST | `/api/games/stats/playtime` | 需登录 | body `{game_id, seconds}`，单次收敛到 0..300 |
 | PUT | `/api/games/stats/{id}/playtime` | 需登录 | body `{hours}`，覆盖总时长 |
@@ -41,21 +41,31 @@
 否则为 `{file, required_files, optional}`；`/api/games/status.types[]` 的每条类型也带同形状字段。
 `file` 是 `emulatorjs/bios/` 下的 ZIP 文件名，`required_files` 是包内必需文件。
 
+`/api/games/status.upload` 为 `{single_file_max_bytes, chunk_size_bytes}`：前端据此决定
+本体走单文件还是分片，阈值与后端常量一致；分片总数另由 init 响应返回。
+
 ### 游戏管理与入库
 
 | 方法 | 路径 | 登录 | 用途 / 关键字段 |
 |---|---|---|---|
 | GET | `/api/games/manage` | 需登录 | 服务端分页：`page` / `page_size` / `game_type` / `q` |
 | GET | `/api/games/manage/{id}` | 需登录 | 管理详情，含 CRC32、创建与更新时间 |
-| POST | `/api/games/manage` | 需登录 | multipart 新建：`name` / `cartridge_id` / `description` / `file`[+`cover`] |
+| POST | `/api/games/manage` | 需登录 | multipart 新建：`name` / `cartridge_id` / `description` / `file` 或 `upload_id`[+`cover`] |
+| POST | `/api/games/uploads` | 需登录 | 开分片会话：body `{filename, size, game_type?}`，返回 `{upload_id, chunk_size, total_chunks}` |
+| PUT | `/api/games/uploads/{upload_id}/chunks/{index}` | 需登录 | 原始分片字节流，长度必须等于约定值；返回 `{index, size}` |
+| POST | `/api/games/uploads/{upload_id}/complete` | 需登录 | 校验分片齐全与总大小，返回 `{upload_id, filename, size}` |
+| DELETE | `/api/games/uploads/{upload_id}` | 需登录 | 放弃上传并删除暂存目录；幂等 |
 | POST | `/api/games/manage/import` | 需登录 | 搬运，body `{url}`；卡带 ID 服务端自动生成 |
 | PUT | `/api/games/manage/{id}` | 需登录 | 改名 / 描述 / `cover_type` / `clear_cover` |
 | PUT | `/api/games/manage/{id}/cartridge-id` | 需登录 | body `{cartridge_id}`，显式迁移磁盘与路径 |
 | PUT | `/api/games/manage/{id}/game-type` | 需登录 | body `{game_type}`，显式迁移游戏/存档/截图目录 |
 | DELETE | `/api/games/manage/{id}` | 需登录 | 删游戏，连同所有账号的存档与截图 |
-| POST | `/api/games/manage/{id}/assets` | 需登录 | `kind=game\|cover`，`file` 或 `url`[+类型字段] |
+| POST | `/api/games/manage/{id}/assets` | 需登录 | `kind=game\|cover`，`file` / `url` / `upload_id` 三选一[+类型字段] |
 | POST | `/api/games/manage/{id}/guide` | 需登录 | multipart 单个 `file`，ZIP 或 PDF |
 | DELETE | `/api/games/manage/{id}/guide` | 需登录 | 删除攻略，幂等，返回更新后的管理条目 |
+
+`upload_id` 只能用于 `kind=game`（本体）；封面与攻略不分片。新建与换本体时
+`file` / `url` / `upload_id` 三者互斥。分片会话绑定当前账号，别人的 `upload_id` 一律 404。
 
 ### 素材读取
 
@@ -112,6 +122,9 @@
 - 游戏 / 快照 / 截图 / 图集不存在或越权：404；参数、类型、文件校验失败：400；索引版本不符：503。
 - 索引未构建返回 `indexed:false` 与空列表；榜单未加载返回 `has_ranking:false`，都是 200。
 - 请求体超过上限：413；分块传输缺少长度：411（`backend/request_limit.py`）。
+  例外是分片上传的 `POST /uploads` 完成接口与 `PUT /chunks/{index}`：允许无 `Content-Length`，
+  分片长度由会话约定校验。
+- 单文件本地本体超过 30MB：400，提示改用分片上传；分片本体不设总大小上限。
 
 ## 测试要点
 

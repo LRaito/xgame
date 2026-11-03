@@ -27,7 +27,7 @@ from urllib.parse import unquote
 MAX_FILES = 2000
 MAX_FILE_SIZE = 64 * 1024 * 1024
 MAX_TOTAL_SIZE = 256 * 1024 * 1024
-NGINX_BODY_LIMIT = 128 * 1024 * 1024  # Docker 路线 nginx 的 client_max_body_size，先于后端拦住
+NGINX_BODY_LIMIT = 128 * 1024 * 1024  # 攻略应用层上限 128MB；nginx 130m 只是给表单留余量
 MAX_PATH_LENGTH = 512
 MAX_PATH_SEGMENTS = 32
 ENTRY_NAME = "index.html"

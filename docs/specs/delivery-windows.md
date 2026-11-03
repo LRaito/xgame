@@ -81,7 +81,9 @@
 - `request_limit.py` 顶替 nginx 的 `client_max_body_size`。
 - 带了 `Content-Length` 且超限：直接 413，请求体一个字节都不读。
 - 写方法却没带 `Content-Length`（分块传输）：411 拒掉。
-- Docker 路线也挂它，但 nginx 的 512m 先拦，这里只是兜底。
+- 例外是分片上传的 chunks 与 complete 路由：允许无长度，由会话约定校验。
+- Docker 路线也挂它，但 nginx 的 130m 先拦，这里只是兜底。
+- 没有 nginx 时同样支持分片上传：超过 30MB 的本体走 16MB 分片，后端边收边写。
 
 **启动器。**
 
@@ -140,7 +142,7 @@
 | 应用服务器 | gunicorn + uvicorn | 单进程 uvicorn |
 | 协议 | HTTPS | HTTP |
 | session cookie | `Secure` | 启动器设成 false |
-| 上传闸门 | nginx 512m | `request_limit.py` |
+| 上传闸门 | nginx 130m | `request_limit.py` |
 | 后端配置 | 只认 `STORAGE_ROOT` | 启动器另设 `STATIC_DIR` |
 
 - EmulatorJS 不需要跨源隔离（`EJS_threads=false`），不用 COOP/COEP。

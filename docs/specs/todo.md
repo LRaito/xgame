@@ -90,7 +90,7 @@
   必须正好 1 MiB；3DO 按 EJS 文档也按必需。
 - 播放 URL 末段必须带真实落盘名（`game.<ext>`），EmulatorJS 才能识别 `.pbp` 等格式。
 - 土星的 wasm 性能最差，仍需实机确认可玩阈值。
-- 512MB 上传上限不变；超大的 ISO 建议先转 CHD 或 PBP。
+- 本地上传超过 30MB 已改走 16MB 分片，单盘总大小只受磁盘限制；网络直链仍限 512MB。
 
 ### 第 4 档：多文件 / 多碟
 
@@ -115,7 +115,7 @@
 - 宿主页现在固定 `EJS_threads=false`。
 - PSP 与 DOS 要开线程，同时补齐 COOP/COEP，`SharedArrayBuffer` 才可用。
 - 需要改的位置：Docker 的 nginx、Windows 静态站、vite dev server。
-- PSP 核只有线程变体，约 4.5 MB；ISO/CSO 容易撞 512 MB 上传上限。
+- PSP 核只有线程变体，约 4.5 MB；ISO/CSO 体积大，但本地分片上传已不设总大小上限。
 - DOS 核也只有线程变体，游戏要打成 jsdos ZIP。
 - 街机不需要线程，但 romset 与 FBNeo/MAME 版本绑定，数据治理最重。
 - 街机核体积：FBNeo 约 8.3 MB，MAME 2003 Plus 约 5.4 MB。

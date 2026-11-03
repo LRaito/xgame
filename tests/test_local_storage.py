@@ -181,3 +181,47 @@ def test_stream_is_seekable(storage):
         assert stream.seek(0, io.SEEK_END) == 10
     finally:
         stream.close()
+
+
+def test_open_writer_writes_at_offsets(storage):
+    """分片上传：乱序写同一文件的不同偏移，最终内容按偏移拼起来。"""
+    writer = storage.open_writer("upload/u1/body.part")
+    try:
+        writer.write_at(4, b"EFGH")
+        writer.write_at(0, b"ABCD")
+        writer.flush()
+    finally:
+        writer.close()
+    assert (storage.root / "upload" / "u1" / "body.part").read_bytes() == b"ABCDEFGH"
+
+
+def test_open_writer_handles_concurrent_offsets(storage):
+    """每路分片各开一个 fd，并发写不同偏移不会互相踩。"""
+    from concurrent.futures import ThreadPoolExecutor
+
+    blocks = [bytes([index]) * 4096 for index in range(8)]
+
+    def write_block(index):
+        writer = storage.open_writer("upload/u1/body.part")
+        try:
+            writer.write_at(index * 4096, blocks[index])
+            writer.flush()
+        finally:
+            writer.close()
+
+    with ThreadPoolExecutor(max_workers=len(blocks)) as pool:
+        list(pool.map(write_block, range(len(blocks))))
+
+    assert (storage.root / "upload" / "u1" / "body.part").read_bytes() == b"".join(blocks)
+
+
+def test_exists_list_dir_and_mtime(storage):
+    assert storage.exists("upload/u1/body.part") is False
+    assert storage.list_dir("upload") == []
+    storage.upload("upload/u1/meta.json", _stream(b"{}"), 2, None)
+    storage.upload("upload/u2/meta.json", _stream(b"{}"), 2, None)
+    assert storage.exists("upload/u1/meta.json") is True
+    assert storage.exists("upload/u1") is False
+    assert storage.list_dir("upload") == ["u1", "u2"]
+    assert storage.mtime("upload/u1/meta.json") is not None
+    assert storage.mtime("upload/missing") is None

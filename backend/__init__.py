@@ -19,6 +19,8 @@ from backend.games.search_index import ensure_game_index
 from backend.games.search_router import router as game_search_router
 from backend.games.settings_router import router as game_settings_router
 from backend.games.stats_router import router as game_stats_router
+from backend.games.upload_router import router as game_upload_router
+from backend.games.uploads import BodyUploadService
 from backend.http import json_err
 from backend.mount_guard import require_mounted
 from backend.request_limit import RequestBodyLimitMiddleware
@@ -62,6 +64,12 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     # 因此刻意不做「同根就跳过」的分支（见 backend/games/runtime_assets.py）。
     app.state.runtime_storage = LocalStorage(settings.runtime_root)
 
+    # 分片上传的暂存区是可丢弃的：启动时清掉超过 24 小时的未完成会话。
+    try:
+        BodyUploadService.cleanup_stale(app.state.storage)
+    except Exception as exc:  # noqa: BLE001 - 清理失败不能拦住启动
+        logger.warning("清理过期上传会话失败：%s", exc)
+
     app.add_middleware(CSRFMiddleware, settings=settings)
     app.add_middleware(
         SessionMiddleware,
@@ -81,6 +89,7 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.include_router(tools_router)
     app.include_router(auth_router)
     app.include_router(games_router)
+    app.include_router(game_upload_router)
     # 紧跟 games_router。注意 `/api/games/search`、`/api/games/search/consoles` 与
     # `/api/games/search/ranking…` 之所以不会被 games_router 的 `/{game_id}/…` 抢走，是因为那些
     # 路由的第二段字面量只有 cover/play/h5/guide/guide.pdf，且 `/api/games` 下没有单段 `/{game_id}`。

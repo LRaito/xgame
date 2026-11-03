@@ -44,6 +44,7 @@ from backend.games.platforms import (
     playable_platforms,
 )
 from backend.games.runtime_assets import RuntimeAssets
+from backend.games.uploads import SINGLE_FILE_MAX, StagedUpload
 from backend.storage.types import StorageBackend
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,7 @@ _IMPORT_CARTRIDGE_PREFIX = "F-"
 # 同一个游戏同时只保留一种，上传一种会删掉另一种。
 GUIDE_KIND_ZIP = "zip"
 GUIDE_KIND_PDF = "pdf"
-# PDF 与 ZIP 一样是应用层 128MB 上限（网关已放宽到 512m，给 NDS 本体留余量）。
+# PDF 与 ZIP 一样是应用层 128MB 上限（网关 130m 只给 multipart 留余量）。
 GUIDE_PDF_MAX_SIZE = 128 * 1024 * 1024
 _GUIDE_PDF_MAGIC = b"%PDF-"
 # PDF 规范允许 `%PDF-` 前有少量垃圾字节，按 1024 字节内出现即认可。
@@ -421,12 +422,17 @@ def sanitize_game_name(raw: str, *, fallback: str = "未命名游戏") -> str:
 
 @dataclass(frozen=True)
 class GameUpload:
-    """一次上传的输入：文件名决定游戏类型与落盘后缀，流由调用方负责关闭。"""
+    """一次上传的输入：文件名决定游戏类型与落盘后缀，流由调用方负责关闭。
+
+    `source` 区分本地浏览器上传（`local`）与服务端自己打开的文件（`server`，
+    网络直链/搬运）：只有本地单文件本体受 30MB 阈值约束，超过时要走分片上传。
+    """
 
     filename: str
     stream: BinaryIO
     size: int
     mime: str | None
+    source: str = "local"
 
 
 @dataclass(frozen=True)
@@ -680,12 +686,13 @@ class GameService:
         body_url: str = "",
         body_game_type: str = "",
         cover_url: str = "",
+        staged: StagedUpload | None = None,
     ) -> GameItem:
         """新建游戏：本体与封面一次入库，任一步失败即整体回滚。
 
         卡带ID 必填、创建后不可改（只能删掉重建）；本体/封面各自可以是本地文件
-        （`body`/`cover`）或网络直链（`*_url`），走直链时先下到临时目录再走同一条
-        上传管线，原始文件名不落盘。
+        （`body`/`cover`）、网络直链（`*_url`）或已完成分片上传的暂存本体
+        （`staged`）。走直链时先下到临时目录再走同一条上传管线，原始文件名不落盘。
 
         **不接受封面类型**：新建一律留空，只有编辑弹框手动选或美化封面时才落值。
 
@@ -694,7 +701,13 @@ class GameService:
         """
         cartridge_id = validate_cartridge_id(cartridge_id)
         self._ensure_cartridge_free(cartridge_id)
-        if body is not None:
+        if staged is not None:
+            if body is not None or body_url:
+                raise ValidationError("请只选择一种本体上传方式。")
+            game_type = resolve_game_type(
+                Path(staged.filename or "").suffix.lower(), body_game_type
+            )
+        elif body is not None:
             game_type = resolve_game_type(
                 Path(body.filename or "").suffix.lower(), body_game_type
             )
@@ -715,6 +728,7 @@ class GameService:
                 cover,
                 cartridge_id=cartridge_id,
                 game_type=game_type,
+                staged=staged,
             )
         # 下载来的文件要在整个上传期间保持可读，所以临时目录与句柄都包住 _create
         with tempfile.TemporaryDirectory(prefix="x-game-fetch-") as tmp:
@@ -731,19 +745,23 @@ class GameService:
                     cover,
                     cartridge_id=cartridge_id,
                     game_type=game_type,
+                    staged=staged,
                 )
 
     def _create(
         self,
         name: str,
         description: str,
-        body: GameUpload,
+        body: GameUpload | None,
         cover: GameUpload | None = None,
         *,
         cartridge_id: str,
         game_type: str,
+        staged: StagedUpload | None = None,
     ) -> GameItem:
         """建条目并上传本体（可选封面）：类型已在 `create()` 里判定，封面类型留空。"""
+        if body is None and staged is None:
+            raise ValidationError("请选择本体文件或填写本体下载地址。")
         name = validate_game_name(name)
         description = validate_description(description)
         self._ensure_name_free(game_type, name)
@@ -760,7 +778,10 @@ class GameService:
         self._session.commit()
         self._session.refresh(row)
         try:
-            self.upload_asset(row.id, kind="game", upload=body)
+            if staged is not None:
+                self._commit_staged_asset(row, staged)
+            else:
+                self.upload_asset(row.id, kind="game", upload=body)
             if cover is not None:
                 self.upload_asset(row.id, kind="cover", upload=cover)
         except Exception:
@@ -1133,18 +1154,27 @@ class GameService:
         url: str = "",
         game_type: str = "",
         cover_type: str = "",
+        staged: StagedUpload | None = None,
     ) -> GameItem:
         """一步完成：校验类型/后缀 → 分块上传 → 更新行 → 删旧对象。
 
         换本体只接受与游戏当前 `game_type` 相同的本体（改类型走 `change_game_type()`），成功后
         重算并覆盖 `crc32`/`size`/`game_path`；失败整体回滚，旧档不动。
-        来源可以是本地文件（`upload`）或网络直链（`url`，本体要带上 `game_type`）。
+        来源可以是本地文件（`upload`）、网络直链（`url`，本体要带上 `game_type`）或
+        已完成分片上传的暂存本体（`staged`，只支持 kind="game"）。
 
         `cover_type` 只在 kind="cover" 且非空时生效——美化封面时把所选样式 id 与
         封面文件一次写进去（分两步会有「封面换了、类型没跟上」的中间态）。
         """
         if kind not in ("game", "cover"):
             raise ValidationError("无效的上传类型。")
+        sources = int(upload is not None) + int(bool(url)) + int(staged is not None)
+        if sources > 1:
+            raise ValidationError("请只选择一种上传方式。")
+        if staged is not None:
+            if kind != "game":
+                raise ValidationError("只有游戏本体支持分片上传。")
+            return self._commit_staged_now(game_id, staged)
         if not url:
             if upload is None:
                 raise ValidationError("请选择要上传的文件或填写下载地址。")
@@ -1179,6 +1209,16 @@ class GameService:
             raise NotFoundError("游戏不存在。")
         try:
             return self._upload_asset(row, kind=kind, upload=upload, cover_type=cover_type)
+        except Exception:
+            self._session.rollback()
+            raise
+
+    def _commit_staged_now(self, game_id: int, staged: StagedUpload) -> GameItem:
+        row = self._session.get(Game, game_id)
+        if row is None:
+            raise NotFoundError("游戏不存在。")
+        try:
+            return self._commit_staged_asset(row, staged)
         except Exception:
             self._session.rollback()
             raise
@@ -1219,6 +1259,9 @@ class GameService:
         extension = Path(filename).suffix.lower()
         if upload.size is None or upload.size <= 0:
             raise ValidationError("文件大小无效。")
+        if kind == "game" and upload.source == "local" and upload.size > SINGLE_FILE_MAX:
+            limit_mb = SINGLE_FILE_MAX // (1024 * 1024)
+            raise ValidationError(f"本体超过 {limit_mb} MB，请使用分片上传。")
         crc32 = ""
         if kind == "game":
             # 换本体不改变类型：只看当前类型是否在该后缀的候选集内
@@ -1242,13 +1285,10 @@ class GameService:
         else:
             raise ValidationError("无效的上传类型。")
         self._storage.upload(path, upload.stream, upload.size, upload.mime)
-        old = row.game_path if kind == "game" else row.cover_path
         if kind == "game":
-            row.game_path = path
-            row.size = upload.size
-            row.crc32 = crc32
-        else:
-            row.cover_path = path
+            return self._finish_body(row, path, upload.size, crc32)
+        old = row.cover_path
+        row.cover_path = path
         row.updated_at = datetime.now(timezone.utc)
         self._session.add(row)
         self._session.commit()
@@ -1257,6 +1297,67 @@ class GameService:
         if old and old != path:
             self._delete_storage_key(old)
         return self._to_item(row)
+
+    def _finish_body(
+        self, row: Game, path: str, size: int, crc32: str
+    ) -> GameItem:
+        """本体已就位后统一收尾：更新行 → commit → 删旧文件。"""
+        old = row.game_path
+        row.game_path = path
+        row.size = size
+        row.crc32 = crc32
+        row.updated_at = datetime.now(timezone.utc)
+        self._session.add(row)
+        self._session.commit()
+        self._session.refresh(row)
+        if old and old != path:
+            self._delete_storage_key(old)
+        return self._to_item(row)
+
+    def _commit_staged_asset(self, row: Game, staged: StagedUpload) -> GameItem:
+        """把已上传完的分片文件直接改名成正式本体。
+
+        暂存区与最终目录都在数据根下，`body.part` 改名就是 `os.replace`：
+        不再整包复制。H5 仍按原规则校验 ZIP 清单与包内路径长度。
+        """
+        extension = (staged.extension or "").strip().lower()
+        if not extension:
+            raise ValidationError("请选择要上传的文件。")
+        require_body_type_for_current(extension, row.game_type)
+        part = paths.upload_part_path(staged.upload_id)
+        try:
+            info = self._storage.stat(part)
+        except StorageError as exc:
+            raise ValidationError("暂存的本体文件不存在。") from exc
+        if info.size != staged.size:
+            raise ValidationError("暂存的本体文件大小不符。")
+
+        stream = self._storage.open_download(part)
+        try:
+            if row.game_type == GAME_TYPE_H5:
+                self._validate_h5_zip(stream, staged.size, row.game_type, row.cartridge_id)
+            crc32 = _crc32_stream(stream)
+        finally:
+            stream.close()
+
+        if row.game_type == GAME_TYPE_H5:
+            target = paths.h5_zip_path(row.game_type, row.cartridge_id)
+        else:
+            target = paths.body_path(row.game_type, row.cartridge_id, extension)
+        if not self._storage.move(part, target):
+            raise ValidationError("暂存的本体文件不存在。")
+        if row.game_type == GAME_TYPE_H5:
+            # 新包已就位：运行时根的旧解包产物作废，下次播放重新解包
+            self._assets.drop_tree(paths.h5_dir(row.game_type, row.cartridge_id))
+        item = self._finish_body(row, target, staged.size, crc32)
+        self._discard_upload_session(staged.upload_id)
+        return item
+
+    def _discard_upload_session(self, upload_id: str) -> None:
+        try:
+            self._storage.remove_tree(paths.upload_session_dir(upload_id))
+        except StorageError as exc:
+            logger.warning("删除上传暂存目录失败 upload_id=%s：%s", upload_id, exc)
 
     def open_asset(self, path: str):
         if not path:
@@ -1512,6 +1613,24 @@ class GameService:
             ).all()
         )
 
+    def _validate_h5_zip(
+        self, stream, size: int, game_type: str, cartridge_id: str
+    ) -> None:
+        """校验 H5 的 ZIP 清单与包内路径长度；校验完把流绕回开头。"""
+        if size <= 0:
+            raise ValidationError("文件大小无效。")
+        if size > archive.MAX_ZIP_SIZE:
+            raise ValidationError("压缩包过大。")
+        entries = archive.read_manifest(stream, kind=archive.H5)
+        # 包内路径的深度只出现在运行时根下，所以按运行时根算 Windows 完整路径长度
+        for entry in entries:
+            archive.ensure_path_fits(
+                self._assets.root(),
+                paths.h5_asset_path(game_type, cartridge_id, entry.path),
+                where=archive.WHERE[archive.H5],
+            )
+        _rewind(stream)
+
     def _upload_h5_zip(
         self, row: Game, *, stream, size: int | None, mime: str | None, crc32: str
     ) -> GameItem:
@@ -1522,36 +1641,19 @@ class GameService:
         """
         if size is None or size <= 0:
             raise ValidationError("文件大小无效。")
-        if size > archive.MAX_ZIP_SIZE:
-            raise ValidationError("压缩包过大。")
-        entries = archive.read_manifest(stream, kind=archive.H5)
         game_type = row.game_type
         cartridge_id = row.cartridge_id
-        # 包内路径的深度只出现在运行时根下，所以按运行时根算 Windows 完整路径长度
-        for entry in entries:
-            archive.ensure_path_fits(
-                self._assets.root(),
-                paths.h5_asset_path(game_type, cartridge_id, entry.path),
-                where=archive.WHERE[archive.H5],
-            )
+        self._validate_h5_zip(stream, size, game_type, cartridge_id)
         zip_path = paths.h5_zip_path(game_type, cartridge_id)
-        _rewind(stream)
         self._storage.upload(zip_path, stream, size, mime or "application/zip")
         # 新包已就位：运行时根的旧解包产物作废，下次播放重新解包
         self._assets.drop_tree(paths.h5_dir(game_type, cartridge_id))
-        row.game_path = zip_path
-        row.size = size
-        row.crc32 = crc32
-        row.updated_at = datetime.now(timezone.utc)
-        self._session.add(row)
         try:
-            self._session.commit()
+            return self._finish_body(row, zip_path, size, crc32)
         except Exception as exc:  # noqa: BLE001 - commit 失败只回滚行，磁盘保持新包
             self._session.rollback()
             logger.warning("H5 资源落库失败 game_id=%s", row.id, exc_info=exc)
             raise StorageError("游戏资源保存失败。") from exc
-        self._session.refresh(row)
-        return self._to_item(row)
 
     def _safe_remove_tree(self, key: str) -> None:
         try:
@@ -1648,7 +1750,16 @@ def _validate_pdf_header(stream: BinaryIO) -> None:
 
 
 def _open_upload(stack: ExitStack, path: Path, mime: str | None) -> GameUpload:
-    """打开本地文件构造上传项，句柄交给 ExitStack 统一关闭。"""
+    """打开本地文件构造上传项，句柄交给 ExitStack 统一关闭。
+
+    这是服务端自己下载/搬运来的文件，不受本地单文件 30MB 阈值约束。
+    """
     path = Path(path)
     handle = stack.enter_context(path.open("rb"))
-    return GameUpload(filename=path.name, stream=handle, size=path.stat().st_size, mime=mime)
+    return GameUpload(
+        filename=path.name,
+        stream=handle,
+        size=path.stat().st_size,
+        mime=mime,
+        source="server",
+    )

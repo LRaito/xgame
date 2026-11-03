@@ -250,22 +250,31 @@
                                 />
                                 <app-button
                                     variant="secondary"
-                                    :disabled="bodyUploading"
+                                    :disabled="bodyUploading || saving"
                                     @click="pickBodyFile"
                                 >
                                     本地上传
                                 </app-button>
                                 <app-button
                                     variant="secondary"
-                                    :disabled="bodyUploading"
+                                    :disabled="bodyUploading || saving"
                                     @click="openRemoteBody"
                                 >
                                     网络上传
                                 </app-button>
                             </div>
-                            <p v-if="form.gameFile" class="game-manage__file-hint">
-                                {{ formMode === "edit" ? "正在上传：" : "已选：" }}{{ form.gameFile.name }}（{{ formatSize(form.gameFile.size) }}）
-                            </p>
+                            <template v-if="form.gameFile">
+                                <p class="game-manage__file-hint">
+                                    {{ bodyUploading || formMode === "edit" ? "正在上传：" : "已选：" }}{{ form.gameFile.name }}（{{ formatSize(form.gameFile.size) }}<template v-if="bodyUploading"> · {{ bodyProgress }}%</template>）
+                                </p>
+                                <el-progress
+                                    v-if="bodyUploading"
+                                    class="game-manage__upload-progress"
+                                    :percentage="bodyProgress"
+                                    :show-text="false"
+                                    :stroke-width="4"
+                                />
+                            </template>
                             <!-- 网络来源与本地文件二选一：选了直链就把本地文件清掉（反之亦然） -->
                             <p v-else-if="form.bodyUrl" class="game-manage__file-hint">
                                 待上传：{{ form.bodyUrl }}（{{ typeLabel(form.bodyGameType) }}）
@@ -558,6 +567,7 @@ import {
     uploadGalleryAPI,
     uploadGameAssetAPI,
     uploadGuideAPI,
+    abortGameUploadAPI,
 } from "@/api/games";
 import { beautifyStylesFor } from "@/constants/coverStyles";
 import {
@@ -568,6 +578,7 @@ import {
 } from "@/constants/gameTypes";
 import { useGameTypesStore } from "@/store/gameTypes";
 import { ensureGameAssetSw, gameCoverUrl } from "@/utils/gameAssetCache";
+import { uploadFileInChunks, shouldUseChunkedUpload } from "@/utils/chunkUpload";
 import { formatDateTimeSeconds as formatDateTime } from "@/utils/fileDisplay";
 
 // 每页 5 条，与后端 backend/games/service.py 的 MANAGE_PAGE_SIZE_DEFAULT 保持一致
@@ -606,6 +617,9 @@ const guideDeleting = ref(false);
 const bodyUploading = ref(false);
 const coverUploading = ref(false);
 const guideUploading = ref(false);
+// 大本体分片上传的百分比；单文件上传保持原来的布尔状态
+const bodyProgress = ref(0);
+let bodyAbortController = null;
 // 每次打开弹框都换一代：上一只游戏的上传晚到时，不能清掉这一只刚选的文件/预览
 let uploadGen = 0;
 const form = reactive({
@@ -938,7 +952,46 @@ function clearRemoteBody() {
     form.bodyGameType = "";
 }
 
+/** 停掉在途的分片上传；分片工具会顺手 DELETE 服务端会话。 */
+function cancelBodyUpload() {
+    if (bodyAbortController) {
+        bodyAbortController.abort();
+        bodyAbortController = null;
+    }
+    bodyProgress.value = 0;
+}
+
+/** 把一个超过 30MB 的本体传到暂存区，返回 `{upload_id, filename, size}`。 */
+async function stageBodyFile(file, gameType = "") {
+    const controller = new AbortController();
+    bodyAbortController = controller;
+    bodyProgress.value = 0;
+    try {
+        return await uploadFileInChunks(file, {
+            gameType,
+            signal: controller.signal,
+            onProgress: ({ loaded, total }) => {
+                bodyProgress.value = total
+                    ? Math.min(100, Math.round((loaded / total) * 100))
+                    : 0;
+            },
+        });
+    } finally {
+        if (bodyAbortController === controller) {
+            bodyAbortController = null;
+        }
+    }
+}
+
+// 关掉弹框就停掉在途分片，避免 5 路请求在后台继续跑
+watch(formVisible, (open) => {
+    if (!open) {
+        cancelBodyUpload();
+    }
+});
+
 function resetForm() {
+    cancelBodyUpload();
     form.name = "";
     form.cartridgeId = "";
     form.gameType = "";
@@ -1288,10 +1341,13 @@ function confirmRemoteCover() {
 async function uploadAsset(
     gameId,
     kind,
-    { file = null, url = "", gameType = "", coverType = "" }
+    { file = null, url = "", gameType = "", coverType = "", uploadId = "" }
 ) {
     const data = new FormData();
     data.append("kind", kind);
+    if (uploadId) {
+        data.append("upload_id", uploadId);
+    }
     if (file) {
         data.append("file", file);
     }
@@ -1389,8 +1445,26 @@ async function uploadBodyNow({ file = null, url = "", gameType = "" }) {
     }
     const gen = uploadGen;
     bodyUploading.value = true;
+    bodyProgress.value = 0;
+    let stagedId = "";
     try {
-        const updated = await uploadAsset(id, "game", { file, url, gameType });
+        let uploadId = "";
+        let plainFile = file;
+        if (file && shouldUseChunkedUpload(file, gameTypesStore.singleFileMaxBytes)) {
+            const staged = await stageBodyFile(
+                file,
+                form.gameType || editingItem.value?.game_type || ""
+            );
+            uploadId = staged.upload_id;
+            stagedId = uploadId;
+            plainFile = null;
+        }
+        const updated = await uploadAsset(id, "game", {
+            file: plainFile,
+            url,
+            gameType,
+            uploadId,
+        });
         if (editingId.value === id) {
             editingItem.value = updated;
         }
@@ -1401,6 +1475,12 @@ async function uploadBodyNow({ file = null, url = "", gameType = "" }) {
         await reload();
         return true;
     } catch (err) {
+        if (stagedId) {
+            abortGameUploadAPI(stagedId).catch(() => {});
+        }
+        if (err.aborted) {
+            return false;
+        }
         if (!err.reported) {
             ElMessage.error(err.message || "游戏本体上传失败");
         }
@@ -1408,6 +1488,7 @@ async function uploadBodyNow({ file = null, url = "", gameType = "" }) {
     } finally {
         if (gen === uploadGen) {
             bodyUploading.value = false;
+            bodyProgress.value = 0;
             // 清掉选择：同一个文件再选一次也能触发 change
             clearGameFile();
         }
@@ -1542,8 +1623,25 @@ async function onCreate() {
     data.append("name", form.name);
     data.append("cartridge_id", form.cartridgeId);
     data.append("description", form.description);
+    let stagedId = "";
     if (form.gameFile) {
-        data.append("file", form.gameFile);
+        if (shouldUseChunkedUpload(form.gameFile, gameTypesStore.singleFileMaxBytes)) {
+            bodyUploading.value = true;
+            bodyProgress.value = 0;
+            try {
+                const staged = await stageBodyFile(
+                    form.gameFile,
+                    form.gameType || bodySourceType.value || ""
+                );
+                stagedId = staged.upload_id;
+                data.append("upload_id", stagedId);
+            } finally {
+                bodyUploading.value = false;
+                bodyProgress.value = 0;
+            }
+        } else {
+            data.append("file", form.gameFile);
+        }
     }
     if (form.bodyUrl) {
         data.append("body_url", form.bodyUrl);
@@ -1557,7 +1655,15 @@ async function onCreate() {
     if (form.coverUrl) {
         data.append("cover_url", form.coverUrl);
     }
-    await createManageGameAPI(data);
+    try {
+        await createManageGameAPI(data);
+    } catch (err) {
+        // 游戏没建成：把已经传完的暂存会话删掉，别留到 24 小时 TTL
+        if (stagedId) {
+            abortGameUploadAPI(stagedId).catch(() => {});
+        }
+        throw err;
+    }
 }
 
 /** 新建：一次性提交名称 / 卡带 ID / 描述 / 本体（可选封面）。编辑没有保存按钮，不走这里。 */
@@ -1593,9 +1699,12 @@ async function onSave() {
         formVisible.value = false;
         await reload();
     } catch (err) {
-        if (!err.reported) ElMessage.error(err.message || "保存失败");
+        if (!err.aborted && !err.reported) {
+            ElMessage.error(err.message || "保存失败");
+        }
     } finally {
         saving.value = false;
+        bodyProgress.value = 0;
     }
 }
 
@@ -1655,6 +1764,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
     // 挂起的防抖别再触发一次请求（序号防竞态兜得住，但清掉更干净）
     clearTimeout(keywordTimer);
+    cancelBodyUpload();
     releaseCoverPreview();
 });
 </script>
@@ -1885,6 +1995,12 @@ onBeforeUnmount(() => {
 
 .game-manage__file-hint.muted {
     color: #94a3b8;
+}
+
+/* 大本体分片上传的细进度条：只占一行，不挤动表单布局 */
+.game-manage__upload-progress {
+    margin-top: 6px;
+    max-width: 320px;
 }
 
 /* 选了文件但还不合规时的提醒（缺 index.html、超过文件数上限） */

@@ -103,10 +103,11 @@ class Settings(BaseSettings):
     # 路线（nginx 托管）行为完全不变。
     STATIC_DIR: str | None = None
 
-    # 请求体上限，替代 nginx 的 client_max_body_size（撤掉 nginx 后没有任何全局闸门：
+    # 单个请求体的上限，替代 nginx 的 client_max_body_size（撤掉 nginx 后没有任何全局闸门：
     # Starlette 的 max_part_size 只管非文件字段，文件部分是不设上限的）。
-    # 与 nginx 的 512m 对齐（NDS 本体可达数百 MB）；Docker 路线上 nginx 先拦，这里只是兜底。
-    MAX_REQUEST_BODY_BYTES: int = 512 * 1024 * 1024
+    # 与 nginx 的 130m 对齐：128MB 内容 + multipart 表单余量；攻略 ZIP/PDF 的上限仍是 128MB。
+    # 游戏本体超过 30MB 时前端改走 16MB 分片，不再受这里约束（每个分片请求远小于上限）。
+    MAX_REQUEST_BODY_BYTES: int = 130 * 1024 * 1024
 
     @property
     def runtime_root(self) -> Path:

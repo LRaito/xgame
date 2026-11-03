@@ -18,6 +18,7 @@
 - 该目录下：本体 `game.{后缀}`、封面 `cover.{后缀}`、攻略 `guide.zip` 或 `guide.pdf`、图集 `image/{uuid}.{后缀}`。
 - 按账号分：存档 `save/{用户名}/{game_type}/{卡带ID}/{uuid}.state`。
 - 按账号分：截图 `image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀}`。
+- 分片暂存：`upload/{upload_id}/`（可丢弃，提交后即删，见「本体分片上传」）。
 - 运行时根下：H5 资源 `game/{类型}/{卡带ID}/h5/{包内路径}`。
 - 运行时根下：攻略资源 `game/{类型}/{卡带ID}/guide/{包内路径}`。
 - 完整路径表与生成函数见 `../data_dict.md` 的「文件存储结构 / 路径规则」。
@@ -26,6 +27,7 @@
 - `create_app()` 建两个实例：`app.state.storage` 与 `app.state.runtime_storage`。
 - 单文件原语：`upload` / `delete` / `stat` / `open_download`，上传下载都分块流式。
 - 目录级原语：`remove_tree` / `replace_tree` / `move` / `move_tree` / `dir_exists`。
+- 分片原语：`open_writer`（按偏移写）、`exists`、`list_dir`、`mtime`。
 - 写入先落同目录临时文件 `.{文件名}.tmp-{随机}`，再 `os.replace` 改名。
 - `LocalStorage` 拒绝空路径、反斜杠、绝对路径与任何一段 `..`；根目录不存在时自动创建。
 - 存储协议在 `backend/storage/types.py`，跨模块下载响应在 `backend/storage/access.py`。
@@ -108,8 +110,10 @@
 - 新建走 `POST /api/games/manage`（multipart），一步建条目并写本体。
 - 表单：`name` / `cartridge_id` / `description` / `file`，可选 `cover`。
 - 本体与封面也可给直链：`body_url` + `body_game_type` / `cover_url`，来源可混用。
+- 超过 30MB 的本地本体改走分片：同一个接口接受 `upload_id`，与 `file` / `body_url` 三选一。
 - 任一步失败整体回滚，不留半成品条目与文件。
 - 换本体 / 换封面走 `POST /manage/{id}/assets`，`kind=game|cover`。
+- 分片暂存本体也只能用于 `kind=game`；封面与攻略不分片。
 - 换本体成功后更新 `crc32` / `size` / `game_path`，落库成功后才删旧后缀文件。
 - 网络上传由服务端下载，单文件上限 512MB（`remote.MAX_REMOTE_BYTES`）。
 - 本体直链类型以用户所选 `game_type` 为准：地址能认出就必须一致，否则 400。
@@ -119,6 +123,34 @@
 - 只接受 7k7k.com / 4399.com / flash.homes 的游戏页地址，避免被当作任意 URL 代理。
 - 搬运由 `backend/games/importer.py` 解析下载，再走普通上传管线；结果是 Flash 或 H5。
 - 搬运的卡带 ID 自动生成为 `F-{CRC32}`；同一文件重复搬运会撞唯一索引。
+
+### 本体分片上传
+
+- 本地上传 ≤30MB 仍走单文件 multipart；>30MB 由前端切 16MB 分片，5 路并发。
+- 阈值与分片大小由 `/api/games/status.upload` 下发，后端常量在 `backend/games/uploads.py`。
+- 分片会话绑定当前账号；`upload_id` 是 32 位小写十六进制，别人拿到也一律 404。
+- 会话暂存在**数据根**的 `upload/{upload_id}/`，与最终素材同一文件系统：
+  - `meta.json`：用户、文件名、总大小、分片大小、分片数、所选类型与状态；
+  - `body.part`：唯一目标文件，分片按偏移直接写入；
+  - `chunks/{index}`：空标记，写完并 `fsync` 后才创建。
+- 分片请求是原始字节流（`application/octet-stream`），不经过 `UploadFile`，
+  nginx 关闭 `proxy_request_buffering`，后端用 `request.stream()` 边收边写。
+- 每个分片必须正好是约定长度；有 `Content-Length` 先比对，实际字节数再校验一次。
+- 所有分片到齐后 `complete` 只检查标记与 `body.part` 大小，不读整包、不算 CRC。
+- 提交（新建或换本体）时才读一遍暂存文件算 CRC32，然后 `os.replace` 到
+  `game/{类型}/{卡带ID}/game.{后缀}`；H5 仍是 `game.zip`，并作废运行时解包产物。
+- 提交成功后删除整个暂存目录；失败保留，前端 DELETE 或 24 小时 TTL 兜底。
+- 服务启动时清理超过 24 小时的暂存会话。
+- 分片本体不设总大小上限，只受磁盘限制；H5 `.zip` 仍受 `archive.MAX_ZIP_SIZE` 128MB 限制。
+- 前端对失败分片等待 5 秒重试，最多 5 次；某片仍失败就取消其余分片、
+  删除服务端会话，整次上传标记失败。新建失败不会留下没有本体的条目。
+- nginx `client_max_body_size` 为 130m（128MB 内容 + multipart 余量）；
+  攻略 ZIP/PDF 上限仍为 128MB。
+- 播放 URL 末段带真实落盘名（`/api/games/{id}/play/game.<ext>`），
+  EmulatorJS 用它当 ROM 文件名并识别 `.pbp` 等格式；原名段必须与落盘名一致。
+
+### H5 与攻略包
+
 - H5 上传只校验、不解压：zip 原样存数据根的 `game.zip`，就是 `game_path`。
 - H5 不落清单表；真实解包推迟到播放时。
 - 两个包共同校验：只读中央目录，检查路径、重名、条目数、单条、总量、压缩比、加密条目。
@@ -130,8 +162,6 @@
 - 上传一种形态会删掉另一种；删旧失败时把新文件也删掉再报错。
 - 攻略写入不动 `game_path` / `size` / `crc32`，只写 `games.guide_kind`。
 - 删除攻略走 `DELETE /manage/{id}/guide`，文件、解包产物与 `guide_kind` 一起清；幂等，删文件失败返回 500 且不清列。
-- 播放 URL 末段带真实落盘名（`/api/games/{id}/play/game.<ext>`），
-  EmulatorJS 用它当 ROM 文件名并识别 `.pbp` 等格式；原名段必须与落盘名一致。
 
 ### 删除与运行时产物
 
@@ -152,6 +182,9 @@
 - 卡带 ID 已被占用：中文 400；搬运重复时提示「这个游戏已经搬运过了」。
 - 未收录本体后缀、跨类型换本体、游戏名非法或重复、描述超长：中文 400，旧档不动。
 - 多候选后缀未选类型、改类型目标不在候选集：中文 400，不搬任何目录。
+- 单文件本地本体超过 30MB：中文 400，提示改用分片上传。
+- 分片长度不符、序号越界、缺片、总大小不符：中文 400；别人的 `upload_id`：404。
+- 分片上传的 chunks 与 complete 路由允许没有 `Content-Length`（HTTP/2），其它写方法仍返回 411。
 - 封面后缀或封面类型非法、上传文件为空、网络直链不合法或超 512MB：中文 400。
 - H5 / 攻略 ZIP 缺入口、路径越界、重名、超限、加密条目：中文 400。
 - PDF 后缀不符、超过 128MB、文件头没有 `%PDF-`：中文 400。
@@ -167,6 +200,8 @@
 - 上传后文件按 `game/{类型}/{卡带ID}/…` 真实落盘。
 - 换同类型本体更新 `crc32` / `size` / `game_path`，保留封面 / 图集 / 攻略；跨类型返回 400 且旧档不动。
 - 多候选后缀（`.d64` / `.prg`）不选类型被拒；选 c128 / pet 等按所选落库。
+- 分片上传：乱序分片、缺片、长度不符、上传会话归属、DELETE 幂等与 TTL 清理。
+- 后端：`python -m pytest tests/test_game_uploads.py tests/test_local_storage.py`。
 - 改类型搬三类目录（含历史类型目录）、改五处路径列、多账号都搬；失败分支全测。
 - 改卡带 ID 搬三类目录（含换过类型的历史目录）、改五处路径列、多账号都搬；失败分支全测。
 - 两个根下都不留旧 ID 的残迹；运行时旧解包产物作废。

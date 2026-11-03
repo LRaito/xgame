@@ -15,6 +15,7 @@
     game/{game_type}/{卡带ID}/image/{uuid}.{后缀}   图集（全站共享）
     save/{用户名}/{game_type}/{卡带ID}/{uuid}.state 云端存档文件
     image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀} 游戏截图（按账号隔离；播放页截的是 .png）
+    upload/{upload_id}/…                            本体分片上传的暂存区（可丢弃，提交后即删）
 
 运行时根（`RUNTIME_ROOT`）——SQLite 库与**解包产物**，全是派生物，删了会自动重建：
 
@@ -34,6 +35,9 @@ from backend.errors import ValidationError
 GAME_DIR = "game"
 SAVE_DIR = "save"
 IMAGE_DIR = "image"
+# 分片上传暂存区：数据根顶层的临时目录，提交时把 body.part 改名进 game/… 即完成，
+# 同一文件系统内只是 os.replace。启动时清理超过 24 小时的会话。
+UPLOAD_DIR = "upload"
 
 H5_DIR_NAME = "h5"
 GUIDE_DIR_NAME = "guide"
@@ -135,6 +139,31 @@ def gallery_file_path(
         f"{gallery_dir(game_type, cartridge_id)}"
         f"/{token}{normalize_extension(extension)}"
     )
+
+
+def upload_session_dir(upload_id: str) -> str:
+    """一个分片上传会话的暂存目录（数据根下）。"""
+    return f"{UPLOAD_DIR}/{upload_id}"
+
+
+def upload_meta_path(upload_id: str) -> str:
+    """上传会话的元数据（用户、文件名、总大小、分片数、状态）。"""
+    return f"{upload_session_dir(upload_id)}/meta.json"
+
+
+def upload_part_path(upload_id: str) -> str:
+    """分片直接写入的唯一目标文件；提交时改名到 game/…。"""
+    return f"{upload_session_dir(upload_id)}/body.part"
+
+
+def upload_chunks_dir(upload_id: str) -> str:
+    """分片完成标记目录。"""
+    return f"{upload_session_dir(upload_id)}/chunks"
+
+
+def upload_chunk_marker_path(upload_id: str, index: int) -> str:
+    """第 index 片已完整落盘的标记；存在即视为该片完成。"""
+    return f"{upload_chunks_dir(upload_id)}/{index}"
 
 
 def save_dir(username: str, game_type: str, cartridge_id: str) -> str:

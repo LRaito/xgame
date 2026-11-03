@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { gamesStatusAPI } from "@/api/games";
+import { CHUNK_SIZE_BYTES, SINGLE_FILE_MAX_BYTES } from "@/utils/chunkUpload";
 
 /**
  * 游戏类型注册表：`/api/games/status` 的后端派生数据在前端的唯一缓存。
@@ -100,6 +101,8 @@ export const useGameTypesStore = defineStore("gameTypes", {
         bodyExtensions: [],
         extensionCandidates: {},
         defaultGameTypeByExtension: {},
+        // 后端下发的上传阈值；没拿到时用 chunkUpload.js 的回退常量
+        uploadLimits: null,
         loaded: false,
         loading: null,
         error: "",
@@ -107,6 +110,14 @@ export const useGameTypesStore = defineStore("gameTypes", {
     getters: {
         metaMap(state) {
             return Object.fromEntries(state.types.map((item) => [item.id, item]));
+        },
+        singleFileMaxBytes(state) {
+            const value = Number(state.uploadLimits?.single_file_max_bytes);
+            return value > 0 ? value : SINGLE_FILE_MAX_BYTES;
+        },
+        chunkSizeBytes(state) {
+            const value = Number(state.uploadLimits?.chunk_size_bytes);
+            return value > 0 ? value : CHUNK_SIZE_BYTES;
         },
     },
     actions: {
@@ -133,6 +144,10 @@ export const useGameTypesStore = defineStore("gameTypes", {
                     this.extensionCandidates = status.extension_candidates || {};
                     this.defaultGameTypeByExtension =
                         status.default_game_type_by_extension || {};
+                    this.uploadLimits =
+                        status.upload && typeof status.upload === "object"
+                            ? status.upload
+                            : null;
                     this.loaded = this.types.length > 0;
                     this.error = this.loaded ? "" : "游戏类型信息为空";
                 } catch (err) {
@@ -180,6 +195,7 @@ export const useGameTypesStore = defineStore("gameTypes", {
             this.bodyExtensions = [];
             this.extensionCandidates = {};
             this.defaultGameTypeByExtension = {};
+            this.uploadLimits = null;
             this.loaded = false;
             this.loading = null;
             this.error = "";

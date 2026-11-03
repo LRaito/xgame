@@ -8,9 +8,15 @@ from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from backend.deps import CurrentUser, GameServiceDep, GameStatsServiceDep
+from backend.deps import (
+    BodyUploadServiceDep,
+    CurrentUser,
+    GameServiceDep,
+    GameStatsServiceDep,
+)
 from backend.errors import NotFoundError, StorageError, ValidationError
 from backend.games.models import PROGRESS_NOT_STARTED
+from backend.games.uploads import CHUNK_SIZE, SINGLE_FILE_MAX
 from backend.games.service import (
     GAME_TYPES,
     MANAGE_PAGE_SIZE_DEFAULT,
@@ -135,6 +141,11 @@ def games_status(_user: CurrentUser):
             "types": game_type_descriptors(),
             "extension_candidates": extension_candidates(),
             "default_game_type_by_extension": default_game_types_by_extension(),
+            # 前端据此决定什么时候走分片，阈值与后端保持一致
+            "upload": {
+                "single_file_max_bytes": SINGLE_FILE_MAX,
+                "chunk_size_bytes": CHUNK_SIZE,
+            },
         }
     )
 
@@ -225,6 +236,7 @@ def games_import(body: ImportGameBody, _user: CurrentUser, service: GameServiceD
 def games_create(
     _user: CurrentUser,
     service: GameServiceDep,
+    uploads: BodyUploadServiceDep,
     name: str = Form(...),
     cartridge_id: str = Form(""),
     description: str = Form(""),
@@ -233,15 +245,20 @@ def games_create(
     body_url: str = Form(""),
     body_game_type: str = Form(""),
     cover_url: str = Form(""),
+    upload_id: str = Form(""),
 ):
     """新建游戏并上传本体（可选封面）。
 
     卡带ID 必填且创建后不可改：它既是游戏的唯一标识，也是磁盘上的目录名。
-    本体与封面各自可以给本地文件（`file`/`cover`）或网络直链（`body_url`/`cover_url`）。
+    本体与封面各自可以给本地文件（`file`/`cover`）、网络直链（`body_url`/`cover_url`）
+    或已完成分片上传的 `upload_id`（与 `file`/`body_url` 三选一）。
     走本地文件时游戏类型由本体文件名自动判定；走直链时地址未必看得出类型，
     所以由前端下拉传入 `body_game_type`，后者必须与地址能认出的类型一致。
     """
     try:
+        if upload_id and file is not None:
+            raise ValidationError("本体只能选择一种上传方式。")
+        staged = uploads.claim(upload_id) if upload_id else None
         item = service.create(
             name,
             description,
@@ -251,7 +268,10 @@ def games_create(
             body_url=body_url,
             body_game_type=body_game_type,
             cover_url=cover_url,
+            staged=staged,
         )
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)
     logger.info("已添加游戏 id=%s name=%s", item.id, item.name)
@@ -329,15 +349,18 @@ def games_upload_asset(
     game_id: int,
     _user: CurrentUser,
     service: GameServiceDep,
+    uploads: BodyUploadServiceDep,
     kind: str = Form(...),
     file: UploadFile | None = File(None),
     url: str = Form(""),
     game_type: str = Form(""),
     cover_type: str = Form(""),
+    upload_id: str = Form(""),
 ):
     """一步上传游戏本体或封面：校验类型 → 流式写入存储目录 → 更新游戏行 → 删旧文件。
 
-    来源可以是本地文件（`file`）或网络直链（`url`）。**换本体只接受与当前游戏类型
+    来源可以是本地文件（`file`）、网络直链（`url`）或已完成分片上传的 `upload_id`
+    （只支持 kind="game"），三者只能选一个。**换本体只接受与当前游戏类型
     相同的本体**（按后缀候选集判定），跨类型返回 400 且旧档不动；改类型走独立的
     `PUT /manage/{id}/game-type` 接口。
     成功后重算并更新 `crc32`/`size`/`game_path`。直链的 `game_type` 必须等于当前类型。
@@ -348,6 +371,12 @@ def games_upload_asset(
     try:
         if file is not None and not file.filename:
             raise ValidationError("请选择要上传的文件。")
+        if upload_id:
+            if file is not None or url:
+                raise ValidationError("请只选择一种上传方式。")
+            if kind != "game":
+                raise ValidationError("只有游戏本体支持分片上传。")
+        staged = uploads.claim(upload_id) if upload_id else None
         item = service.upload_asset(
             game_id,
             kind=kind,
@@ -355,6 +384,7 @@ def games_upload_asset(
             url=url,
             game_type=game_type,
             cover_type=cover_type,
+            staged=staged,
         )
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)

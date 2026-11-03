@@ -14,6 +14,7 @@ from backend.games.search_service import GameSearchService
 from backend.games.service import GameService
 from backend.games.settings_service import EmulatorSettingsService
 from backend.games.stats_service import GameStatsService
+from backend.games.uploads import BodyUploadService
 
 SESSION_USER_KEY = "user_id"
 
@@ -48,6 +49,14 @@ def get_game_service(request: Request, session: DbSession) -> GameService:
 
 
 GameServiceDep = Annotated[GameService, Depends(get_game_service)]
+
+
+def get_body_upload_service(request: Request, user: CurrentUser) -> BodyUploadService:
+    # 上传会话按账号隔离，和云存档/截图一样把 user.id 注入 service
+    return BodyUploadService(request.app.state.storage, user.id)
+
+
+BodyUploadServiceDep = Annotated[BodyUploadService, Depends(get_body_upload_service)]
 
 
 def get_cloud_save_service(
