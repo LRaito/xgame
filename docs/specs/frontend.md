@@ -77,7 +77,7 @@
 
 **通用组件。**
 
-- `components/common/` 必有：`AppDialog`、`AppButton`、`AppSegmented`。
+- `components/common/` 必有：`AppDialog`、`AppButton`、`AppSegmented`、`AppTypeSelect`。
 - 还有 `AppPagination`、`AppEmpty`、`CopyButton`、`AppUpdateBanner`。
 - 按钮统一走 `AppButton`。
 - 只有两种类型：`secondary` 白底蓝框、`danger` 白底红框。
@@ -90,6 +90,8 @@
 - 禁用态背景/边框 `#EEEEEE`、文字 `#AAAAAA`，不用透明度。
 - 焦点只变边框色，不加外环。
 - 分段/标签统一走 `AppSegmented`，tone / size 用同一套 token。
+- 游戏类型 / 机种下拉统一走 `AppTypeSelect`：可下拉、可输入过滤，
+  按 label 或 value 做不区分大小写的子串匹配。
 - 页面里不再手写原生 `<button>` 或按钮 CSS，唯一例外是 `AppSegmented` 自身。
 - 需要新外观先扩 `AppButton` 的 `text` 或 `tone`。
 - `CopyButton` 的 20px 卡带 ID 药丸是可复制数据 chip，不是第三种按钮类型。

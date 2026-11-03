@@ -12,21 +12,14 @@
         <!-- 游戏检索 -->
         <section v-show="activeTab === 'search'" class="game-discover__panel">
             <div class="game-discover__toolbar">
-                <el-select
+                <app-type-select
                     v-model="searchConsole"
                     class="game-discover__console"
                     placeholder="游戏类型"
                     clearable
+                    :options="searchTypeOptions"
                     @change="searchNow"
-                >
-                    <el-option label="全部游戏类型" value="" />
-                    <el-option
-                        v-for="item in searchConsoles"
-                        :key="item.id"
-                        :label="item.name"
-                        :value="item.id"
-                    />
-                </el-select>
+                />
                 <el-input
                     v-model="keyword"
                     class="game-discover__keyword"
@@ -89,20 +82,14 @@
         <!-- 游戏榜单 -->
         <section v-show="activeTab === 'ranking'" class="game-discover__panel">
             <div class="game-discover__toolbar">
-                <el-select
+                <app-type-select
                     v-model="rankingConsole"
                     class="game-discover__console"
                     placeholder="游戏类型"
                     :disabled="!rankingConsoles.length"
+                    :options="rankingTypeOptions"
                     @change="loadRanking"
-                >
-                    <el-option
-                        v-for="item in rankingConsoles"
-                        :key="item.platform"
-                        :label="item.label"
-                        :value="item.platform"
-                    />
-                </el-select>
+                />
 
                 <!-- 榜单搜索：与检索区那个同一个 class（样式、位置、清空按钮都一样），但**纯前端**过滤
                      ——榜单是一个机种整份取回来的，逐字即时筛，不需要防抖、也不需要回车或清空的处理
@@ -236,6 +223,11 @@ const activeTab = computed({
 const keyword = ref("");
 const searchConsole = ref("");
 const searchConsoles = ref([]);
+// 检索机种下拉：「全部」+ 后端机种；组件负责输入时的不区分大小写过滤
+const searchTypeOptions = computed(() => [
+    { value: "", label: "全部游戏类型" },
+    ...searchConsoles.value.map((item) => ({ value: item.id, label: item.name })),
+]);
 const searchItems = ref([]);
 const total = ref(0);
 const page = ref(1);
@@ -348,6 +340,9 @@ function onKeywordInput() {
 // --------------------------------------------------------------------------
 
 const rankingConsoles = ref([]);
+const rankingTypeOptions = computed(() =>
+    rankingConsoles.value.map((item) => ({ value: item.platform, label: item.label }))
+);
 const rankingConsole = ref("");
 // 当前机种的**整份**榜单（一个机种一次全取回来，前端分页的数据源）
 const rankingItems = ref([]);

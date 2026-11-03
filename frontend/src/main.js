@@ -11,6 +11,7 @@ import AppButton from "@components/common/AppButton.vue";
 import AppEmpty from "@components/common/AppEmpty.vue";
 import AppPagination from "@components/common/AppPagination.vue";
 import AppSegmented from "@components/common/AppSegmented.vue";
+import AppTypeSelect from "@components/common/AppTypeSelect.vue";
 import CopyButton from "@components/common/CopyButton.vue";
 import "./styles/index.css";
 import "./permission";
@@ -27,6 +28,7 @@ app.component("AppButton", AppButton);
 app.component("AppEmpty", AppEmpty);
 app.component("AppPagination", AppPagination);
 app.component("AppSegmented", AppSegmented);
+app.component("AppTypeSelect", AppTypeSelect);
 app.component("CopyButton", CopyButton);
 
 ensureCsrf().catch(() => {});

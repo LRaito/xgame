@@ -38,20 +38,13 @@
                             :value="item.value"
                         />
                     </el-select>
-                    <el-select
+                    <app-type-select
                         v-model="activeType"
                         placeholder="游戏类型"
                         clearable
                         class="games-filter-type"
-                    >
-                        <el-option label="全部游戏类型" value="" />
-                        <el-option
-                            v-for="type in typeOrder"
-                            :key="type"
-                            :label="gameTypeLabel(type)"
-                            :value="type"
-                        />
-                    </el-select>
+                        :options="typeFilterOptions"
+                    />
                     <el-input
                         v-model="keyword"
                         class="games-filter-keyword"
@@ -165,6 +158,12 @@ const typeOrder = computed(() => {
     }
     return order;
 });
+
+// 类型筛选下拉的选项：「全部」+ 当前类型；组件负责输入时的不区分大小写过滤
+const typeFilterOptions = computed(() => [
+    { value: "", label: "全部游戏类型" },
+    ...typeOrder.value.map((type) => ({ value: type, label: gameTypeLabel(type) })),
+]);
 
 // 空串 = 全部；keyword 仅按游戏名称本地实时过滤（数据已整体在本地，无需再请求后端）
 const activeType = ref("");

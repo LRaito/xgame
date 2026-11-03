@@ -1,21 +1,14 @@
 <template>
     <div class="game-manage">
         <div class="game-manage__toolbar">
-            <el-select
+            <app-type-select
                 v-model="filterType"
                 placeholder="游戏类型"
                 clearable
                 class="game-manage__filter-type"
+                :options="typeFilterOptions"
                 @change="applyFilter"
-            >
-                <el-option label="全部游戏类型" value="" />
-                <el-option
-                    v-for="type in gameTypes"
-                    :key="type"
-                    :label="typeLabel(type)"
-                    :value="type"
-                />
-            </el-select>
+            />
             <el-input
                 v-model="filterKeyword"
                 placeholder="搜索名称或描述"
@@ -198,35 +191,23 @@
                             />
                         </el-form-item>
                         <el-form-item label="游戏类型">
-                            <!-- 创建：后缀唯一时只读；多候选（Commodore）时下拉 -->
-                            <el-select
+                            <!-- 创建：后缀唯一时只读；多候选（Commodore）时下拉，可输入过滤 -->
+                            <app-type-select
                                 v-if="formMode === 'create' && bodyTypeCandidates.length > 1"
                                 v-model="form.gameType"
                                 placeholder="请选择游戏类型"
                                 class="game-manage__type-select"
-                            >
-                                <el-option
-                                    v-for="type in bodyTypeCandidates"
-                                    :key="type"
-                                    :label="typeLabel(type)"
-                                    :value="type"
-                                />
-                            </el-select>
+                                :options="bodyTypeOptions"
+                            />
                             <!-- 编辑：只有当前本体后缀有多个候选时才允许改类型 -->
-                            <el-select
+                            <app-type-select
                                 v-else-if="formMode === 'edit' && editingTypeCandidates.length > 1"
                                 v-model="form.gameType"
                                 :disabled="typeSaving"
                                 class="game-manage__type-select"
+                                :options="editingTypeOptions"
                                 @change="onChangeGameType"
-                            >
-                                <el-option
-                                    v-for="type in editingTypeCandidates"
-                                    :key="type"
-                                    :label="typeLabel(type)"
-                                    :value="type"
-                                />
-                            </el-select>
+                            />
                             <span v-else class="game-manage__type-value">{{ typeFieldText }}</span>
                         </el-form-item>
                         <!-- 封面类型：这盘封面被美化成的外观，值就是封面样式 id。
@@ -421,19 +402,13 @@
                     />
                 </el-form-item>
                 <el-form-item label="游戏类型">
-                    <el-select
+                    <app-type-select
                         v-model="remoteBody.gameType"
                         placeholder="请选择游戏类型"
                         class="game-manage__remote-select"
                         :disabled="formMode === 'edit'"
-                    >
-                        <el-option
-                            v-for="type in remoteTypeOptions"
-                            :key="type"
-                            :label="typeLabel(type)"
-                            :value="type"
-                        />
-                    </el-select>
+                        :options="remoteTypeSelectOptions"
+                    />
                 </el-form-item>
                 <p v-if="formMode === 'edit'" class="game-manage__file-hint muted">
                     编辑时只能更换同一游戏类型的本体（同类型后缀可互换：.gb ↔ .gbc、.sfc ↔ .smc、.md ↔ .gen）；
@@ -607,6 +582,11 @@ const total = ref(0);
 const gameTypesStore = useGameTypesStore();
 const gameTypes = computed(() => gameTypesStore.gameTypes);
 const bodyExtensions = computed(() => gameTypesStore.bodyExtensions);
+// 类型筛选下拉：「全部」+ 当前类型；输入过滤交给 AppTypeSelect
+const typeFilterOptions = computed(() => [
+    { value: "", label: "全部游戏类型" },
+    ...gameTypes.value.map((type) => ({ value: type, label: typeLabel(type) })),
+]);
 
 const filterType = ref("");
 const filterKeyword = ref("");
@@ -678,6 +658,9 @@ const remoteTypeOptions = computed(() => {
     const candidates = gameTypesOfUrl(remoteBody.url);
     return candidates.length ? candidates : gameTypes.value;
 });
+const remoteTypeSelectOptions = computed(() =>
+    remoteTypeOptions.value.map((type) => ({ value: type, label: typeLabel(type) }))
+);
 const remoteCoverVisible = ref(false);
 const remoteCoverUrl = ref("");
 
@@ -727,6 +710,9 @@ const bodyTypeCandidates = computed(() => {
     }
     return [];
 });
+const bodyTypeOptions = computed(() =>
+    bodyTypeCandidates.value.map((type) => ({ value: type, label: typeLabel(type) }))
+);
 const bodySourceType = computed(() => {
     if (form.gameFile) {
         return form.gameType || bodyTypeCandidates.value[0] || null;
@@ -757,6 +743,9 @@ const editingTypeCandidates = computed(() => {
     const candidates = gameTypeCandidatesByFilename(item.game_path || "");
     return candidates.length ? candidates : item.game_type ? [item.game_type] : [];
 });
+const editingTypeOptions = computed(() =>
+    editingTypeCandidates.value.map((type) => ({ value: type, label: typeLabel(type) }))
+);
 
 // 封面类型的候选：编辑态用当前（可能刚改过的）类型；新建态按待上传本体的候选。
 // 不支持美化封面的类型与「新建还没选本体」都是空数组（那一行不显示）。
