@@ -24,11 +24,17 @@ from backend.games.platforms import (
     PLATFORM_BY_ID,
     PLATFORMS,
     BiosSpec,
+    all_bundle_extensions,
+    bundle_platforms,
     default_playable_platform_for_extension,
     normalize_name,
+    platform_bundle_entries,
+    platform_bundle_extensions,
     platform_label,
     platform_order,
+    platform_upload_extensions,
     playable_platforms,
+    playable_platforms_for_bundle_extension,
     playable_platforms_for_extension,
     resolve_platform,
 )
@@ -219,8 +225,67 @@ def test_bios_specs_are_well_formed():
     )
     assert PLATFORM_BY_ID["pcfx"].bios == BiosSpec("pcfx.zip", ("pcfx.rom",))
     assert PLATFORM_BY_ID["3do"].bios == BiosSpec("3do.zip", ("panafz1.bin",))
+    assert PLATFORM_BY_ID["segaCD"].bios == BiosSpec(
+        "segaCD.zip", ("bios_CD_E.bin", "bios_CD_U.bin", "bios_CD_J.bin")
+    )
+    assert PLATFORM_BY_ID["amiga"].bios == BiosSpec(
+        "amiga.zip", ("kick34005.A500", "kick40068.A1200"), optional=True
+    )
     assert PLATFORM_BY_ID["n64"].bios is None
     assert PLATFORM_BY_ID["nes"].bios is None
+
+
+def test_bundle_extensions_are_well_formed():
+    """多文件包内后缀必须是单文件白名单的超集，入口必须是包内后缀的子集。"""
+    for platform in bundle_platforms():
+        assert platform.bundle_extensions, platform.id
+        assert platform.bundle_entries, platform.id
+        bundle = {ext.lower() for ext in platform.bundle_extensions}
+        entries = {ext.lower() for ext in platform.bundle_entries}
+        assert entries <= bundle, platform.id
+        # 单文件能上传的后缀也必须能在多文件包里出现
+        assert {ext.lower() for ext in platform.extensions} <= bundle, platform.id
+        assert all(ext.startswith(".") for ext in platform.bundle_extensions), platform.id
+        assert all(ext.startswith(".") for ext in platform.bundle_entries), platform.id
+
+    assert bundle_platforms() == (
+        PLATFORM_BY_ID["segaCD"],
+        PLATFORM_BY_ID["amiga"],
+    )
+    assert platform_bundle_extensions("segaCD") == (".cue", ".bin", ".m3u", ".chd")
+    assert platform_bundle_entries("segaCD") == (".m3u", ".cue", ".chd")
+    assert platform_bundle_extensions("amiga") == (".adf", ".hdf", ".m3u")
+    assert platform_bundle_entries("amiga") == (".m3u", ".adf", ".hdf")
+    assert platform_bundle_extensions("nes") == ()
+    assert platform_upload_extensions("segaCD") == (".chd", ".cue", ".bin", ".m3u")
+    assert platform_upload_extensions("amiga") == (".adf", ".hdf", ".m3u")
+
+
+def test_bundle_extensions_resolve_to_platforms():
+    """包内后缀只用于多文件类型推断；单文件候选表保持原样。"""
+    assert [p.id for p in playable_platforms_for_bundle_extension(".cue")] == ["segaCD"]
+    assert [p.id for p in playable_platforms_for_bundle_extension(".bin")] == ["segaCD"]
+    assert [p.id for p in playable_platforms_for_bundle_extension(".m3u")] == [
+        "segaCD",
+        "amiga",
+    ]
+    assert [p.id for p in playable_platforms_for_bundle_extension(".adf")] == ["amiga"]
+    assert [p.id for p in playable_platforms_for_bundle_extension(".hdf")] == ["amiga"]
+    assert playable_platforms_for_bundle_extension(".nes") == ()
+    assert all_bundle_extensions() == (
+        ".adf",
+        ".bin",
+        ".chd",
+        ".cue",
+        ".hdf",
+        ".m3u",
+    )
+
+    # 单文件判型表不变：cue/bin 仍不开放，chd/adf/hdf 按单文件候选
+    assert playable_platforms_for_extension(".cue") == ()
+    assert playable_platforms_for_extension(".bin") == ()
+    assert [p.id for p in playable_platforms_for_extension(".adf")] == ["amiga"]
+    assert [p.id for p in playable_platforms_for_extension(".hdf")] == ["amiga"]
 
 
 def test_new_platform_extensions_resolve_uniquely():
@@ -244,6 +309,7 @@ def test_tier3_platform_extensions_resolve():
     assert [p.id for p in playable_platforms_for_extension(".pbp")] == ["psx"]
     assert [p.id for p in playable_platforms_for_extension(".iso")] == ["psx", "3do"]
     assert [p.id for p in playable_platforms_for_extension(".chd")] == [
+        "segaCD",
         "segaSaturn",
         "psx",
         "pcfx",

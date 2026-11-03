@@ -23,6 +23,15 @@
 - 宿主页请求本体时用 `/api/games/{id}/play/<落盘名>`（如 `game.chd`）：
   EmulatorJS 把 URL 末段当 ROM 文件名，`.pbp` 等核依赖后缀；不带末段的 `/play` 仍保留。
 - 主机播放页外层是 SPA 壳，内嵌 `/emulator-host.html`，EmulatorJS 官方要求 iframe 隔离。
+- **多文件本体**：列表条目带 `body_kind="bundle"`，播放页给宿主页加 `?bundle=1`；
+  宿主页先取 `/play/manifest`，把入口设为 `EJS_gameUrl`，其余文件用
+  `EJS_externalFiles` 写成 `{"/文件名": "/play/files/文件名"}`。
+- 入口统一改名 `game.{cue|m3u|chd|adf|hdf}`：EJS 把 `gameUrl` 末段当 MEMFS 文件名，
+  且不做 URL 解码，原文件名带空格/中文会与 cue 内引用对不上。
+- 多碟入口优先 m3u；多个 cue/chd/adf 且没有 m3u 时后端自动生成 `game.m3u`。
+  换盘交给 EJS 内置 Disk 菜单（`setupDisksMenu()`），不另做 UI。
+- 多文件场景 `EJS_CacheLimit=0`，避免大 ROM 再写一份 IndexedDB。
+- 多文件本体不提供「下载为单个文件」；详情弹框提示从数据目录整体备份。
 - 引擎资产由 `frontend/scripts/fetch-emulatorjs.mjs` 在构建期拉到 `frontend/public/emulatorjs/`。
 - 引擎资产以固定版本随镜像发布，nginx 与 `static_site.py` 按 immutable 缓存，运行时不依赖外网。
 - 需要 BIOS 的机种在 `platforms.py` 的 `BiosSpec` 里声明，元数据随 `/status.types[].bios`
@@ -38,12 +47,18 @@
 | 接口 | 用途 | 登录 | 内容类型 |
 |---|---|---|---|
 | `GET/HEAD /api/games/{id}/play` | 本体下载 | 需要 | `.swf` 用 Flash 值，其余 `octet-stream` |
+| `GET/HEAD /api/games/{id}/play/manifest` | 多文件本体清单 | 需要 | JSON 信封 |
+| `GET/HEAD /api/games/{id}/play/files/{name}` | 多文件本体的单个文件 | 需要 | `octet-stream` |
 | `GET /api/games/{id}/cover` | 封面预览 | 需要 | inline；`?download=1` 附件 |
 | `GET/HEAD /api/games/{id}/h5/{路径}` | H5 资源 | **不需要** | 按后缀现算 |
 | `GET/HEAD /api/games/{id}/guide/{路径}` | ZIP 攻略资源 | 需要 | 按后缀现算 |
 | `GET/HEAD /api/games/{id}/guide.pdf` | PDF 攻略 | 需要 | `application/pdf` inline |
 
 - 本体文件名取落盘名 `game.{后缀}`；文件不存在或本体未上传时返回中文 400/404。
+- `/play/manifest` 返回 `{entry, files:[{name,size}], total_size}`；单文件游戏也返回
+  只有入口一条的等价结构。它必须注册在 `/play/{filename}` **之前**，否则 `manifest`
+  会被当成文件名。
+- `/play/files/{name}` 只服务清单内的安全 basename，未知名字或 `..` 一律 404。
 - 主机播放页会先对本体的 URL 发 HEAD 探测，所以 play 接口同时提供 HEAD。
 - H5 资源接口是唯一免登录的业务接口，原因是沙箱 iframe 带不上 SameSite=Lax 的 cookie。
 - H5 响应强制 CSP `sandbox`，不含 `allow-same-origin`；另加 `nosniff`、`no-referrer`、`ACAO: *`、`no-cache`。

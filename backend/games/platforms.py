@@ -18,8 +18,9 @@ EJS 4.2.3 的 `EmulatorJS.getCores()`
 2. **`label` 是三处共用的显示名**（中文，厂商 + 空格 + 型号；没有厂商名的只写型号），
    前端 `constants/gameTypes.js` 里按 id 保留图标/描述等 UI 元数据，
    label 与扩展名由 `/api/games/status` 从本表派生。
-3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 29 个机种有；其余机种（含 EJS 支持
-   但本项目还没打包 core 的 segaCD/psp 等）只用来给外部名录「对上号」，不开放上传。
+3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 31 个机种有；其余机种（含 EJS 支持
+   但本项目还没打包 core 的 psp 等）只用来给外部名录「对上号」，不开放上传。
+   `bundle_extensions` 描述多文件本体的包内后缀（cue/bin/m3u 这类），不影响单文件判型。
 
 `flash` / `h5` **不是机种**（它们是载体类型：Ruffle 播的 SWF 与上传 ZIP 解包的网页游戏），
 所以不在这张表里，它们的 `game_type` 与显示名仍由 `service.py` 自己管。
@@ -56,6 +57,11 @@ class Platform:
     extensions: tuple[str, ...] = ()  # 非空 = 本项目已收录可玩；值即 game_type
     default_extension: str = ""  # 网络直链看不出后缀时补的那个（只有可玩机种有）
     bios: BiosSpec | None = None  # 需要 BIOS 的机种在这里声明
+    # 多文件本体：包内允许出现的全部后缀（含只作分轨、不能当入口的 .bin）。
+    # 非空即表示该机种支持「一个游戏目录下放多个文件」。
+    bundle_extensions: tuple[str, ...] = ()
+    # 多文件本体里可以当入口的后缀；必须是 bundle_extensions 的子集。
+    bundle_entries: tuple[str, ...] = ()
 
 
 # 顺序即下拉展示顺序：按厂商分组。
@@ -167,6 +173,15 @@ PLATFORMS: tuple[Platform, ...] = (
         label="世嘉 CD",
         cores=("genesis_plus_gx", "picodrive"),
         aliases=("世嘉cd游戏", "SEGA CD", "Mega CD"),
+        # 单文件只收 .chd；cue+bin / m3u 多碟走 bundle_extensions。
+        extensions=(".chd",),
+        default_extension=".chd",
+        bundle_extensions=(".cue", ".bin", ".m3u", ".chd"),
+        bundle_entries=(".m3u", ".cue", ".chd"),
+        bios=BiosSpec(
+            "segaCD.zip",
+            ("bios_CD_E.bin", "bios_CD_U.bin", "bios_CD_J.bin"),
+        ),
     ),
     Platform(
         id="sega32x",
@@ -379,7 +394,22 @@ PLATFORMS: tuple[Platform, ...] = (
         extensions=(".prg", ".d64"),
         default_extension=".prg",
     ),
-    Platform(id="amiga", label="Amiga", cores=("puae",), aliases=("AMIGA",)),
+    Platform(
+        id="amiga",
+        label="Amiga",
+        cores=("puae",),
+        aliases=("AMIGA",),
+        extensions=(".adf", ".hdf"),
+        default_extension=".adf",
+        bundle_extensions=(".adf", ".hdf", ".m3u"),
+        bundle_entries=(".m3u", ".adf", ".hdf"),
+        # PUAE 打包了 AROS 回退，Kickstart 有更兼容、缺包不拦启动。
+        bios=BiosSpec(
+            "amiga.zip",
+            ("kick34005.A500", "kick40068.A1200"),
+            optional=True,
+        ),
+    ),
     Platform(id="dos", label="DOS", cores=("dosbox_pure",), aliases=("DOS",)),
     Platform(
         id="arcade",
@@ -523,6 +553,76 @@ def all_body_extensions() -> tuple[str, ...]:
         normalize_extension(ext)
         for platform in playable_platforms()
         for ext in platform.extensions
+    }
+    return tuple(sorted(extensions))
+
+
+def bundle_platforms() -> tuple[Platform, ...]:
+    """支持多文件本体的可玩机种（`bundle_extensions` 非空）。"""
+    return tuple(
+        platform for platform in playable_platforms() if platform.bundle_extensions
+    )
+
+
+def platform_bundle_extensions(platform_id: str) -> tuple[str, ...]:
+    """该机种多文件本体允许出现的后缀；不支持多文件时返回空元组。"""
+    platform = PLATFORM_BY_ID.get(platform_id or "")
+    return platform.bundle_extensions if platform else ()
+
+
+def platform_bundle_entries(platform_id: str) -> tuple[str, ...]:
+    """该机种多文件本体可当入口的后缀；不支持多文件时返回空元组。"""
+    platform = PLATFORM_BY_ID.get(platform_id or "")
+    return platform.bundle_entries if platform else ()
+
+
+def platform_upload_extensions(platform_id: str) -> tuple[str, ...]:
+    """文件选择框 accept 用的后缀：单文件白名单 + 多文件包内白名单（去重保序）。"""
+    platform = PLATFORM_BY_ID.get(platform_id or "")
+    if platform is None:
+        return ()
+    seen: list[str] = []
+    for ext in (*platform.extensions, *platform.bundle_extensions):
+        normalized = normalize_extension(ext)
+        if normalized and normalized not in seen:
+            seen.append(normalized)
+    return tuple(seen)
+
+
+def playable_platforms_for_bundle_extension(extension: str) -> tuple[Platform, ...]:
+    """该后缀可作为多文件包内文件的候选机种，顺序即词表顺序。"""
+    normalized = normalize_extension(extension)
+    if not normalized:
+        return ()
+    return tuple(
+        platform
+        for platform in bundle_platforms()
+        if normalized in {normalize_extension(ext) for ext in platform.bundle_extensions}
+    )
+
+
+def playable_platforms_for_any_extension(extension: str) -> tuple[Platform, ...]:
+    """单文件或包内文件的全部候选机种，按词表顺序、按机种去重。"""
+    normalized = normalize_extension(extension)
+    if not normalized:
+        return ()
+    candidates: list[Platform] = []
+    for platform in playable_platforms():
+        allowed = {
+            normalize_extension(ext)
+            for ext in (*platform.extensions, *platform.bundle_extensions)
+        }
+        if normalized in allowed:
+            candidates.append(platform)
+    return tuple(candidates)
+
+
+def all_bundle_extensions() -> tuple[str, ...]:
+    """全部多文件包内后缀（去重、排序），供上传会话白名单与报错文案。"""
+    extensions = {
+        normalize_extension(ext)
+        for platform in bundle_platforms()
+        for ext in platform.bundle_extensions
     }
     return tuple(sorted(extensions))
 

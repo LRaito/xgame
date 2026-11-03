@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import tempfile
+import uuid
 import zlib
 from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
@@ -16,11 +19,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from backend.errors import NotFoundError, StorageError, ValidationError
-from backend.games import archive, importer, paths, remote
+from backend.games import archive, body_bundle, importer, paths, remote
 from backend.games.archive import (
     guess_asset_mime,
     normalize_guide_path,
     normalize_h5_path,
+)
+from backend.games.body_bundle import (
+    MAX_BUNDLE_FILES,
+    MAX_MANIFEST_TEXT_BYTES,
+    BodyBundle,
+    StagedBundleFile,
+    build_bundle,
+    normalize_bundle_name,
 )
 from backend.games.models import (
     CARTRIDGE_ID_MAX_LENGTH,
@@ -40,7 +51,13 @@ from backend.games.models import (
 from backend.games.platforms import (
     PLATFORM_BY_ID,
     all_body_extensions,
+    all_bundle_extensions,
+    bundle_platforms,
     default_playable_platform_for_extension,
+    normalize_extension,
+    platform_bundle_entries,
+    platform_bundle_extensions,
+    platform_upload_extensions,
     playable_platforms,
 )
 from backend.games.runtime_assets import RuntimeAssets
@@ -75,6 +92,14 @@ _GAME_TYPE_EXTENSIONS: dict[str, frozenset[str]] = {
     GAME_TYPE_H5: frozenset({".zip"}),
     **{platform.id: frozenset(platform.extensions) for platform in playable_platforms()},
 }
+
+# 只能作为多文件本体成员、不能单独成盘的后缀（cue/bin/m3u）。
+_BUNDLE_ONLY_EXTENSIONS = frozenset(all_bundle_extensions()) - frozenset(
+    all_body_extensions()
+)
+# 直链里出现这些后缀说明用户想传多文件本体，但直链只能给一个文件，直接拒绝。
+# `.bin` 不在此列：它也可能是某个机种的裸 ROM，沿用「退回类型默认后缀」的旧规则。
+_BUNDLE_ENTRY_ONLY_EXTENSIONS = _BUNDLE_ONLY_EXTENSIONS - {".bin"}
 
 # 网络上传时地址看不出扩展名（如网盘直链），用各类型最常用的那个后缀补上
 _DEFAULT_EXTENSIONS: dict[str, str] = {
@@ -179,6 +204,8 @@ def _remote_body_filename(url: str, game_type: str) -> str:
     if game_type not in _GAME_TYPE_EXTENSIONS:
         raise ValidationError("请选择游戏类型。")
     extension = _remote_extension(url)
+    if extension in _BUNDLE_ENTRY_ONLY_EXTENSIONS:
+        raise ValidationError("多文件本体请使用本地上传：网络直链只支持单个文件。")
     if not extension or not game_types_of_extension(extension):
         extension = _DEFAULT_EXTENSIONS[game_type]
     return f"remote{extension}"
@@ -201,6 +228,11 @@ def resolve_game_type(
     if not candidates:
         if allow_unknown_extension and requested:
             return validate_game_type(requested)
+        if normalize_extension(extension) in _BUNDLE_ONLY_EXTENSIONS:
+            raise ValidationError(
+                "该格式需要作为多文件本体上传：请一次选择 cue 与它引用的 bin，"
+                "或选择 m3u / 多个分盘文件。"
+            )
         allowed = "、".join(allowed_body_extensions())
         raise ValidationError(f"无法识别的游戏文件格式，仅支持 {allowed}。")
     if requested:
@@ -283,6 +315,14 @@ def game_type_descriptors() -> list[dict]:
                 "extensions": sorted(_GAME_TYPE_EXTENSIONS[game_type]),
                 "default_extension": _DEFAULT_EXTENSIONS[game_type],
                 "bios": bios_descriptor(game_type),
+                # 多文件本体：前端据此决定文件框是否多选、accept 与类型候选
+                "multi_file": bool(platform_bundle_extensions(game_type)),
+                "bundle_extensions": list(platform_bundle_extensions(game_type)),
+                "bundle_entries": list(platform_bundle_entries(game_type)),
+                "upload_extensions": list(
+                    platform_upload_extensions(game_type)
+                    or sorted(_GAME_TYPE_EXTENSIONS[game_type])
+                ),
             }
         )
     return descriptors
@@ -483,6 +523,11 @@ class GameItem:
     @property
     def path(self) -> str:
         return play_path(self.game_type, self.id)
+
+    @property
+    def body_kind(self) -> str:
+        """`bundle` = 多文件本体（body/ 布局），`file` = 单个 game.{ext}。"""
+        return "bundle" if paths.is_bundle_body(self.game_path) else "file"
 
 
 @dataclass(frozen=True)
@@ -687,26 +732,45 @@ class GameService:
         body_game_type: str = "",
         cover_url: str = "",
         staged: StagedUpload | None = None,
+        staged_files: list[StagedUpload] | None = None,
     ) -> GameItem:
         """新建游戏：本体与封面一次入库，任一步失败即整体回滚。
 
         卡带ID 必填、创建后不可改（只能删掉重建）；本体/封面各自可以是本地文件
-        （`body`/`cover`）、网络直链（`*_url`）或已完成分片上传的暂存本体
-        （`staged`）。走直链时先下到临时目录再走同一条上传管线，原始文件名不落盘。
+        （`body`/`cover`）、网络直链（`*_url`）、已完成分片上传的单个暂存本体
+        （`staged`）或一组暂存文件（`staged_files`，多文件本体）。走直链时先下到
+        临时目录再走同一条上传管线，原始文件名不落盘。
 
         **不接受封面类型**：新建一律留空，只有编辑弹框手动选或美化封面时才落值。
 
         本体类型由「后缀候选集 + `body_game_type`」确定：后缀只有一个候选时可以不传；
-        Commodore 这种多候选后缀必须由用户选。
+        Commodore 这种多候选后缀必须由用户选。多文件本体以用户选的类型为准，
+        后缀只用于校验与入口选择。
         """
         cartridge_id = validate_cartridge_id(cartridge_id)
         self._ensure_cartridge_free(cartridge_id)
+        if staged is not None and staged_files:
+            raise ValidationError("请只选择一种本体上传方式。")
+        uploads = list(staged_files or ())
         if staged is not None:
+            uploads = [staged]
+        bundle: BodyBundle | None = None
+        if uploads:
+            staged = None
             if body is not None or body_url:
                 raise ValidationError("请只选择一种本体上传方式。")
-            game_type = resolve_game_type(
-                Path(staged.filename or "").suffix.lower(), body_game_type
-            )
+            if self._should_use_bundle(uploads):
+                game_type = (body_game_type or "").strip() or self._infer_bundle_game_type(
+                    uploads
+                )
+                bundle = self._prepare_bundle(uploads, game_type)
+            else:
+                if len(uploads) != 1:
+                    raise ValidationError("请只选择一种本体上传方式。")
+                staged = uploads[0]
+                game_type = resolve_game_type(
+                    Path(staged.filename or "").suffix.lower(), body_game_type
+                )
         elif body is not None:
             game_type = resolve_game_type(
                 Path(body.filename or "").suffix.lower(), body_game_type
@@ -729,6 +793,7 @@ class GameService:
                 cartridge_id=cartridge_id,
                 game_type=game_type,
                 staged=staged,
+                bundle=bundle,
             )
         # 下载来的文件要在整个上传期间保持可读，所以临时目录与句柄都包住 _create
         with tempfile.TemporaryDirectory(prefix="x-game-fetch-") as tmp:
@@ -746,7 +811,68 @@ class GameService:
                     cartridge_id=cartridge_id,
                     game_type=game_type,
                     staged=staged,
+                    bundle=bundle,
                 )
+
+    def _prepare_bundle(
+        self, uploads: list[StagedUpload], game_type: str
+    ) -> BodyBundle:
+        """把一组暂存文件校验成多文件本体计划；类型必须支持 bundle。"""
+        platform = PLATFORM_BY_ID.get(game_type or "")
+        if platform is None or not platform.bundle_extensions:
+            raise ValidationError("当前游戏类型不支持多文件本体。")
+        files = tuple(
+            StagedBundleFile(
+                name=normalize_bundle_name(upload.filename),
+                size=upload.size,
+                upload_id=upload.upload_id,
+            )
+            for upload in uploads
+        )
+        return build_bundle(files, platform, self._read_staged_manifest_text)
+
+    def _should_use_bundle(self, uploads: list[StagedUpload]) -> bool:
+        """一个文件时看后缀是否只属于多文件包（cue/bin/m3u）；多个文件一律走 bundle。"""
+        if len(uploads) > 1:
+            return True
+        if not uploads:
+            return False
+        extension = normalize_extension(Path(uploads[0].filename or "").suffix)
+        return extension in all_bundle_extensions() and extension not in set(
+            all_body_extensions()
+        )
+
+    def _infer_bundle_game_type(self, uploads: list[StagedUpload]) -> str:
+        """没显式选类型时，按「所有文件都在该机种的包内白名单里」求唯一候选。"""
+        extensions = {
+            normalize_extension(Path(upload.filename or "").suffix)
+            for upload in uploads
+        }
+        candidates = [
+            platform
+            for platform in bundle_platforms()
+            if extensions
+            <= {
+                normalize_extension(ext)
+                for ext in platform.bundle_extensions
+            }
+        ]
+        if len(candidates) == 1:
+            return candidates[0].id
+        if not candidates:
+            raise ValidationError("所选文件与任何支持多文件的游戏类型都不匹配。")
+        raise ValidationError("请选择游戏类型。")
+
+    def _read_staged_manifest_text(self, file: StagedBundleFile) -> bytes:
+        """读取暂存的 cue / m3u；超过上限直接拒绝。"""
+        stream = self._storage.open_download(paths.upload_part_path(file.upload_id))
+        try:
+            payload = stream.read(MAX_MANIFEST_TEXT_BYTES + 1)
+        finally:
+            stream.close()
+        if len(payload) > MAX_MANIFEST_TEXT_BYTES:
+            raise ValidationError(f"清单文件过大：{file.name}")
+        return payload
 
     def _create(
         self,
@@ -758,9 +884,10 @@ class GameService:
         cartridge_id: str,
         game_type: str,
         staged: StagedUpload | None = None,
+        bundle: BodyBundle | None = None,
     ) -> GameItem:
         """建条目并上传本体（可选封面）：类型已在 `create()` 里判定，封面类型留空。"""
-        if body is None and staged is None:
+        if body is None and staged is None and bundle is None:
             raise ValidationError("请选择本体文件或填写本体下载地址。")
         name = validate_game_name(name)
         description = validate_description(description)
@@ -778,7 +905,9 @@ class GameService:
         self._session.commit()
         self._session.refresh(row)
         try:
-            if staged is not None:
+            if bundle is not None:
+                self._commit_staged_bundle(row, bundle)
+            elif staged is not None:
                 self._commit_staged_asset(row, staged)
             else:
                 self.upload_asset(row.id, kind="game", upload=body)
@@ -874,6 +1003,8 @@ class GameService:
             return self._to_item(row)
         if not row.game_path:
             raise ValidationError("该游戏还没有本体，不能修改类型。")
+        if paths.is_bundle_body(row.game_path):
+            raise ValidationError("多文件本体不支持修改游戏类型，请删除后重新上传。")
         extension = Path(row.game_path).suffix.lower()
         candidates = game_types_of_extension(extension)
         if target not in candidates:
@@ -1145,6 +1276,15 @@ class GameService:
         except StorageError:
             pass
 
+    def _delete_storage_tree(self, key: str | None) -> None:
+        """删一棵目录；失败只吞掉，不影响主流程（调用方已经拿到想要的结果）。"""
+        if not key:
+            return
+        try:
+            self._storage.remove_tree(key)
+        except StorageError:
+            pass
+
     def upload_asset(
         self,
         game_id: int,
@@ -1155,26 +1295,46 @@ class GameService:
         game_type: str = "",
         cover_type: str = "",
         staged: StagedUpload | None = None,
+        staged_files: list[StagedUpload] | None = None,
     ) -> GameItem:
         """一步完成：校验类型/后缀 → 分块上传 → 更新行 → 删旧对象。
 
         换本体只接受与游戏当前 `game_type` 相同的本体（改类型走 `change_game_type()`），成功后
         重算并覆盖 `crc32`/`size`/`game_path`；失败整体回滚，旧档不动。
-        来源可以是本地文件（`upload`）、网络直链（`url`，本体要带上 `game_type`）或
-        已完成分片上传的暂存本体（`staged`，只支持 kind="game"）。
+        来源可以是本地文件（`upload`）、网络直链（`url`，本体要带上 `game_type`）、
+        已完成分片上传的单个暂存本体（`staged`）或一组暂存文件（`staged_files`，
+        多文件本体），后两者只支持 kind="game"。
 
         `cover_type` 只在 kind="cover" 且非空时生效——美化封面时把所选样式 id 与
         封面文件一次写进去（分两步会有「封面换了、类型没跟上」的中间态）。
         """
         if kind not in ("game", "cover"):
             raise ValidationError("无效的上传类型。")
-        sources = int(upload is not None) + int(bool(url)) + int(staged is not None)
+        if staged is not None and staged_files:
+            raise ValidationError("请只选择一种上传方式。")
+        sources = (
+            int(upload is not None)
+            + int(bool(url))
+            + int(staged is not None)
+            + int(bool(staged_files))
+        )
         if sources > 1:
             raise ValidationError("请只选择一种上传方式。")
+        uploads = list(staged_files or ())
         if staged is not None:
+            uploads = [staged]
+        if uploads:
             if kind != "game":
                 raise ValidationError("只有游戏本体支持分片上传。")
-            return self._commit_staged_now(game_id, staged)
+            row = self._session.get(Game, game_id)
+            if row is None:
+                raise NotFoundError("游戏不存在。")
+            if self._should_use_bundle(uploads):
+                bundle = self._prepare_bundle(uploads, row.game_type)
+                return self._commit_staged_bundle_now(game_id, bundle)
+            if len(uploads) != 1:
+                raise ValidationError("请只选择一种上传方式。")
+            return self._commit_staged_now(game_id, uploads[0])
         if not url:
             if upload is None:
                 raise ValidationError("请选择要上传的文件或填写下载地址。")
@@ -1223,6 +1383,16 @@ class GameService:
             self._session.rollback()
             raise
 
+    def _commit_staged_bundle_now(self, game_id: int, bundle: BodyBundle) -> GameItem:
+        row = self._session.get(Game, game_id)
+        if row is None:
+            raise NotFoundError("游戏不存在。")
+        try:
+            return self._commit_staged_bundle(row, bundle)
+        except Exception:
+            self._session.rollback()
+            raise
+
     def _fetch_remote(
         self, stack: ExitStack, work_dir: Path, filename: str, url: str
     ) -> GameUpload:
@@ -1259,6 +1429,11 @@ class GameService:
         extension = Path(filename).suffix.lower()
         if upload.size is None or upload.size <= 0:
             raise ValidationError("文件大小无效。")
+        if kind == "game" and extension in _BUNDLE_ONLY_EXTENSIONS:
+            raise ValidationError(
+                "该格式需要作为多文件本体上传：请一次选择 cue 与它引用的 bin，"
+                "或选择 m3u / 多个分盘文件。"
+            )
         if kind == "game" and upload.source == "local" and upload.size > SINGLE_FILE_MAX:
             limit_mb = SINGLE_FILE_MAX // (1024 * 1024)
             raise ValidationError(f"本体超过 {limit_mb} MB，请使用分片上传。")
@@ -1311,7 +1486,13 @@ class GameService:
         self._session.commit()
         self._session.refresh(row)
         if old and old != path:
-            self._delete_storage_key(old)
+            if paths.is_bundle_body(old):
+                # 旧的是多文件本体：整棵 body/ 都要删，不能只删入口
+                self._delete_storage_tree(
+                    paths.body_dir(row.game_type, row.cartridge_id)
+                )
+            else:
+                self._delete_storage_key(old)
         return self._to_item(row)
 
     def _commit_staged_asset(self, row: Game, staged: StagedUpload) -> GameItem:
@@ -1323,6 +1504,11 @@ class GameService:
         extension = (staged.extension or "").strip().lower()
         if not extension:
             raise ValidationError("请选择要上传的文件。")
+        if extension in _BUNDLE_ONLY_EXTENSIONS:
+            raise ValidationError(
+                "该格式需要作为多文件本体上传：请一次选择 cue 与它引用的 bin，"
+                "或选择 m3u / 多个分盘文件。"
+            )
         require_body_type_for_current(extension, row.game_type)
         part = paths.upload_part_path(staged.upload_id)
         try:
@@ -1353,6 +1539,126 @@ class GameService:
         self._discard_upload_session(staged.upload_id)
         return item
 
+    def _commit_staged_bundle(self, row: Game, bundle: BodyBundle) -> GameItem:
+        """把一组已上传完的文件落成 `body/` + manifest.json。
+
+        先在同层 `.body-{token}` 里组装并算 CRC，再把旧 `body/` 改名备份、新目录改名就位，
+        最后提交数据库；任何一步失败都按相反顺序还原，旧本体不动。
+        """
+        if row.game_type != bundle.platform_id:
+            raise ValidationError("多文件本体的游戏类型与当前游戏不一致。")
+        entries = {
+            normalize_extension(ext) for ext in platform_bundle_entries(row.game_type)
+        }
+        if bundle.entry_extension not in entries:
+            raise ValidationError("入口文件不能用于当前游戏类型。")
+
+        token = uuid.uuid4().hex[:8]
+        temp_dir = paths.body_temp_dir(row.game_type, row.cartridge_id, token)
+        backup_dir = paths.body_temp_dir(
+            row.game_type, row.cartridge_id, f"old-{token}"
+        )
+        body_dir = paths.body_dir(row.game_type, row.cartridge_id)
+        new_path = paths.body_file_path(
+            row.game_type, row.cartridge_id, bundle.entry_name
+        )
+        old_path = row.game_path
+        had_body = self._storage.dir_exists(body_dir)
+        try:
+            # 1. 暂存文件逐个改名到 .body-{token}/；入口统一改名 game.{ext}
+            for file in bundle.files:
+                source = paths.upload_part_path(file.upload_id)
+                target = paths.body_temp_file_path(
+                    row.game_type,
+                    row.cartridge_id,
+                    token,
+                    bundle.final_name(file),
+                )
+                if not self._storage.move(source, target):
+                    raise ValidationError("暂存的本体文件不存在。")
+            if bundle.generated_m3u is not None:
+                self._storage.upload(
+                    paths.body_temp_file_path(
+                        row.game_type, row.cartridge_id, token, "game.m3u"
+                    ),
+                    BytesIO(bundle.generated_m3u),
+                    len(bundle.generated_m3u),
+                    "text/plain",
+                )
+
+            # 2. 逐个算 CRC，写 manifest；size 与 CRC 都按最终文件来
+            files_payload: list[dict] = []
+            for name, size, _source in bundle.final_files():
+                key = paths.body_temp_file_path(
+                    row.game_type, row.cartridge_id, token, name
+                )
+                files_payload.append(
+                    {"name": name, "size": size, "crc32": self._crc32_key(key)}
+                )
+            files_payload.sort(key=lambda item: item["name"])
+            manifest = {
+                "version": 1,
+                "entry": bundle.entry_name,
+                "files": files_payload,
+            }
+            payload = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
+            self._storage.upload(
+                paths.body_temp_file_path(
+                    row.game_type,
+                    row.cartridge_id,
+                    token,
+                    paths.BODY_MANIFEST_NAME,
+                ),
+                BytesIO(payload),
+                len(payload),
+                "application/json",
+            )
+
+            # 3. 旧 body/ 让位、新目录就位
+            if had_body and not self._storage.move_tree(body_dir, backup_dir):
+                raise StorageError("备份旧的多文件本体失败，请检查存储目录。")
+            try:
+                if not self._storage.move_tree(temp_dir, body_dir):
+                    raise StorageError("提交多文件本体失败，请检查存储目录。")
+            except Exception:
+                if had_body:
+                    self._storage.move_tree(backup_dir, body_dir)
+                raise
+
+            # 4. 提交数据库；失败还原目录
+            row.game_path = new_path
+            row.size = bundle.total_size
+            row.crc32 = _bundle_crc32(files_payload)
+            row.updated_at = datetime.now(timezone.utc)
+            self._session.add(row)
+            try:
+                self._session.commit()
+                self._session.refresh(row)
+            except Exception:
+                self._session.rollback()
+                self._storage.move_tree(body_dir, temp_dir)
+                if had_body:
+                    self._storage.move_tree(backup_dir, body_dir)
+                raise
+
+            # 5. 成功后再删旧目录/旧单文件与上传会话
+            if had_body:
+                self._delete_storage_tree(backup_dir)
+            if old_path and old_path != new_path and not paths.is_bundle_body(old_path):
+                self._delete_storage_key(old_path)
+            for file in bundle.files:
+                self._discard_upload_session(file.upload_id)
+            return self._to_item(row)
+        finally:
+            self._delete_storage_tree(temp_dir)
+
+    def _crc32_key(self, key: str) -> str:
+        stream = self._storage.open_download(key)
+        try:
+            return _crc32_stream(stream)
+        finally:
+            stream.close()
+
     def _discard_upload_session(self, upload_id: str) -> None:
         try:
             self._storage.remove_tree(paths.upload_session_dir(upload_id))
@@ -1363,6 +1669,77 @@ class GameService:
         if not path:
             raise ValidationError("文件尚未上传。")
         return self._storage.open_download(path)
+
+    def body_manifest(self, row: Game) -> dict:
+        """播放用的多文件清单；单文件本体返回只有入口一条的等价结构。"""
+        key = paths.body_manifest_path(row.game_type, row.cartridge_id)
+        try:
+            stream = self._storage.open_download(key)
+        except StorageError:
+            if paths.is_bundle_body(row.game_path):
+                raise ValidationError("多文件本体清单缺失，请重新上传本体。") from None
+            name = PurePosixPath(row.game_path or "").name
+            if not name:
+                raise ValidationError("游戏文件尚未上传。") from None
+            return {
+                "entry": name,
+                "files": [{"name": name, "size": row.size}],
+                "total_size": row.size,
+            }
+        try:
+            raw = stream.read()
+        finally:
+            stream.close()
+        try:
+            document = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise ValidationError("多文件本体清单损坏，请重新上传本体。") from exc
+        if not isinstance(document, dict):
+            raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+        entry = str(document.get("entry") or "")
+        files = document.get("files")
+        if not entry or not isinstance(files, list) or not files:
+            raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+        cleaned: list[dict] = []
+        for item in files:
+            if not isinstance(item, dict):
+                raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+            name = str(item.get("name") or "")
+            size = item.get("size")
+            if (
+                not name
+                or name != PurePosixPath(name).name
+                or name in (".", "..")
+                or not isinstance(size, int)
+                or size < 0
+            ):
+                raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+            cleaned.append({"name": name, "size": size})
+        names = {item["name"] for item in cleaned}
+        if entry not in names:
+            raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+        return {
+            "entry": entry,
+            "files": cleaned,
+            "total_size": sum(item["size"] for item in cleaned),
+        }
+
+    def open_body_file(self, row: Game, name: str):
+        """打开多文件本体里的一个文件；只允许清单里的安全 basename。"""
+        value = (name or "").strip()
+        if (
+            not value
+            or value != PurePosixPath(value).name
+            or value in (".", "..")
+            or "\\" in value
+        ):
+            raise NotFoundError("游戏文件不存在。")
+        manifest = self.body_manifest(row)
+        if value not in {item["name"] for item in manifest["files"]}:
+            raise NotFoundError("游戏文件不存在。")
+        return self._storage.open_download(
+            paths.body_file_path(row.game_type, row.cartridge_id, value)
+        )
 
     def import_from_url(self, url: str) -> GameItem:
         """从 7k7k / 4399 / flash.homes 游戏页搬运：解析下载到临时目录，再走普通上传管线入库。
@@ -1725,6 +2102,15 @@ def _crc32_stream(stream: BinaryIO) -> str:
             break
         value = zlib.crc32(block, value)
     return f"{value & 0xFFFFFFFF:08X}"
+
+
+def _bundle_crc32(files: list[dict]) -> str:
+    """多文件本体的聚合 CRC32：按文件名排序的 name\\tsize\\tcrc32 文本再算一次。"""
+    text = "".join(
+        f"{item['name']}\t{item['size']}\t{item['crc32']}\n"
+        for item in sorted(files, key=lambda item: item["name"])
+    )
+    return f"{zlib.crc32(text.encode('utf-8')) & 0xFFFFFFFF:08X}"
 
 
 def _rewind(stream: BinaryIO) -> None:

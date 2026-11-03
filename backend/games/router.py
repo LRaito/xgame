@@ -78,6 +78,7 @@ def _center_payload(item, stat=None) -> dict:
         "size": item.size,
         "cover_path": item.cover_path,
         "game_path": item.game_path,
+        "body_kind": item.body_kind,
         "updated_at": iso(item.updated_at),
         # 攻略形态来自 games.guide_kind（上传写值、删除清空），列表不 stat 磁盘
         "has_guide": bool(item.guide_kind),
@@ -104,6 +105,7 @@ def _manage_payload(item) -> dict:
         "size": item.size,
         "crc32": item.crc32,
         "game_path": item.game_path,
+        "body_kind": item.body_kind,
         "cover_path": item.cover_path,
         "path": item.path,
         "created_at": iso(item.created_at),
@@ -246,19 +248,25 @@ def games_create(
     body_game_type: str = Form(""),
     cover_url: str = Form(""),
     upload_id: str = Form(""),
+    upload_ids: list[str] = Form(default=[]),
 ):
     """新建游戏并上传本体（可选封面）。
 
     卡带ID 必填且创建后不可改：它既是游戏的唯一标识，也是磁盘上的目录名。
     本体与封面各自可以给本地文件（`file`/`cover`）、网络直链（`body_url`/`cover_url`）
-    或已完成分片上传的 `upload_id`（与 `file`/`body_url` 三选一）。
+    或已完成分片上传的暂存文件（`upload_id` 单个，`upload_ids` 多文件本体），彼此互斥。
     走本地文件时游戏类型由本体文件名自动判定；走直链时地址未必看得出类型，
     所以由前端下拉传入 `body_game_type`，后者必须与地址能认出的类型一致。
     """
     try:
-        if upload_id and file is not None:
+        if upload_id and upload_ids:
+            raise ValidationError("本体只能选择一种上传方式。")
+        if file is not None and (upload_id or upload_ids):
+            raise ValidationError("本体只能选择一种上传方式。")
+        if body_url and (upload_id or upload_ids):
             raise ValidationError("本体只能选择一种上传方式。")
         staged = uploads.claim(upload_id) if upload_id else None
+        staged_files = uploads.claim_many(upload_ids) if upload_ids else None
         item = service.create(
             name,
             description,
@@ -269,6 +277,7 @@ def games_create(
             body_game_type=body_game_type,
             cover_url=cover_url,
             staged=staged,
+            staged_files=staged_files,
         )
     except NotFoundError as exc:
         return json_err(str(exc), 404)
@@ -356,13 +365,14 @@ def games_upload_asset(
     game_type: str = Form(""),
     cover_type: str = Form(""),
     upload_id: str = Form(""),
+    upload_ids: list[str] = Form(default=[]),
 ):
     """一步上传游戏本体或封面：校验类型 → 流式写入存储目录 → 更新游戏行 → 删旧文件。
 
-    来源可以是本地文件（`file`）、网络直链（`url`）或已完成分片上传的 `upload_id`
-    （只支持 kind="game"），三者只能选一个。**换本体只接受与当前游戏类型
-    相同的本体**（按后缀候选集判定），跨类型返回 400 且旧档不动；改类型走独立的
-    `PUT /manage/{id}/game-type` 接口。
+    来源可以是本地文件（`file`）、网络直链（`url`）或已完成分片上传的暂存文件
+    （`upload_id` 单个、`upload_ids` 多文件本体，只支持 kind="game"），彼此只能选一种。
+    **换本体只接受与当前游戏类型相同的本体**（按后缀候选集判定），跨类型返回 400
+    且旧档不动；改类型走独立的 `PUT /manage/{id}/game-type` 接口。
     成功后重算并更新 `crc32`/`size`/`game_path`。直链的 `game_type` 必须等于当前类型。
 
     `cover_type`（封面样式 id）**只在 kind="cover" 且非空时生效**，供「美化封面」
@@ -371,12 +381,14 @@ def games_upload_asset(
     try:
         if file is not None and not file.filename:
             raise ValidationError("请选择要上传的文件。")
-        if upload_id:
-            if file is not None or url:
-                raise ValidationError("请只选择一种上传方式。")
-            if kind != "game":
-                raise ValidationError("只有游戏本体支持分片上传。")
+        if upload_id and upload_ids:
+            raise ValidationError("请只选择一种上传方式。")
+        if (upload_id or upload_ids) and (file is not None or url):
+            raise ValidationError("请只选择一种上传方式。")
+        if (upload_id or upload_ids) and kind != "game":
+            raise ValidationError("只有游戏本体支持分片上传。")
         staged = uploads.claim(upload_id) if upload_id else None
+        staged_files = uploads.claim_many(upload_ids) if upload_ids else None
         item = service.upload_asset(
             game_id,
             kind=kind,
@@ -385,6 +397,7 @@ def games_upload_asset(
             game_type=game_type,
             cover_type=cover_type,
             staged=staged,
+            staged_files=staged_files,
         )
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)
@@ -522,6 +535,73 @@ def games_play(game_id: int, _user: CurrentUser, service: GameServiceDep):
     octet-stream——EmulatorJS 按字节读取，不依赖 content-type，core 由前端指定。
     """
     return _play_download(service, game_id)
+
+
+@router.get("/{game_id}/play/manifest")
+def games_play_manifest(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """多文件本体的播放清单；单文件本体也返回只有入口一条的等价结构。
+
+    **必须注册在 `/play/{filename}` 之前**，否则 `manifest` 会被当成文件名。
+    """
+    try:
+        item = service.get(game_id)
+        return json_ok(service.body_manifest(item))
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+
+
+@router.head("/{game_id}/play/manifest")
+def games_play_manifest_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    try:
+        item = service.get(game_id)
+        service.body_manifest(item)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    return Response(content=b"", media_type="application/json")
+
+
+@router.get("/{game_id}/play/files/{name}")
+def games_play_body_file(
+    game_id: int, name: str, _user: CurrentUser, service: GameServiceDep
+):
+    """多文件本体里的单个文件；只服务清单内的安全 basename，防目录穿越。"""
+    try:
+        item = service.get(game_id)
+        stream = service.open_body_file(item, name)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    return build_download_response(
+        stream, filename=name, content_type=_ROM_CONTENT_TYPE
+    )
+
+
+@router.head("/{game_id}/play/files/{name}")
+def games_play_body_file_head(
+    game_id: int, name: str, _user: CurrentUser, service: GameServiceDep
+):
+    try:
+        item = service.get(game_id)
+        stream = service.open_body_file(item, name)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    size = stream.size if stream.size is not None else 0
+    stream.close()
+    return Response(
+        content=b"",
+        media_type=_ROM_CONTENT_TYPE,
+        headers={
+            "Content-Length": str(size),
+            "Content-Disposition": content_disposition(name),
+        },
+    )
 
 
 @router.get("/{game_id}/play/{filename}")

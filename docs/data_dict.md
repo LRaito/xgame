@@ -89,9 +89,9 @@
 | cover_type | VARCHAR(20) | NULL | 封面样式 id；见 [`game-storage.md`](specs/game-storage.md) |
 | description | VARCHAR(200) | NOT NULL, 默认 `''` | 上限 200 字 |
 | game_type | VARCHAR(50) | NOT NULL, 索引 | `flash` / `h5` / 主机平台键 |
-| size | INTEGER | NOT NULL, 默认 0 | 本体字节数 |
-| crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | 当前本体 CRC32，8 位大写十六进制 |
-| game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径；空 = 未上传 |
+| size | INTEGER | NOT NULL, 默认 0 | 本体字节数；多文件本体为 `body/` 下全部文件之和 |
+| crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | 当前本体 CRC32，8 位大写十六进制；多文件为清单聚合 CRC |
+| game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径；空 = 未上传。多文件本体指向 `body/` 下的入口 |
 | cover_path | VARCHAR(500) | NULL | 封面相对路径；NULL = 无封面 |
 | guide_kind | VARCHAR(10) | NOT NULL, 默认 `''` | `''` / `zip` / `pdf` |
 | created_at | DATETIME | NOT NULL | |
@@ -180,7 +180,7 @@
 | payload | TEXT | NOT NULL, 默认 `''` | `{controlSettings, settings, cheats}` |
 | updated_at | DATETIME | NOT NULL | |
 
-- 只覆盖 29 个主机平台，不含 flash/h5。
+- 只覆盖 31 个主机平台，不含 flash/h5。
 - 内容只存 SQLite，不落文件。
 - 行为见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
 
@@ -243,7 +243,10 @@
 
 | 内容 | 相对路径 | 生成处 |
 |---|---|---|
-| 游戏本体 | `game/{game_type}/{卡带ID}/game.{后缀}` | `paths.py::body_path` / `h5_zip_path` |
+| 游戏本体（单文件） | `game/{game_type}/{卡带ID}/game.{后缀}` | `paths.py::body_path` / `h5_zip_path` |
+| 多文件本体 | `game/{game_type}/{卡带ID}/body/{文件名}`，入口 `game.{后缀}` | `paths.py::body_file_path` |
+| 多文件清单 | `game/{game_type}/{卡带ID}/body/manifest.json` | `paths.py::body_manifest_path` |
+| 多文件提交暂存 | `game/{game_type}/{卡带ID}/.body-{随机}` | `paths.py::body_temp_dir` |
 | 游戏封面 | `game/{game_type}/{卡带ID}/cover.{后缀}` | `paths.py::cover_path` |
 | 攻略包 | `game/{game_type}/{卡带ID}/guide.zip` | `paths.py::guide_zip_path` |
 | 攻略 PDF | `game/{game_type}/{卡带ID}/guide.pdf` | `paths.py::guide_pdf_path` |

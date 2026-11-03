@@ -53,12 +53,24 @@ function normalizeBios(raw) {
 /** 后端 `types` 的一条 → 前端可直接消费的元数据（补 core / icon）。 */
 function decorateType(item) {
     const kind = item.kind || kindOf(item.id);
+    const extensions = Array.isArray(item.extensions) ? item.extensions : [];
+    const bundleExtensions = Array.isArray(item.bundle_extensions)
+        ? item.bundle_extensions
+        : [];
     return {
         ...item,
         kind,
         core: kind === "emulator" ? item.id : null,
         label: item.label || item.id,
-        extensions: Array.isArray(item.extensions) ? item.extensions : [],
+        extensions,
+        bundleExtensions,
+        bundleEntries: Array.isArray(item.bundle_entries)
+            ? item.bundle_entries
+            : [],
+        uploadExtensions: Array.isArray(item.upload_extensions)
+            ? item.upload_extensions
+            : [...new Set([...extensions, ...bundleExtensions])],
+        multiFile: item.multi_file === true || bundleExtensions.length > 0,
         bios: normalizeBios(item.bios),
         icon: iconOf(item.id),
     };
@@ -73,6 +85,10 @@ function fallbackMeta(id) {
         kind,
         core: kind === "emulator" ? id : null,
         extensions: [],
+        bundleExtensions: [],
+        bundleEntries: [],
+        uploadExtensions: [],
+        multiFile: false,
         default_extension: "",
         bios: null,
         icon: iconOf(id),
@@ -188,6 +204,53 @@ export const useGameTypesStore = defineStore("gameTypes", {
         },
         defaultOfFilename(name) {
             return this.defaultOfExtension(extensionOfFilename(name));
+        },
+        uploadExtensionsOf(id) {
+            return this.metaOf(id)?.uploadExtensions || [];
+        },
+        /** 文件选择框 accept 的全集：所有类型单文件 + 包内后缀（去重保序）。 */
+        allUploadExtensions(state) {
+            const result = [...state.bodyExtensions];
+            for (const item of state.types) {
+                for (const ext of item.uploadExtensions || []) {
+                    if (!result.includes(ext)) {
+                        result.push(ext);
+                    }
+                }
+            }
+            return result;
+        },
+        /** 一组文件可以落成哪些多文件类型：所有后缀都要在该类型的包内白名单里。 */
+        bundleCandidatesOfFiles(files) {
+            const extensions = (files || [])
+                .map((file) =>
+                    extensionOfFilename(typeof file === "string" ? file : file?.name),
+                )
+                .filter(Boolean);
+            if (!extensions.length) {
+                return [];
+            }
+            return this.types.filter(
+                (item) =>
+                    item.multiFile &&
+                    extensions.every((ext) => item.bundleExtensions.includes(ext)),
+            );
+        },
+        /** 该后缀只能作为多文件本体成员（cue / bin / m3u），不能单独成盘。 */
+        isBundleOnlyExtension(extension) {
+            const key = normalizeExtension(extension);
+            if (!key) {
+                return false;
+            }
+            const single = this.types.some((item) =>
+                item.extensions.includes(key),
+            );
+            if (single) {
+                return false;
+            }
+            return this.types.some((item) =>
+                item.bundleExtensions.includes(key),
+            );
         },
         reset() {
             this.types = [];

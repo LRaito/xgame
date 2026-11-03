@@ -136,7 +136,7 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 ## 玩游戏
 
 三种游戏都是点开即玩、不装插件：**Flash**（`.swf`）、**HTML5**（`.zip`，浏览器里当网页游戏跑）、
-**主机**（NES / SNES / N64 / GB / GBA / NDS / MD / PS1 / 土星 / PC-FX / 3DO / Atari / Commodore 等，浏览器里跑模拟器，不需要外网）。
+**主机**（NES / SNES / N64 / GB / GBA / NDS / MD / 世嘉 CD / PS1 / 土星 / PC-FX / 3DO / Atari / Commodore / Amiga 等，浏览器里跑模拟器，不需要外网）。
 
 > **部分机种额外需要 BIOS。** 用户自备 ZIP 放到 `frontend/public/emulatorjs/bios/` 后重建 web 镜像
 > （Windows 包放到 `web/emulatorjs/bios/`），不随仓库提交；缺失时播放页会直接给出中文提示。
@@ -151,6 +151,8 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 > | 索尼 PS1 | `psx.zip` | `scph5500.bin`、`scph5501.bin`、`scph5502.bin` | 必需（按区，建议三个都放） |
 > | 日电 PC-FX | `pcfx.zip` | `pcfx.rom`（必须正好 1 MiB） | 必需 |
 > | 松下 3DO | `3do.zip` | `panafz1.bin` | 必需 |
+> | 世嘉 CD | `segaCD.zip` | `bios_CD_E.bin`、`bios_CD_U.bin`、`bios_CD_J.bin` | 必需（按区，至少放一个） |
+> | Amiga | `amiga.zip` | `kick34005.A500`、`kick40068.A1200` | 可选（PUAE 有 AROS 回退） |
 >
 > N64 不需要 BIOS。ZIP 根目录直接放上面这些文件，不要套子目录。
 
@@ -249,7 +251,7 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 
 | 方式 | 说明 |
 | --- | --- |
-| 本地上传 | 选本体文件（可同时选封面）。**游戏类型按文件后缀自动判定**，不用手选 |
+| 本地上传 | 选本体文件（可同时选封面）。**游戏类型按文件后缀自动判定**；多文件本体可一次选多个文件 |
 | 网络上传 | 填 http/https 直链，服务端下载后入库（上限 512MB） |
 | 搬运 | 填 7k7k / 4399 / flash.homes 的游戏页地址，服务端解析并下载（支持 Flash / HTML5） |
 
@@ -263,13 +265,17 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 | `.gb` `.gbc` / `.gba` / `.nds` | GB / GBA / NDS |
 | `.md` `.gen` / `.gg` / `.sms` | MD / GG / SMS |
 | `.z64` `.n64` `.v64` | 任天堂 N64 |
-| `.chd` | 土星 / PS1 / PC-FX / 3DO（创建时按下拉选类型，默认 PS1） |
+| `.chd` | 世嘉 CD / 土星 / PS1 / PC-FX / 3DO（创建时按下拉选类型，默认 PS1） |
 | `.pbp` | PS1 |
 | `.iso` | PS1 / 3DO（创建时按下拉选类型） |
+| `.adf` `.hdf` | Amiga |
+| `.cue` + `.bin`、`.m3u` | 世嘉 CD / Amiga 的多文件本体（一次选一整组） |
 
 > 多机种共用的后缀（`.chd`、`.iso`、Commodore 的 `.d64` / `.prg`）会在创建时出现类型下拉。
 > 本地上传超过 30MB 会按 16MB 分片、5 路并发上传，单盘本体的总大小只受磁盘空间限制；
 > 网络直链仍限 512MB。攻略 ZIP/PDF 上限 128MB。
+> 世嘉 CD 优先用单个 `.chd`；cue+bin 会整份进浏览器内存，体积大时可能卡顿或内存不足。
+> 多文件本体不支持改游戏类型，也不提供「下载为单个文件」。
 
 ### 元数据
 
@@ -397,6 +403,8 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
    几何参数见 [`docs/specs/game-center-playback.md`](docs/specs/game-center-playback.md)。
    N64、PS1、土星、PC-FX、3DO 已接入核与 BIOS 机制，仍需自备 ROM / BIOS 做实机确认，
    尤其土星帧率与 PS1 的 `.pbp` / `.chd` 启动。
+   世嘉 CD 与 Amiga 已接入单文件与多文件本体，仍需实机确认 cue/bin、m3u 多碟、
+   Amiga 多盘切换与实际帧率。
 
 ## 许可与免责声明
 

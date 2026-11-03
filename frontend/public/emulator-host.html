@@ -119,6 +119,9 @@
             const core = params.get("core");
             const name = params.get("name") || "";
             const version = params.get("v") || "";
+            // 多文件本体：先取 /play/manifest，再用 EJS_externalFiles 拉分轨/分盘
+            const bundle = params.get("bundle") === "1";
+            let bundleManifest = null;
             // ROM 文件名：EmulatorJS 用 EJS_gameUrl 的最后一段当 ROM 文件名，`.pbp` 等
             // 核会按后缀选加载器。播放页传真实落盘名（game.<ext>），这里只接受安全 basename。
             const ROM_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/;
@@ -977,12 +980,35 @@
                 window.EJS_core = core;
                 // ROM 直连后端流式接口；末段带真实落盘名，EmulatorJS 据此识别 ROM 格式
                 // （`.pbp` 必须保留后缀）。带版本参数使重传本体后 EmulatorJS 缓存可失效。
-                const romFile = readRomFile(params.get("file"));
+                const romFile = readRomFile(
+                    (bundleManifest && bundleManifest.entry) || params.get("file"),
+                );
                 const romUrl =
                     `/api/games/${encodeURIComponent(id)}/play` +
                     (romFile ? `/${encodeURIComponent(romFile)}` : "") +
                     (version ? `?v=${encodeURIComponent(version)}` : "");
                 window.EJS_gameUrl = romUrl;
+                if (bundle && bundleManifest) {
+                    // 入口之外的每个文件写进 MEMFS 根目录：键就是 cue/m3u 里引用的名字，
+                    // 值走同一套登录校验的 /play/files/{name}（名字已由后端清单校验）。
+                    const entry = String(bundleManifest.entry || "");
+                    const external = {};
+                    for (const file of bundleManifest.files || []) {
+                        const fileName = file && file.name;
+                        if (typeof fileName !== "string" || !fileName || fileName === entry) {
+                            continue;
+                        }
+                        const query = version
+                            ? `?v=${encodeURIComponent(version)}`
+                            : "";
+                        external[`/${fileName}`] =
+                            `/api/games/${encodeURIComponent(id)}/play/files/` +
+                            `${encodeURIComponent(fileName)}${query}`;
+                    }
+                    window.EJS_externalFiles = external;
+                    // 大 ROM 再写一份 IndexedDB 只会多占内存；多文件本体不缓存入口
+                    window.EJS_CacheLimit = 0;
+                }
                 window.EJS_pathtodata = "/emulatorjs/data/";
                 window.EJS_gameID = String(id);
                 window.EJS_gameName = name;
@@ -1062,6 +1088,36 @@
                 document.body.appendChild(script);
             }
 
+            // 多文件本体：播放前先取清单；失败就停在错误层，不进入模拟器
+            async function loadBundleManifest() {
+                const query = version ? `?v=${encodeURIComponent(version)}` : "";
+                try {
+                    const response = await fetch(
+                        `/api/games/${encodeURIComponent(id)}/play/manifest${query}`,
+                    );
+                    if (!response.ok) {
+                        throw new Error("manifest");
+                    }
+                    const payload = await response.json();
+                    const data = payload && payload.data;
+                    if (
+                        !data ||
+                        typeof data.entry !== "string" ||
+                        !data.entry ||
+                        !Array.isArray(data.files)
+                    ) {
+                        throw new Error("manifest");
+                    }
+                    bundleManifest = data;
+                    return true;
+                } catch {
+                    showError(
+                        "多文件本体清单读取失败：请刷新重试；若仍失败，请重新上传本体。",
+                    );
+                    return false;
+                }
+            }
+
             // 引擎与 BIOS 就绪检查；缺失时给出可执行的修复提示而非白屏
             async function preflight() {
                 const loaderOk = await fetch("/emulatorjs/data/loader.js", { method: "HEAD" })
@@ -1069,6 +1125,9 @@
                     .catch(() => false);
                 if (!loaderOk) {
                     showError("模拟器引擎缺失：请先运行 npm run fetch:emulatorjs（Docker 镜像会自动拉取）后重试。");
+                    return false;
+                }
+                if (bundle && !(await loadBundleManifest())) {
                     return false;
                 }
                 if (biosUrl) {

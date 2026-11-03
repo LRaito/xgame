@@ -4,6 +4,9 @@
 `upload/{upload_id}/body.part` 的对应偏移，写完落一个空标记；全部到齐后由
 `GameService` 把 `body.part` 改名到 `game/…` 即完成，不做整包合并复制。
 
+多文件本体（cue+bin / m3u / 多盘）的每个物理文件各开一个这样的会话，创建/换本体时
+用 `claim_many()` 一次取全，再由 `body_bundle` 校验成组；本节不引入打包格式。
+
 暂存区在**数据根**下（与最终素材同一文件系统），提交只是 `os.replace`。会话元数据
 用 JSON 落盘，进程重启后仍能清理；超过 24 小时的会话在启动时删掉。
 """
@@ -22,7 +25,12 @@ from pathlib import Path, PurePosixPath
 
 from backend.errors import NotFoundError, StorageError, ValidationError
 from backend.games import archive, paths
-from backend.games.platforms import all_body_extensions, playable_platforms_for_extension
+from backend.games.body_bundle import MAX_BUNDLE_FILES
+from backend.games.platforms import (
+    all_body_extensions,
+    all_bundle_extensions,
+    playable_platforms_for_any_extension,
+)
 from backend.storage.local import LocalStorage, StorageWriter
 
 logger = logging.getLogger(__name__)
@@ -38,8 +46,13 @@ _FLUSH_BYTES = 1024 * 1024
 _STATUS_UPLOADING = "uploading"
 _STATUS_READY = "ready"
 
-# 可上传本体的全部后缀：可玩机种 + Flash 的 .swf + H5 的 .zip。
-_BODY_EXTENSIONS = frozenset(all_body_extensions()) | {".swf", ".zip"}
+# 可上传本体的全部后缀：可玩机种单文件 + 多文件包内文件 + Flash 的 .swf + H5 的 .zip。
+# `.cue` / `.bin` / `.m3u` 只作多文件本体的成员暂存，不能单独成盘。
+_BODY_EXTENSIONS = (
+    frozenset(all_body_extensions())
+    | frozenset(all_bundle_extensions())
+    | {".swf", ".zip"}
+)
 
 
 @dataclass(frozen=True)
@@ -64,7 +77,9 @@ def _candidate_game_types(extension: str) -> tuple[str, ...]:
         return ("flash",)
     if extension == ".zip":
         return ("h5",)
-    return tuple(platform.id for platform in playable_platforms_for_extension(extension))
+    return tuple(
+        platform.id for platform in playable_platforms_for_any_extension(extension)
+    )
 
 
 def _clean_filename(raw: str) -> str:
@@ -252,6 +267,20 @@ class BodyUploadService:
             filename=str(meta["filename"]),
             size=size,
         )
+
+    def claim_many(self, upload_ids: list[str]) -> list[StagedUpload]:
+        """一次取多个已完成会话（多文件本体）；先去重/限数，再逐个校验归属与大小。"""
+        if not upload_ids:
+            raise ValidationError("请选择要上传的文件。")
+        if len(upload_ids) > MAX_BUNDLE_FILES:
+            raise ValidationError(f"多文件本体最多 {MAX_BUNDLE_FILES} 个文件。")
+        seen: set[str] = set()
+        for upload_id in upload_ids:
+            if upload_id in seen:
+                raise ValidationError("同一个上传会话被重复引用。")
+            seen.add(upload_id)
+        # 先全部 claim 再返回：任何一个不完整都不会动到磁盘
+        return [self.claim(upload_id) for upload_id in upload_ids]
 
     def discard(self, upload_id: str) -> None:
         """放弃会话；不存在时静默返回（DELETE 幂等）。"""

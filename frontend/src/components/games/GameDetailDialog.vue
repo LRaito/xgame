@@ -80,13 +80,16 @@
                     <dt>本体</dt>
                     <dd>
                         <app-button
-                            v-if="detail.game_path"
+                            v-if="detail.game_path && detail.body_kind !== 'bundle'"
                             variant="secondary"
                             size="sm"
                             @click="downloadGame"
                         >
                             下载
                         </app-button>
+                        <span v-else-if="detail.body_kind === 'bundle'">
+                            多文件本体，请从数据目录整体备份
+                        </span>
                         <span v-else>—</span>
                     </dd>
                 </div>

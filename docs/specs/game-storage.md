@@ -16,6 +16,8 @@
 - SQLite 只存相对路径；两个根下的相对路径逐字一致，只换拼接的根。
 - 数据根的游戏目录是 `game/{game_type}/{卡带ID}/`，类型那层用键值而不是显示名。
 - 该目录下：本体 `game.{后缀}`、封面 `cover.{后缀}`、攻略 `guide.zip` 或 `guide.pdf`、图集 `image/{uuid}.{后缀}`。
+- 多文件本体在该目录下另建 `body/`：各文件用原文件名，入口统一 `game.{后缀}`，
+  清单固定 `body/manifest.json`。
 - 按账号分：存档 `save/{用户名}/{game_type}/{卡带ID}/{uuid}.state`。
 - 按账号分：截图 `image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀}`。
 - 分片暂存：`upload/{upload_id}/`（可丢弃，提交后即删，见「本体分片上传」）。
@@ -37,7 +39,7 @@
 ### 游戏类型
 
 - 游戏类型由「本体后缀 + 用户选择」判定，唯一入口是 `resolve_game_type()`。
-- `flash` ← `.swf`；`h5` ← `.zip`；其余 29 个主机类型见 [机种词表](./platforms.md)。
+- `flash` ← `.swf`；`h5` ← `.zip`；其余 31 个主机类型见 [机种词表](./platforms.md)。
 - 扩展名白名单 `_GAME_TYPE_EXTENSIONS` 从机种词表派生，未收录后缀中文 400。
 - 后缀唯一对应一个机种时自动确定，类型不可选；后缀有多个候选时（Commodore 的
   `.d64` / `.prg`，CD 镜像的 `.chd` / `.iso`）必须由用户选择。
@@ -111,6 +113,8 @@
 - 表单：`name` / `cartridge_id` / `description` / `file`，可选 `cover`。
 - 本体与封面也可给直链：`body_url` + `body_game_type` / `cover_url`，来源可混用。
 - 超过 30MB 的本地本体改走分片：同一个接口接受 `upload_id`，与 `file` / `body_url` 三选一。
+- 多文件本体用 `upload_ids`（每个物理文件一个现有分片会话），与 `file` / `body_url` /
+  `upload_id` 互斥；单文件本体仍写 `game.{ext}`，多文件写 `body/`。
 - 任一步失败整体回滚，不留半成品条目与文件。
 - 换本体 / 换封面走 `POST /manage/{id}/assets`，`kind=game|cover`。
 - 分片暂存本体也只能用于 `kind=game`；封面与攻略不分片。
@@ -149,6 +153,31 @@
 - 播放 URL 末段带真实落盘名（`/api/games/{id}/play/game.<ext>`），
   EmulatorJS 用它当 ROM 文件名并识别 `.pbp` 等格式；原名段必须与落盘名一致。
 
+### 多文件本体
+
+- 适用机种由 `Platform.bundle_extensions` 决定，当前是 `segaCD` 与 `amiga`。
+- 每个物理文件各开一个现有分片会话（小文件也是一片），提交时 `upload_ids` 一次给全；
+  服务端在提交点统一校验，不新增打包会话。
+- 单文件后缀仍走 `game.{ext}`：世嘉 CD 的 `.chd`、Amiga 的 `.adf` / `.hdf`。
+- 多文件落 `body/{原文件名}`；入口统一改名 `game.{后缀}`（EJS 取 URL 末段当 MEMFS 文件名
+  且不做 URL 解码，原名带空格/中文会对不上 cue 内引用）。
+- 入口选择：唯一 `.m3u` > `.cue` > `.chd` / `.adf` / `.hdf`；多个分盘且没有 m3u 时，
+  按文件名自然排序自动生成 `game.m3u`。`.bin` 永远不能当入口。
+- cue 的 `FILE` 与 m3u 的每行只能引用同一层的 basename；拒绝子目录、绝对路径、远程 URL、
+  大小写不一致与重复引用。`.cue` / `.m3u` / `.bin` 单独上传会被中文 400 拒绝；
+  `.bin` 直链仍按旧规则补所选类型的默认后缀。
+- `manifest.json` 记录 `{version, entry, files:[{name,size,crc32}]}`；`files` 含入口与自动
+  m3u，不含清单自身，按 `name` 排序。
+- `games.game_path` 指向入口；`size` 是 `files` 大小之和；`crc32` 是
+  `name\tsize\tcrc32\n`（按 name 排序）文本的 CRC32。
+- 文件数上限 64；总大小不设应用层上限，只受磁盘限制；前端对 >1GB 给内存提示。
+- 文件名必须是安全 basename（无 `/`、`\`、`..`、控制字符、Windows 非法字符、`? # %`；
+  不以点或空格结尾；不是 Windows 保留设备名），大小写不敏感去重，≤120 字符。
+- 提交在同层 `.body-{token}` 组装，旧 `body/` 改名备份 → 新目录就位 → 数据库提交；
+  失败按相反顺序还原。成功后删旧 `body/` 或旧 `game.{ext}` 与全部上传会话。
+- 多文件本体不支持改游戏类型（中文 400）；改卡带 ID 仍整目录搬家，删游戏删整棵目录。
+- 多文件游戏不提供「下载本体为单个文件」，管理详情提示从数据目录整体备份。
+
 ### H5 与攻略包
 
 - H5 上传只校验、不解压：zip 原样存数据根的 `game.zip`，就是 `game_path`。
@@ -184,6 +213,8 @@
 - 多候选后缀未选类型、改类型目标不在候选集：中文 400，不搬任何目录。
 - 单文件本地本体超过 30MB：中文 400，提示改用分片上传。
 - 分片长度不符、序号越界、缺片、总大小不符：中文 400；别人的 `upload_id`：404。
+- 多文件本体缺入口、缺引用、引用子目录/远程地址/大小写不一致、重名、超过 64 个文件：
+  中文 400，旧本体不动。
 - 分片上传的 chunks 与 complete 路由允许没有 `Content-Length`（HTTP/2），其它写方法仍返回 411。
 - 封面后缀或封面类型非法、上传文件为空、网络直链不合法或超 512MB：中文 400。
 - H5 / 攻略 ZIP 缺入口、路径越界、重名、超限、加密条目：中文 400。
@@ -201,7 +232,8 @@
 - 换同类型本体更新 `crc32` / `size` / `game_path`，保留封面 / 图集 / 攻略；跨类型返回 400 且旧档不动。
 - 多候选后缀（`.d64` / `.prg`）不选类型被拒；选 c128 / pet 等按所选落库。
 - 分片上传：乱序分片、缺片、长度不符、上传会话归属、DELETE 幂等与 TTL 清理。
-- 后端：`python -m pytest tests/test_game_uploads.py tests/test_local_storage.py`。
+- 多文件本体：cue+bin、m3u 多碟、多 adf、自动 m3u、引用校验、单文件/多文件互转与旧文件清理。
+- 后端：`python -m pytest tests/test_game_bundles.py tests/test_game_uploads.py tests/test_local_storage.py`。
 - 改类型搬三类目录（含历史类型目录）、改五处路径列、多账号都搬；失败分支全测。
 - 改卡带 ID 搬三类目录（含换过类型的历史目录）、改五处路径列、多账号都搬；失败分支全测。
 - 两个根下都不留旧 ID 的残迹；运行时旧解包产物作废。

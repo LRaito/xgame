@@ -166,14 +166,21 @@ def test_detect_game_type_by_extension():
     )
     assert resolve_game_type(".d64", "c128") == "c128"
     assert resolve_game_type(".prg", "vic20") == "vic20"
-    # 第 3 档 CD 镜像也跨机种：.chd 四候选、.iso 两候选，不带选择时有歧义
+    # 第 3/4 档 CD 镜像跨机种：.chd 五候选、.iso 两候选，不带选择时有歧义
     with pytest.raises(Exception):
         detect_game_type("demo.chd")
     with pytest.raises(Exception):
         detect_game_type("demo.iso")
-    with pytest.raises(Exception):
+    with pytest.raises(Exception) as cue_error:
         detect_game_type("demo.cue")
-    assert game_types_of_extension(".chd") == ("segaSaturn", "psx", "pcfx", "3do")
+    assert "多文件" in str(cue_error.value)
+    assert game_types_of_extension(".chd") == (
+        "segaCD",
+        "segaSaturn",
+        "psx",
+        "pcfx",
+        "3do",
+    )
     assert game_types_of_extension(".iso") == ("psx", "3do")
     assert resolve_game_type(".chd", "psx") == "psx"
     assert resolve_game_type(".iso", "3do") == "3do"
@@ -1708,6 +1715,19 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
     assert types["3do"]["bios"]["required_files"] == ["panafz1.bin"]
     assert types["nes"]["bios"] is None
     assert types["flash"]["kind"] == "flash"
+    # 第 4 档：多文件本体的字段从词表派生
+    assert types["segaCD"]["multi_file"] is True
+    assert types["segaCD"]["extensions"] == [".chd"]
+    assert types["segaCD"]["bundle_extensions"] == [".cue", ".bin", ".m3u", ".chd"]
+    assert types["segaCD"]["bundle_entries"] == [".m3u", ".cue", ".chd"]
+    assert types["segaCD"]["upload_extensions"] == [".chd", ".cue", ".bin", ".m3u"]
+    assert types["amiga"]["multi_file"] is True
+    assert types["amiga"]["extensions"] == [".adf", ".hdf"]
+    assert types["amiga"]["bundle_extensions"] == [".adf", ".hdf", ".m3u"]
+    assert types["amiga"]["bundle_entries"] == [".m3u", ".adf", ".hdf"]
+    assert types["nes"]["multi_file"] is False
+    assert types["nes"]["bundle_extensions"] == []
+    assert types["flash"]["multi_file"] is False
     assert status["extension_candidates"][".d64"] == [
         "c64",
         "c128",
@@ -1716,6 +1736,7 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
         "vic20",
     ]
     assert status["extension_candidates"][".chd"] == [
+        "segaCD",
         "segaSaturn",
         "psx",
         "pcfx",

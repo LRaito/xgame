@@ -31,7 +31,7 @@
 
 ## 行为与规则
 
-### 可玩机种（29 个）
+### 可玩机种（31 个）
 
 | game_type | 显示名 | 扩展名 | 默认后缀 | EmulatorJS core |
 |---|---|---|---|---|
@@ -45,6 +45,7 @@
 | `segaMD` | 世嘉 MD | `.md` `.gen` | `.md` | `genesis_plus_gx` / `picodrive` |
 | `segaGG` | 世嘉 GG | `.gg` | `.gg` | `genesis_plus_gx` |
 | `segaMS` | 世嘉 SMS | `.sms` | `.sms` | `smsplus` / `genesis_plus_gx` / `picodrive` |
+| `segaCD` | 世嘉 CD | `.chd`（多文件另见下） | `.chd` | `genesis_plus_gx` / `picodrive` |
 | `sega32x` | 世嘉 32X | `.32x` | `.32x` | `picodrive` |
 | `segaSaturn` | 世嘉 土星 | `.chd` | `.chd` | `yabause` |
 | `psx` | 索尼 PS1 | `.chd` `.pbp` `.iso` | `.chd` | `pcsx_rearmed` / `mednafen_psx_hw` |
@@ -64,16 +65,25 @@
 | `pet` | Commodore PET | `.prg` `.d64` | `.prg` | `vice_xpet` |
 | `plus4` | Commodore Plus/4 | `.prg` `.d64` | `.prg` | `vice_xplus4` |
 | `vic20` | Commodore VIC-20 | `.prg` `.d64` | `.prg` | `vice_xvic` |
+| `amiga` | Amiga | `.adf` `.hdf`（多盘另见下） | `.adf` | `puae` |
 
 - `cores` 记录引擎支持的全部 core，不代表本项目都打包了资产；NDS 只打包 `melonds`。
   N64 打包 `mupen64plus_next` 与 `parallel_n64`（iOS Safari 会默认选后者）；
   PS1 两个 core 都打包。
 - **扩展名可以跨机种重叠**：Commodore 共用 `.d64` / `.prg`；CD 镜像共用 `.chd`
-  （土星 / PS1 / PC-FX / 3DO）与 `.iso`（PS1 / 3DO）。
+  （世嘉 CD / 土星 / PS1 / PC-FX / 3DO）与 `.iso`（PS1 / 3DO）。
   判定时取「后缀候选集」，候选第 1 个（词表顺序）是默认项；唯一候选自动确定。
+- **多文件本体**：`bundle_extensions` 是包内允许出现的全部后缀，`bundle_entries`
+  是其中可当入口的后缀。当前只有 `segaCD` 与 `amiga` 声明：
+  - `segaCD`：`bundle_extensions=(".cue",".bin",".m3u",".chd")`，
+    `bundle_entries=(".m3u",".cue",".chd")`；`.bin` 只能作分轨。
+  - `amiga`：`bundle_extensions=(".adf",".hdf",".m3u")`，
+    `bundle_entries=(".m3u",".adf",".hdf")`。
+  `.cue` / `.m3u` / `.bin` 不进单文件 `extensions`，单独上传仍被拒绝；
+  多文件以用户选的类型为准，后缀只做合法性校验。
 - 多候选后缀的默认项可被 `_EXTENSION_DEFAULT_OVERRIDES` 覆盖：`.chd` 默认 PS1，
   不改变候选列表顺序。
-- `GAME_TYPES` 派生为 `flash`、`h5` 加 29 个可玩机种 id，顺序与词表一致。
+- `GAME_TYPES` 派生为 `flash`、`h5` 加 31 个可玩机种 id，顺序与词表一致。
 - 后端扩展名白名单、默认后缀表、候选表与 `GAME_TYPE_LABELS` 都从词表派生。
 - 前端不保存映射：`GET /api/games/status` 的 `types` / `extension_candidates` /
   `default_game_type_by_extension` 是唯一来源。
@@ -96,6 +106,8 @@
 | `psx` | `psx.zip` | `scph5500.bin`、`scph5501.bin`、`scph5502.bin` | 必需（按区，建议三个都放） |
 | `pcfx` | `pcfx.zip` | `pcfx.rom` | 必需（必须正好 1 MiB） |
 | `3do` | `3do.zip` | `panafz1.bin` | 必需（也可用其他 3DO BIOS 文件名） |
+| `segaCD` | `segaCD.zip` | `bios_CD_E.bin`、`bios_CD_U.bin`、`bios_CD_J.bin` | 必需（按区，至少放一个） |
+| `amiga` | `amiga.zip` | `kick34005.A500`、`kick40068.A1200` | 可选（PUAE 有 AROS 回退） |
 
 - N64 不需要 BIOS。
 - 土星也可用 `sega_101.bin` / `mpr-17933.bin`，3DO 也可用 `panafz10.bin` 等；

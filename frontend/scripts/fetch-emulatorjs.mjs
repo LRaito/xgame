@@ -41,7 +41,7 @@ const DONE_MARKER = ".emulatorjs.done";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const destRoot = join(root, "public/emulatorjs", "data");
 
-// data/ 目录下相对路径清单（顶层引擎文件 + 30 个唯一 core，覆盖 29 个可玩机种）
+// data/ 目录下相对路径清单（顶层引擎文件 + 31 个唯一 core，覆盖 31 个可玩机种）
 const FILES = [
     "loader.js",
     "emulator.min.js",
@@ -154,6 +154,10 @@ const FILES = [
     "cores/vice_xvic-wasm.data",
     "cores/vice_xvic-legacy-wasm.data",
     "cores/reports/vice_xvic.json",
+    // 第 4 档：Amiga（puae）；世嘉 CD 复用 genesis_plus_gx / picodrive
+    "cores/puae-wasm.data",
+    "cores/puae-legacy-wasm.data",
+    "cores/reports/puae.json",
 ];
 
 // 本地化合并的输入（官方语言包，仅构建期下载、不入 data/）与合并产物输出（相对 data/）

@@ -56,59 +56,104 @@ function joinSignal(external) {
 }
 
 /**
- * 把一个大文件分片上传到暂存区，返回 `{upload_id, filename, size}`。
+ * 把一组文件分片上传到暂存区，返回 `{uploads, upload_ids, files}`。
  *
- * 失败语义：任一分片重试耗尽 → 取消其余分片、删除服务端会话、抛出中文错误；
+ * 每个物理文件各开一个现有分片会话，再把「文件 × 分片」拍平成任务池共用 5 路并发。
+ * 失败语义：任一分片重试耗尽 → 取消其余分片、删除全部服务端会话、抛出中文错误；
  * 调用方拿到的上传是整体失败，不会留下半成品游戏条目。
  */
-export async function uploadFileInChunks(
-    file,
+export async function uploadFilesInChunks(
+    files,
     { gameType = "", onProgress = null, signal = null } = {}
 ) {
-    if (!file) {
+    const list = Array.from(files || []);
+    if (!list.length) {
         throw new Error("请选择要上传的文件。");
     }
+    const totalSize = list.reduce((sum, file) => sum + Number(file.size || 0), 0);
     const controller = joinSignal(signal);
-    const upload = await createGameUploadAPI({
-        filename: file.name,
-        size: file.size,
-        game_type: gameType,
-    });
-    const uploadId = upload.upload_id;
-    const chunkSize = Number(upload.chunk_size) || CHUNK_SIZE_BYTES;
-    const totalChunks = Number(upload.total_chunks) || 1;
+    const sessions = [];
 
-    // 每片已上传的字节数：进度按所有分片求和，重试时把该片归零
-    const loadedByIndex = new Map();
+    async function discardAll() {
+        await Promise.all(
+            sessions.map(async (session) => {
+                try {
+                    await abortGameUploadAPI(session.uploadId);
+                } catch {
+                    // 清理失败不影响把原始错误交给调用方；服务端还有 24 小时 TTL 兜底
+                }
+            }),
+        );
+    }
+
+    try {
+        for (const file of list) {
+            if (controller.signal.aborted) {
+                throw abortError();
+            }
+            const upload = await createGameUploadAPI({
+                filename: file.name,
+                size: file.size,
+                game_type: gameType,
+            });
+            sessions.push({
+                file,
+                uploadId: upload.upload_id,
+                chunkSize: Number(upload.chunk_size) || CHUNK_SIZE_BYTES,
+                totalChunks: Number(upload.total_chunks) || 1,
+            });
+        }
+    } catch (err) {
+        controller.abort();
+        await discardAll();
+        throw err;
+    }
+
+    const tasks = [];
+    sessions.forEach((session, fileIndex) => {
+        for (let index = 0; index < session.totalChunks; index += 1) {
+            tasks.push({ fileIndex, index });
+        }
+    });
+
+    // 每个分片已上传的字节数：进度按全部文件求和，重试时把该片归零
+    const loadedByTask = new Map();
     let fatalError = null;
     let lastReported = -1;
-    function report(index, loaded, length) {
-        loadedByIndex.set(index, Math.max(0, Math.min(Number(loaded) || 0, length)));
+    function report(key, loaded, length) {
+        loadedByTask.set(key, Math.max(0, Math.min(Number(loaded) || 0, length)));
         let totalLoaded = 0;
-        for (const value of loadedByIndex.values()) {
+        for (const value of loadedByTask.values()) {
             totalLoaded += value;
         }
         if (totalLoaded === lastReported) {
             return;
         }
         lastReported = totalLoaded;
-        onProgress?.({ loaded: totalLoaded, total: file.size });
+        onProgress?.({ loaded: totalLoaded, total: totalSize });
     }
 
-    async function uploadOne(index) {
-        const start = index * chunkSize;
-        const end = Math.min(start + chunkSize, file.size);
+    async function uploadOne(task) {
+        const session = sessions[task.fileIndex];
+        const start = task.index * session.chunkSize;
+        const end = Math.min(start + session.chunkSize, session.file.size);
         const length = end - start;
+        const key = `${task.fileIndex}:${task.index}`;
         for (let attempt = 0; ; attempt += 1) {
             if (controller.signal.aborted) {
                 throw abortError();
             }
             try {
-                await uploadGameChunkAPI(uploadId, index, file.slice(start, end), {
-                    signal: controller.signal,
-                    onUploadProgress: (event) => report(index, event.loaded, length),
-                });
-                report(index, length, length);
+                await uploadGameChunkAPI(
+                    session.uploadId,
+                    task.index,
+                    session.file.slice(start, end),
+                    {
+                        signal: controller.signal,
+                        onUploadProgress: (event) => report(key, event.loaded, length),
+                    },
+                );
+                report(key, length, length);
                 return;
             } catch (err) {
                 if (controller.signal.aborted) {
@@ -121,22 +166,22 @@ export async function uploadFileInChunks(
                     controller.abort();
                     throw error;
                 }
-                report(index, 0, length);
+                report(key, 0, length);
                 await delay(CHUNK_RETRY_DELAY_MS, controller.signal);
             }
         }
     }
 
-    const workerCount = Math.max(1, Math.min(CHUNK_CONCURRENCY, totalChunks));
-    let nextIndex = 0;
+    const workerCount = Math.max(1, Math.min(CHUNK_CONCURRENCY, tasks.length));
+    let nextTask = 0;
     async function worker() {
         while (!controller.signal.aborted) {
-            const index = nextIndex;
-            nextIndex += 1;
-            if (index >= totalChunks) {
+            const task = tasks[nextTask];
+            nextTask += 1;
+            if (!task) {
                 return;
             }
-            await uploadOne(index);
+            await uploadOne(task);
         }
     }
 
@@ -148,15 +193,36 @@ export async function uploadFileInChunks(
         if (failed) {
             throw fatalError || failed.reason;
         }
-        const done = await completeGameUploadAPI(uploadId, { signal: controller.signal });
-        return { upload_id: uploadId, filename: done.filename, size: done.size };
+        const uploads = [];
+        for (const session of sessions) {
+            const done = await completeGameUploadAPI(session.uploadId, {
+                signal: controller.signal,
+            });
+            uploads.push({
+                upload_id: session.uploadId,
+                filename: done.filename,
+                size: done.size,
+            });
+        }
+        return {
+            uploads,
+            upload_ids: uploads.map((item) => item.upload_id),
+            files: list.map((file) => ({ name: file.name, size: file.size })),
+        };
     } catch (err) {
         controller.abort();
-        try {
-            await abortGameUploadAPI(uploadId);
-        } catch {
-            // 清理失败不影响把原始错误交给调用方；服务端还有 24 小时 TTL 兜底
-        }
+        await discardAll();
         throw fatalError || err;
     }
+}
+
+/**
+ * 单文件版本的薄包装：保留原调用方使用的 `{upload_id, filename, size}` 形状。
+ */
+export async function uploadFileInChunks(file, options = {}) {
+    if (!file) {
+        throw new Error("请选择要上传的文件。");
+    }
+    const result = await uploadFilesInChunks([file], options);
+    return result.uploads[0];
 }

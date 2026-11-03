@@ -47,6 +47,9 @@ export const EMU_NATIVE = {
     psx: { width: 320, height: 240 },
     pcfx: { width: 288, height: 240 },
     "3do": { width: 320, height: 240 },
+    // 第 4 档：世嘉 CD 与 MD 同核；Amiga 先按 PAL 常见值，运行时以 videoInfo.aspect 校准
+    segaCD: { width: 320, height: 224 },
+    amiga: { width: 320, height: 256 },
 };
 
 /**

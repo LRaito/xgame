@@ -1800,6 +1800,10 @@ async function launchEngine() {
         if (romFile) {
             params.set("file", romFile);
         }
+        // 多文件本体：宿主页先取 /play/manifest，再用 EJS_externalFiles 拉分轨
+        if (item.body_kind === "bundle") {
+            params.set("bundle", "1");
+        }
         // BIOS：列表条目自带（不依赖 /status 是否加载成功），类型元数据兜底。
         // 宿主页只接受 bios/ 下的安全 zip 文件名，自己拼路径。
         const bios = item.bios || meta.value?.bios || null;

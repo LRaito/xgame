@@ -237,6 +237,18 @@ export function gameDownloadPath(id, updatedAt = "") {
     return `/api/games/${id}/play${query}`;
 }
 
+/** 多文件本体的播放清单；单文件游戏也返回只有入口一条的等价结构。 */
+export function bodyManifestPath(id, updatedAt = "") {
+    const query = updatedAt ? `?v=${encodeURIComponent(updatedAt)}` : "";
+    return `/api/games/${id}/play/manifest${query}`;
+}
+
+/** 多文件本体里的单个文件地址（name 必须是清单内的安全 basename）。 */
+export function bodyFilePath(id, name, updatedAt = "") {
+    const query = updatedAt ? `?v=${encodeURIComponent(updatedAt)}` : "";
+    return `/api/games/${id}/play/files/${encodeURIComponent(name)}${query}`;
+}
+
 /** H5 入口页地址（沙箱 iframe 的 src）；带 v=updated_at 破缓存，重传后立即生效。 */
 export function h5EntryPath(id, updatedAt = "") {
     const query = updatedAt ? `?v=${encodeURIComponent(updatedAt)}` : "";

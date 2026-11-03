@@ -246,6 +246,7 @@
                                     class="game-manage__file-input"
                                     type="file"
                                     :accept="gameAccept"
+                                    :multiple="canSelectMultipleBodyFiles"
                                     @change="onGameFileChange"
                                 />
                                 <app-button
@@ -263,9 +264,24 @@
                                     网络上传
                                 </app-button>
                             </div>
-                            <template v-if="form.gameFile">
-                                <p class="game-manage__file-hint">
+                            <template v-if="form.gameFile || form.gameFiles.length">
+                                <p v-if="form.gameFiles.length" class="game-manage__file-hint">
+                                    {{ bodyUploading || formMode === "edit" ? "正在上传：" : "已选：" }}{{ form.gameFiles.length }} 个文件，共 {{ formatSize(bodyFilesTotalSize) }}<template v-if="bodyUploading"> · {{ bodyProgress }}%</template>
+                                </p>
+                                <p v-else class="game-manage__file-hint">
                                     {{ bodyUploading || formMode === "edit" ? "正在上传：" : "已选：" }}{{ form.gameFile.name }}（{{ formatSize(form.gameFile.size) }}<template v-if="bodyUploading"> · {{ bodyProgress }}%</template>）
+                                </p>
+                                <p
+                                    v-if="form.gameFiles.length"
+                                    class="game-manage__file-hint muted"
+                                >
+                                    {{ form.gameFiles.map((file) => file.name).join("、") }}
+                                </p>
+                                <p
+                                    v-if="form.gameFiles.length && bodyFilesTotalSize > 1024 * 1024 * 1024"
+                                    class="game-manage__file-hint muted"
+                                >
+                                    多文件本体超过 1GB 时浏览器内存压力较大，世嘉 CD 建议优先用单个 .chd。
                                 </p>
                                 <el-progress
                                     v-if="bodyUploading"
@@ -576,9 +592,13 @@ import {
     gameTypeLabel as typeLabel,
     gameTypeMeta,
 } from "@/constants/gameTypes";
-import { useGameTypesStore } from "@/store/gameTypes";
+import { extensionOfFilename, useGameTypesStore } from "@/store/gameTypes";
 import { ensureGameAssetSw, gameCoverUrl } from "@/utils/gameAssetCache";
-import { uploadFileInChunks, shouldUseChunkedUpload } from "@/utils/chunkUpload";
+import {
+    uploadFileInChunks,
+    uploadFilesInChunks,
+    shouldUseChunkedUpload,
+} from "@/utils/chunkUpload";
 import { formatDateTimeSeconds as formatDateTime } from "@/utils/fileDisplay";
 
 // 每页 5 条，与后端 backend/games/service.py 的 MANAGE_PAGE_SIZE_DEFAULT 保持一致
@@ -592,7 +612,6 @@ const total = ref(0);
 // 类型与可上传后缀都来自 /status（后端词表派生），这里只读缓存
 const gameTypesStore = useGameTypesStore();
 const gameTypes = computed(() => gameTypesStore.gameTypes);
-const bodyExtensions = computed(() => gameTypesStore.bodyExtensions);
 // 类型筛选下拉：「全部」+ 当前类型；输入过滤交给 AppTypeSelect
 const typeFilterOptions = computed(() => [
     { value: "", label: "全部游戏类型" },
@@ -631,6 +650,8 @@ const form = reactive({
     coverType: "",
     description: "",
     gameFile: null,
+    // 多文件本体（cue+bin / m3u / 多盘）：与 gameFile 二选一
+    gameFiles: [],
     coverFile: null,
     // 网络上传的暂存值：新建时等「保存」一起提交，编辑时确认后立即上传
     bodyUrl: "",
@@ -715,9 +736,15 @@ const importing = ref(false);
 
 // 本体来源：本地文件优先，其次是网络直链。
 // 类型候选由后缀决定：唯一候选自动确定，多候选（Commodore 的 .d64 / .prg）由用户选。
+// 多文件本体按「所有文件后缀的交集」求候选（cue+bin → 世嘉 CD，adf → Amiga）。
 const bodyTypeCandidates = computed(() => {
     if (form.gameFile) {
         return gameTypeCandidatesByFilename(form.gameFile.name);
+    }
+    if (form.gameFiles.length) {
+        return gameTypesStore
+            .bundleCandidatesOfFiles(form.gameFiles)
+            .map((item) => item.id);
     }
     if (form.bodyUrl) {
         return gameTypeCandidatesByUrl(form.bodyUrl);
@@ -736,6 +763,9 @@ const bodySourceType = computed(() => {
             null
         );
     }
+    if (form.gameFiles.length) {
+        return form.gameType || bodyTypeCandidates.value[0] || null;
+    }
     if (form.bodyUrl) {
         return (
             form.gameType ||
@@ -747,23 +777,46 @@ const bodySourceType = computed(() => {
     }
     return null;
 });
-const hasBodySource = computed(() => Boolean(form.gameFile || form.bodyUrl));
+const hasBodySource = computed(() =>
+    Boolean(form.gameFile || form.gameFiles.length || form.bodyUrl)
+);
 const gameAccept = computed(() => {
     if (formMode.value === "edit") {
-        // 编辑只能换同类型本体：文件选择器直接收窄到当前类型的后缀
-        const extensions = gameTypeMeta(editingItem.value?.game_type)?.extensions;
+        // 编辑只能换同类型本体：文件选择器直接收窄到当前类型（含多文件包内后缀）
+        const extensions = gameTypeMeta(editingItem.value?.game_type)?.uploadExtensions;
         if (extensions?.length) {
             return extensions.join(",");
         }
     }
-    return bodyExtensions.value.join(",");
+    return gameTypesStore.allUploadExtensions.join(",");
 });
+
+// 当前能否选多个文件：编辑看当前类型；新建始终允许先多选（候选由文件后缀反推）。
+const bodyMultiFile = computed(() => {
+    if (formMode.value === "edit") {
+        return Boolean(gameTypeMeta(editingItem.value?.game_type)?.multiFile);
+    }
+    return bodyTypeCandidates.value.some(
+        (id) => gameTypeMeta(id)?.multiFile,
+    );
+});
+const bodyFilesTotalSize = computed(() =>
+    form.gameFiles.reduce((sum, file) => sum + Number(file.size || 0), 0),
+);
+// 新建时还没选文件、候选为空，必须允许先多选；编辑时按当前类型决定。
+const canSelectMultipleBodyFiles = computed(
+    () => formMode.value === "create" || bodyMultiFile.value,
+);
 
 // 编辑弹框：当前本体后缀的候选。唯一候选时类型不可改，多候选时出现下拉。
 const editingTypeCandidates = computed(() => {
     const item = editingItem.value;
     if (!item) {
         return [];
+    }
+    // 多文件本体不支持改类型（后端也会拒绝），下拉只保留当前类型
+    if (item.body_kind === "bundle") {
+        return item.game_type ? [item.game_type] : [];
     }
     const candidates = gameTypeCandidatesByFilename(item.game_path || "");
     return candidates.length ? candidates : item.game_type ? [item.game_type] : [];
@@ -935,6 +988,7 @@ function onKeywordInput() {
 
 function clearGameFile() {
     form.gameFile = null;
+    form.gameFiles = [];
     if (gameFileRef.value) {
         gameFileRef.value.value = "";
     }
@@ -968,6 +1022,28 @@ async function stageBodyFile(file, gameType = "") {
     bodyProgress.value = 0;
     try {
         return await uploadFileInChunks(file, {
+            gameType,
+            signal: controller.signal,
+            onProgress: ({ loaded, total }) => {
+                bodyProgress.value = total
+                    ? Math.min(100, Math.round((loaded / total) * 100))
+                    : 0;
+            },
+        });
+    } finally {
+        if (bodyAbortController === controller) {
+            bodyAbortController = null;
+        }
+    }
+}
+
+/** 把一组多文件本体传到暂存区，返回 `{upload_ids, uploads, files}`。 */
+async function stageBodyFiles(files, gameType = "") {
+    const controller = new AbortController();
+    bodyAbortController = controller;
+    bodyProgress.value = 0;
+    try {
+        return await uploadFilesInChunks(files, {
             gameType,
             signal: controller.signal,
             onProgress: ({ loaded, total }) => {
@@ -1157,37 +1233,106 @@ function pickCoverFile() {
     coverFileRef.value?.click();
 }
 
+function isBundleFileSelection(files) {
+    if (files.length > 1) {
+        return true;
+    }
+    return Boolean(
+        files.length &&
+            gameTypesStore.isBundleOnlyExtension(
+                extensionOfFilename(files[0].name),
+            ),
+    );
+}
+
 function onGameFileChange(event) {
-    const file = event.target.files?.[0] || null;
-    form.gameFile = file;
-    if (!file) {
+    const files = Array.from(event.target.files || []);
+    if (!files.length) {
+        clearGameFile();
         return;
     }
     // 本地文件与网络地址二选一
     clearRemoteBody();
+
+    const bundle = isBundleFileSelection(files);
+    if (formMode.value === "edit") {
+        const currentType = editingItem.value?.game_type;
+        if (bundle) {
+            if (!gameTypeMeta(currentType)?.multiFile) {
+                ElMessage.warning(
+                    `「${typeLabel(currentType)}」不支持多文件本体，请选择单个文件`,
+                );
+                clearGameFile();
+                return;
+            }
+            const candidates = gameTypesStore.bundleCandidatesOfFiles(files);
+            if (!candidates.some((item) => item.id === currentType)) {
+                ElMessage.warning(
+                    `这些文件与当前游戏类型「${typeLabel(currentType)}」不匹配`,
+                );
+                clearGameFile();
+                return;
+            }
+            form.gameFiles = files;
+            form.gameFile = null;
+            uploadBodyNow({ files });
+            return;
+        }
+        const file = files[0];
+        form.gameFile = file;
+        form.gameFiles = [];
+        const candidates = gameTypeCandidatesByFilename(file.name);
+        if (!candidates.length) {
+            ElMessage.warning("无法识别游戏本体格式，请更换文件");
+            clearGameFile();
+            return;
+        }
+        // 编辑只能换同类型本体：当前类型必须在该后缀的候选集内
+        if (currentType && !candidates.includes(currentType)) {
+            ElMessage.warning(
+                `只能更换同一游戏类型的本体：当前是「${typeLabel(currentType)}」，` +
+                    `所选文件属于「${candidates.map((type) => typeLabel(type)).join("、")}」`,
+            );
+            clearGameFile();
+            return;
+        }
+        uploadBodyNow({ file });
+        return;
+    }
+
+    if (bundle) {
+        const candidates = gameTypesStore.bundleCandidatesOfFiles(files);
+        if (!candidates.length) {
+            ElMessage.warning("无法识别多文件本体的游戏类型，请检查文件组合");
+            clearGameFile();
+            return;
+        }
+        form.gameFiles = files;
+        form.gameFile = null;
+        const ids = candidates.map((item) => item.id);
+        if (ids.includes(form.gameType)) {
+            // 保留用户已经选过的类型
+        } else if (ids.length === 1) {
+            form.gameType = ids[0];
+        } else {
+            // 只有 m3u 时世嘉 CD / Amiga 都匹配，必须由用户选
+            form.gameType = "";
+        }
+        return;
+    }
+
+    const file = files[0];
+    form.gameFile = file;
+    form.gameFiles = [];
     const candidates = gameTypeCandidatesByFilename(file.name);
     if (!candidates.length) {
         ElMessage.warning("无法识别游戏本体格式，请更换文件");
         clearGameFile();
         return;
     }
-    if (formMode.value !== "edit") {
-        // 新建：多候选时按后缀覆盖表选默认项，用户仍可在类型下拉里改
-        const preferred = gameTypesStore.defaultOfFilename(file.name) || candidates[0];
-        form.gameType = candidates.includes(form.gameType) ? form.gameType : preferred;
-        return;
-    }
-    // 编辑只能换同类型本体：当前类型必须在该后缀的候选集内
-    const currentType = editingItem.value?.game_type;
-    if (currentType && !candidates.includes(currentType)) {
-        ElMessage.warning(
-            `只能更换同一游戏类型的本体：当前是「${typeLabel(currentType)}」，` +
-                `所选文件属于「${candidates.map((type) => typeLabel(type)).join("、")}」`
-        );
-        clearGameFile();
-        return;
-    }
-    uploadBodyNow({ file });
+    // 新建：多候选时按后缀覆盖表选默认项，用户仍可在类型下拉里改
+    const preferred = gameTypesStore.defaultOfFilename(file.name) || candidates[0];
+    form.gameType = candidates.includes(form.gameType) ? form.gameType : preferred;
 }
 
 function onCoverFileChange(event) {
@@ -1341,12 +1486,15 @@ function confirmRemoteCover() {
 async function uploadAsset(
     gameId,
     kind,
-    { file = null, url = "", gameType = "", coverType = "", uploadId = "" }
+    { file = null, url = "", gameType = "", coverType = "", uploadId = "", uploadIds = [] }
 ) {
     const data = new FormData();
     data.append("kind", kind);
     if (uploadId) {
         data.append("upload_id", uploadId);
+    }
+    for (const id of uploadIds) {
+        data.append("upload_ids", id);
     }
     if (file) {
         data.append("file", file);
@@ -1438,7 +1586,7 @@ async function saveMetaNow(id, payload, baseline) {
 }
 
 /** 立即上传本体（编辑弹框专用）。成功返回 true，失败返回 false。 */
-async function uploadBodyNow({ file = null, url = "", gameType = "" }) {
+async function uploadBodyNow({ file = null, files = [], url = "", gameType = "" }) {
     const id = editingId.value;
     if (!id || bodyUploading.value) {
         return false;
@@ -1446,24 +1594,32 @@ async function uploadBodyNow({ file = null, url = "", gameType = "" }) {
     const gen = uploadGen;
     bodyUploading.value = true;
     bodyProgress.value = 0;
-    let stagedId = "";
+    let stagedIds = [];
     try {
-        let uploadId = "";
+        let uploadIds = [];
         let plainFile = file;
-        if (file && shouldUseChunkedUpload(file, gameTypesStore.singleFileMaxBytes)) {
+        if (files.length) {
+            const staged = await stageBodyFiles(
+                files,
+                form.gameType || editingItem.value?.game_type || "",
+            );
+            uploadIds = staged.upload_ids;
+            stagedIds = uploadIds;
+            plainFile = null;
+        } else if (file && shouldUseChunkedUpload(file, gameTypesStore.singleFileMaxBytes)) {
             const staged = await stageBodyFile(
                 file,
-                form.gameType || editingItem.value?.game_type || ""
+                form.gameType || editingItem.value?.game_type || "",
             );
-            uploadId = staged.upload_id;
-            stagedId = uploadId;
+            uploadIds = [staged.upload_id];
+            stagedIds = uploadIds;
             plainFile = null;
         }
         const updated = await uploadAsset(id, "game", {
             file: plainFile,
             url,
             gameType,
-            uploadId,
+            uploadIds,
         });
         if (editingId.value === id) {
             editingItem.value = updated;
@@ -1475,8 +1631,8 @@ async function uploadBodyNow({ file = null, url = "", gameType = "" }) {
         await reload();
         return true;
     } catch (err) {
-        if (stagedId) {
-            abortGameUploadAPI(stagedId).catch(() => {});
+        for (const uploadId of stagedIds) {
+            abortGameUploadAPI(uploadId).catch(() => {});
         }
         if (err.aborted) {
             return false;
@@ -1623,8 +1779,24 @@ async function onCreate() {
     data.append("name", form.name);
     data.append("cartridge_id", form.cartridgeId);
     data.append("description", form.description);
-    let stagedId = "";
-    if (form.gameFile) {
+    let stagedIds = [];
+    if (form.gameFiles.length) {
+        bodyUploading.value = true;
+        bodyProgress.value = 0;
+        try {
+            const staged = await stageBodyFiles(
+                form.gameFiles,
+                form.gameType || bodySourceType.value || "",
+            );
+            stagedIds = staged.upload_ids;
+            for (const uploadId of stagedIds) {
+                data.append("upload_ids", uploadId);
+            }
+        } finally {
+            bodyUploading.value = false;
+            bodyProgress.value = 0;
+        }
+    } else if (form.gameFile) {
         if (shouldUseChunkedUpload(form.gameFile, gameTypesStore.singleFileMaxBytes)) {
             bodyUploading.value = true;
             bodyProgress.value = 0;
@@ -1633,8 +1805,8 @@ async function onCreate() {
                     form.gameFile,
                     form.gameType || bodySourceType.value || ""
                 );
-                stagedId = staged.upload_id;
-                data.append("upload_id", stagedId);
+                stagedIds = [staged.upload_id];
+                data.append("upload_ids", staged.upload_id);
             } finally {
                 bodyUploading.value = false;
                 bodyProgress.value = 0;
@@ -1659,8 +1831,8 @@ async function onCreate() {
         await createManageGameAPI(data);
     } catch (err) {
         // 游戏没建成：把已经传完的暂存会话删掉，别留到 24 小时 TTL
-        if (stagedId) {
-            abortGameUploadAPI(stagedId).catch(() => {});
+        for (const uploadId of stagedIds) {
+            abortGameUploadAPI(uploadId).catch(() => {});
         }
         throw err;
     }
@@ -1688,7 +1860,7 @@ async function onSave() {
         return;
     }
     if (bodyTypeCandidates.value.length > 1 && !form.gameType) {
-        ElMessage.warning("该后缀对应多个机种，请选择游戏类型");
+        ElMessage.warning("这些文件对应多个机种，请选择游戏类型");
         return;
     }
 

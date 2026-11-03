@@ -9,6 +9,9 @@
 数据根（`STORAGE_ROOT`）——会被整体拷走交给外部备份的那一份，只放「原始素材」：
 
     game/{game_type}/{卡带ID}/game.{后缀}           本体（H5 就是 game.zip）
+    game/{game_type}/{卡带ID}/body/{文件名}         多文件本体的各个文件
+    game/{game_type}/{卡带ID}/body/manifest.json    多文件本体清单（入口、大小、CRC32）
+    game/{game_type}/{卡带ID}/.body-{随机}          多文件本体提交暂存（同层，改名做到原子）
     game/{game_type}/{卡带ID}/cover.{后缀}          封面
     game/{game_type}/{卡带ID}/guide.zip             攻略包（原始 zip，与 guide.pdf 二选一）
     game/{game_type}/{卡带ID}/guide.pdf             攻略 PDF（与 guide.zip 二选一）
@@ -48,6 +51,11 @@ ENTRY_NAME = "index.html"
 GALLERY_DIR_NAME = "image"
 BODY_STEM = "game"
 COVER_STEM = "cover"
+# 多文件本体：一个游戏目录下放多个文件，清单记录入口与每个文件的大小/CRC32。
+BODY_DIR_NAME = "body"
+BODY_MANIFEST_NAME = "manifest.json"
+# 提交多文件本体时的同层暂存目录，靠改名做到原子替换。
+BUNDLE_TEMP_PREFIX = ".body-"
 # 攻略包与解包目录同名不同后缀（guide.zip | guide.pdf / guide/），一眼能对上
 GUIDE_STEM = "guide"
 SAVE_EXTENSION = ".state"
@@ -69,6 +77,39 @@ def game_dir(game_type: str, cartridge_id: str) -> str:
 
 def body_path(game_type: str, cartridge_id: str, extension: str) -> str:
     return f"{game_dir(game_type, cartridge_id)}/{BODY_STEM}{normalize_extension(extension)}"
+
+
+def body_dir(game_type: str, cartridge_id: str) -> str:
+    """多文件本体的目录（数据根下）。"""
+    return f"{game_dir(game_type, cartridge_id)}/{BODY_DIR_NAME}"
+
+
+def body_file_path(game_type: str, cartridge_id: str, name: str) -> str:
+    """多文件本体里的单个文件；name 必须是已校验的安全 basename。"""
+    return f"{body_dir(game_type, cartridge_id)}/{name}"
+
+
+def body_manifest_path(game_type: str, cartridge_id: str) -> str:
+    """多文件本体的清单；它存在就说明这盘游戏用的是 `body/` 布局。"""
+    return f"{body_dir(game_type, cartridge_id)}/{BODY_MANIFEST_NAME}"
+
+
+def body_temp_dir(game_type: str, cartridge_id: str, token: str) -> str:
+    """多文件本体的提交暂存目录，与 `body/` 同层。"""
+    return f"{game_dir(game_type, cartridge_id)}/{BUNDLE_TEMP_PREFIX}{token}"
+
+
+def body_temp_file_path(
+    game_type: str, cartridge_id: str, token: str, name: str
+) -> str:
+    """提交暂存目录里的单个文件；name 必须是已校验的安全 basename。"""
+    return f"{body_temp_dir(game_type, cartridge_id, token)}/{name}"
+
+
+def is_bundle_body(path: str) -> bool:
+    """`game/{类型}/{卡带ID}/body/…` 形状即多文件本体。"""
+    parts = PurePosixPath(path or "").parts
+    return len(parts) >= 4 and parts[0] == GAME_DIR and parts[3] == BODY_DIR_NAME
 
 
 def cover_path(game_type: str, cartridge_id: str, extension: str) -> str:

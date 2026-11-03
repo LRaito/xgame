@@ -44,13 +44,17 @@
 `/api/games/status.upload` 为 `{single_file_max_bytes, chunk_size_bytes}`：前端据此决定
 本体走单文件还是分片，阈值与后端常量一致；分片总数另由 init 响应返回。
 
+`/api/games/status.types[]` 的每条类型另带 `multi_file`、`bundle_extensions`、
+`bundle_entries` 与 `upload_extensions`：前端据此决定文件框是否多选、accept 与类型候选，
+不手写机种映射。
+
 ### 游戏管理与入库
 
 | 方法 | 路径 | 登录 | 用途 / 关键字段 |
 |---|---|---|---|
 | GET | `/api/games/manage` | 需登录 | 服务端分页：`page` / `page_size` / `game_type` / `q` |
 | GET | `/api/games/manage/{id}` | 需登录 | 管理详情，含 CRC32、创建与更新时间 |
-| POST | `/api/games/manage` | 需登录 | multipart 新建：`name` / `cartridge_id` / `description` / `file` 或 `upload_id`[+`cover`] |
+| POST | `/api/games/manage` | 需登录 | multipart 新建：`name` / `cartridge_id` / `description` / `file`、`upload_id` 或 `upload_ids`[+`cover`] |
 | POST | `/api/games/uploads` | 需登录 | 开分片会话：body `{filename, size, game_type?}`，返回 `{upload_id, chunk_size, total_chunks}` |
 | PUT | `/api/games/uploads/{upload_id}/chunks/{index}` | 需登录 | 原始分片字节流，长度必须等于约定值；返回 `{index, size}` |
 | POST | `/api/games/uploads/{upload_id}/complete` | 需登录 | 校验分片齐全与总大小，返回 `{upload_id, filename, size}` |
@@ -60,12 +64,14 @@
 | PUT | `/api/games/manage/{id}/cartridge-id` | 需登录 | body `{cartridge_id}`，显式迁移磁盘与路径 |
 | PUT | `/api/games/manage/{id}/game-type` | 需登录 | body `{game_type}`，显式迁移游戏/存档/截图目录 |
 | DELETE | `/api/games/manage/{id}` | 需登录 | 删游戏，连同所有账号的存档与截图 |
-| POST | `/api/games/manage/{id}/assets` | 需登录 | `kind=game\|cover`，`file` / `url` / `upload_id` 三选一[+类型字段] |
+| POST | `/api/games/manage/{id}/assets` | 需登录 | `kind=game\|cover`，`file` / `url` / `upload_id` / `upload_ids` 四选一[+类型字段] |
 | POST | `/api/games/manage/{id}/guide` | 需登录 | multipart 单个 `file`，ZIP 或 PDF |
 | DELETE | `/api/games/manage/{id}/guide` | 需登录 | 删除攻略，幂等，返回更新后的管理条目 |
 
-`upload_id` 只能用于 `kind=game`（本体）；封面与攻略不分片。新建与换本体时
-`file` / `url` / `upload_id` 三者互斥。分片会话绑定当前账号，别人的 `upload_id` 一律 404。
+`upload_id` 只能用于 `kind=game`（本体）；封面与攻略不分片。多文件本体用重复的
+`upload_ids`（每个物理文件一个现有分片会话），与 `file` / `url` / `upload_id` 互斥。
+新建与换本体时 `file` / `url` / `upload_id` / `upload_ids` 只能选一种。
+分片会话绑定当前账号，别人的 `upload_id` 一律 404。
 
 ### 素材读取
 
@@ -74,6 +80,8 @@
 | GET | `/api/games/{id}/cover` | 需登录 | 封面 inline；`?download=1` 转附件 |
 | GET / HEAD | `/api/games/{id}/play` | 需登录 | 本体下载；`.swf` 用 Flash 类型，其余 `octet-stream` |
 | GET / HEAD | `/api/games/{id}/play/{文件名}` | 需登录 | 同上；文件名段必须是落盘名（如 `game.chd`），供 EmulatorJS 识别格式 |
+| GET / HEAD | `/api/games/{id}/play/manifest` | 需登录 | 多文件本体清单 `{entry, files, total_size}`；单文件也返回入口一条 |
+| GET / HEAD | `/api/games/{id}/play/files/{name}` | 需登录 | 多文件本体的单个文件；只服务清单内 basename |
 | GET / HEAD | `/api/games/{id}/h5/{资源路径}` | **免登录** | H5 资源；沙箱安全头，首次访问触发解包 |
 | GET / HEAD | `/api/games/{id}/guide/{资源路径}` | 需登录 | ZIP 攻略资源；无 CSP sandbox |
 | GET / HEAD | `/api/games/{id}/guide.pdf` | 需登录 | PDF 攻略，`application/pdf` inline |
@@ -125,6 +133,9 @@
   例外是分片上传的 `POST /uploads` 完成接口与 `PUT /chunks/{index}`：允许无 `Content-Length`，
   分片长度由会话约定校验。
 - 单文件本地本体超过 30MB：400，提示改用分片上传；分片本体不设总大小上限。
+- `.cue` / `.m3u` 单文件上传或作为网络直链：400，提示改用多文件本地上传；
+  `.bin` 单文件上传也 400，但直链会按所选类型补默认后缀（沿用旧规则）。
+- 多文件本体缺入口、缺引用、引用子目录/远程地址/大小写不一致、重名、超过 64 个文件：400。
 
 ## 测试要点
 
