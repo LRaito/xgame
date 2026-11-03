@@ -137,6 +137,18 @@ export const useGameTypesStore = defineStore("gameTypes", {
             const value = Number(state.uploadLimits?.chunk_size_bytes);
             return value > 0 ? value : CHUNK_SIZE_BYTES;
         },
+        /** 文件选择框 accept 的全集：所有类型单文件 + 包内后缀（去重保序）。 */
+        allUploadExtensions(state) {
+            const result = [...state.bodyExtensions];
+            for (const item of state.types) {
+                for (const ext of item.uploadExtensions || []) {
+                    if (!result.includes(ext)) {
+                        result.push(ext);
+                    }
+                }
+            }
+            return result;
+        },
     },
     actions: {
         /** 只请求一次；并发调用共用同一个 in-flight Promise，失败后下次可重试。 */
@@ -209,18 +221,6 @@ export const useGameTypesStore = defineStore("gameTypes", {
         },
         uploadExtensionsOf(id) {
             return this.metaOf(id)?.uploadExtensions || [];
-        },
-        /** 文件选择框 accept 的全集：所有类型单文件 + 包内后缀（去重保序）。 */
-        allUploadExtensions(state) {
-            const result = [...state.bodyExtensions];
-            for (const item of state.types) {
-                for (const ext of item.uploadExtensions || []) {
-                    if (!result.includes(ext)) {
-                        result.push(ext);
-                    }
-                }
-            }
-            return result;
         },
         /** 一组文件可以落成哪些多文件类型：所有后缀都要在该类型的包内白名单里。 */
         bundleCandidatesOfFiles(files) {
