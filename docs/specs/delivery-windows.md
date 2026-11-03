@@ -75,6 +75,8 @@
 - Windows 上 `mimetypes` 读注册表，`.js` 可能被注册成 `text/plain`。
 - 那样会整站白屏，所以必须显式给 MIME。
 - 语义七：路径安全自己兜，拒绝 `..`、反斜杠、NUL 与含 `:` 的段。
+- 语义八：`index.html` 与 `emulator-host.html` 带 COOP/COEP，供 PSP / DOS 的线程核用；
+  H5 资源由后端单独发 `unsafe-none` + `CORP: cross-origin`。
 
 **请求体上限。**
 
@@ -146,7 +148,9 @@
 | 上传闸门 | nginx 130m | `request_limit.py` |
 | 后端配置 | 只认 `STORAGE_ROOT` | 启动器另设 `STATIC_DIR` |
 
-- EmulatorJS 不需要跨源隔离（`EJS_threads=false`），不用 COOP/COEP。
+- PSP / DOS 需要跨源隔离（`EJS_threads=true`），`index.html` 与 `emulator-host.html`
+  必须带 COOP/COEP；其余机种仍关闭线程。
+- H5 资源显式 `unsafe-none` + `CORP: cross-origin`，沙箱页在隔离的父页里仍可加载。
 - 需要 BIOS 的机种缺包时，播放页会在启动前给中文提示。
 
 ## 边界与错误

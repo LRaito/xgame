@@ -16,6 +16,7 @@ from backend.deps import (
 )
 from backend.errors import NotFoundError, StorageError, ValidationError
 from backend.games.models import PROGRESS_NOT_STARTED
+from backend.games.platforms import platform_threads
 from backend.games.uploads import CHUNK_SIZE, SINGLE_FILE_MAX
 from backend.games.service import (
     GAME_TYPES,
@@ -74,6 +75,8 @@ def _center_payload(item, stat=None) -> dict:
         "category": item.game_type,
         # BIOS 规格随条目下发：播放页用它拼宿主页参数，不依赖 /status 是否加载成功
         "bios": bios_descriptor(item.game_type),
+        # 线程核（PSP / DOS）：播放页据此给宿主页传 threads=1
+        "threads": platform_threads(item.game_type),
         "path": item.path,
         "size": item.size,
         "cover_path": item.cover_path,
@@ -106,6 +109,7 @@ def _manage_payload(item) -> dict:
         "crc32": item.crc32,
         "game_path": item.game_path,
         "body_kind": item.body_kind,
+        "threads": platform_threads(item.game_type),
         "cover_path": item.cover_path,
         "path": item.path,
         "created_at": iso(item.created_at),
@@ -645,6 +649,11 @@ _H5_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "Access-Control-Allow-Origin": "*",
+    # 播放页外层带 COEP require-corp（PSP/DOS 的线程核需要 SharedArrayBuffer）。
+    # H5 是沙箱不透明源，必须显式声明可嵌入，并退出继承来的 COEP，
+    # 否则 H5 游戏里的外链图片 / 脚本会被隔离策略当成无 CORP 的跨源资源拦掉。
+    "Cross-Origin-Embedder-Policy": "unsafe-none",
+    "Cross-Origin-Resource-Policy": "cross-origin",
     "Cache-Control": "no-cache, must-revalidate",
 }
 

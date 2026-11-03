@@ -309,6 +309,9 @@ JSON 一律在 `/api/` 下。信封：
 - 写操作（除 register/login/csrf/health）校验 `X-CSRFToken`。
 - 免登录面只有注册/登录、`/health` 与 H5 资源；攻略资源需登录。
 - H5 内容按不可信处理：CSP `sandbox` + `nosniff` + `Referrer-Policy: no-referrer`。
+- SPA 入口与模拟器宿主页带 COOP/COEP，仅用于让 PSP / DOS 的线程核拿到
+  `SharedArrayBuffer`；H5 资源显式 `unsafe-none` + `CORP: cross-origin`，
+  沙箱页仍是不可信源，外链资源不受隔离策略影响。
 - 上传有大小上限、后缀白名单与分片会话；ZIP 另有条目数、总量、压缩比、加密条目校验。
 - 所有落盘路径经 `LocalStorage._resolve()`，拒绝绝对路径与 `..`。
 - 搬运只接受白名单站点域名，避免被当作任意 URL 代理。

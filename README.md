@@ -136,7 +136,8 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 ## 玩游戏
 
 三种游戏都是点开即玩、不装插件：**Flash**（`.swf`）、**HTML5**（`.zip`，浏览器里当网页游戏跑）、
-**主机**（NES / SNES / N64 / GB / GBA / NDS / MD / 世嘉 CD / PS1 / 土星 / PC-FX / 3DO / Atari / Commodore / Amiga 等，浏览器里跑模拟器，不需要外网）。
+**主机**（NES / SNES / N64 / GB / GBA / NDS / MD / 世嘉 CD / PS1 / 土星 / PC-FX / 3DO /
+PSP / Atari / Commodore / Amiga / DOS / 街机 等，浏览器里跑模拟器，不需要外网）。
 
 > **部分机种额外需要 BIOS。** 用户自备 ZIP 放到 `frontend/public/emulatorjs/bios/` 后重建 web 镜像
 > （Windows 包放到 `web/emulatorjs/bios/`），不随仓库提交；缺失时播放页会直接给出中文提示。
@@ -153,8 +154,10 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 > | 松下 3DO | `3do.zip` | `panafz1.bin` | 必需 |
 > | 世嘉 CD | `segaCD.zip` | `bios_CD_E.bin`、`bios_CD_U.bin`、`bios_CD_J.bin` | 必需（按区，至少放一个） |
 > | Amiga | `amiga.zip` | `kick34005.A500`、`kick40068.A1200` | 可选（PUAE 有 AROS 回退） |
+> | 街机 | `arcade.zip` | `neogeo.zip`、`pgm.zip` | 可选（ROM 集合也可自带 BIOS） |
 >
-> N64 不需要 BIOS。ZIP 根目录直接放上面这些文件，不要套子目录。
+> N64、PSP、DOS 不需要 BIOS。ZIP 根目录直接放上面这些文件，不要套子目录。
+> 街机的 `arcade.zip` 里放的是 BIOS 集合 zip（如 `neogeo.zip`）。
 
 ### 播放页
 
@@ -260,22 +263,28 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 | 后缀 | 游戏类型 |
 | --- | --- |
 | `.swf` | Flash |
-| `.zip` | HTML5（压缩包根目录要有 `index.html` 或 `index.htm`） |
+| `.zip` | HTML5 / DOS / 街机（创建时按下拉选类型，默认 HTML5） |
+| `.jsdos` | DOS（jsdos 压缩包；也可以选 `.zip` 后明确选 DOS） |
 | `.nes` / `.sfc` `.smc` | FC / SNES |
 | `.gb` `.gbc` / `.gba` / `.nds` | GB / GBA / NDS |
 | `.md` `.gen` / `.gg` / `.sms` | MD / GG / SMS |
 | `.z64` `.n64` `.v64` | 任天堂 N64 |
 | `.chd` | 世嘉 CD / 土星 / PS1 / PC-FX / 3DO（创建时按下拉选类型，默认 PS1） |
 | `.pbp` | PS1 |
-| `.iso` | PS1 / 3DO（创建时按下拉选类型） |
+| `.iso` | PS1 / PSP / 3DO（创建时按下拉选类型，默认 PS1） |
+| `.cso` | PSP |
 | `.adf` `.hdf` | Amiga |
 | `.cue` + `.bin`、`.m3u` | 世嘉 CD / Amiga 的多文件本体（一次选一整组） |
 
-> 多机种共用的后缀（`.chd`、`.iso`、Commodore 的 `.d64` / `.prg`）会在创建时出现类型下拉。
+> 多机种共用的后缀（`.chd`、`.iso`、`.zip`、Commodore 的 `.d64` / `.prg`）会在创建时出现类型下拉。
+> `.zip` 不选类型时按 HTML5 处理；DOS 的 jsdos 包与街机 ROM 集合必须在下拉里明确选择。
 > 本地上传超过 30MB 会按 16MB 分片、5 路并发上传，单盘本体的总大小只受磁盘空间限制；
 > 网络直链仍限 512MB。攻略 ZIP/PDF 上限 128MB。
 > 世嘉 CD 优先用单个 `.chd`；cue+bin 会整份进浏览器内存，体积大时可能卡顿或内存不足。
 > 多文件本体不支持改游戏类型，也不提供「下载为单个文件」。
+> 街机本体必须保留 ROM 集合名（如 `mslug.zip`），不能改名；只支持本地上传，
+> 且不同 FBNeo 版本的集合不通用。PSP / DOS 需要浏览器支持线程与 WebGL2（PSP），
+> 页面必须带 COOP/COEP；这两类首次加载会明显慢一些。
 
 ### 元数据
 
@@ -289,9 +298,10 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
   合成用不上的类型（HTML5、SFC 等）不显示这个按钮。
 - **名称** — 同一游戏类型下不能重名。
 - **游戏类型** — 创建时由本体后缀决定：后缀只对应一个机种时类型固定；
-  多个机种共用同一个后缀（Commodore 的 `.d64` / `.prg`）时会出现下拉，默认选第一个。
+  多个机种共用同一个后缀（Commodore 的 `.d64` / `.prg`、CD 镜像、`.zip`）时会出现下拉。
   创建后还能在编辑弹框里改类型（该后缀只有一个机种时不可改）；改类型会连同存档、截图、
   图集、攻略与封面一起迁移，类型只影响筛选分组和进入游玩时用哪个模拟器。
+  `.zip` 例外：HTML5 / DOS / 街机含义不同，不允许互改类型，要换就删除后重新上传。
 - **换本体** — 只能换成同一游戏类型的本体（按后缀候选集判定），同类型内可以换后缀
   （`.gb` ↔ `.gbc`、`.sfc` ↔ `.smc`、`.md` ↔ `.gen`）。换完会重算 CRC32、更新大小、
   删掉旧本体；类型不同直接拒绝。要跨类型换本体，先改类型再换。

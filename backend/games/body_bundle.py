@@ -4,6 +4,8 @@
 （世嘉 CD、Amiga）。它不碰磁盘，只接收已经暂存好的文件与一个 `read_text` 回调，
 返回最终布局；真正的搬文件、写清单与数据库提交在 `service.py`。
 
+另外提供 `normalize_romset_name()`：街机 romset 必须保留集合名，这里统一做安全校验。
+
 几条硬规则：
 
 - `.bin` 永远不能当入口；入口只能是 m3u / cue / chd / adf / hdf。
@@ -35,6 +37,10 @@ MAX_MANIFEST_TEXT_BYTES = 1024 * 1024
 
 _CUE_FILE_RE = re.compile(r'^\s*FILE\s+(?:"([^"]+)"|(\S+))\s+\S+', re.IGNORECASE)
 _URL_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
+# 街机 romset 的落盘名会原样出现在播放 URL 末段，FBNeo 再拿它当集合名；
+# 因此比普通文件名收得更紧：只允许 ASCII 字母数字点下划线中划线，且必须以 .zip 结尾。
+_ROMSET_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$")
+_ROMSET_RESERVED_NAMES = frozenset({"guide.zip"})
 
 
 @dataclass(frozen=True)
@@ -110,6 +116,24 @@ def normalize_bundle_name(raw: str) -> str:
         raise ValidationError("文件名不能是 manifest.json。")
     if not PurePosixPath(text).suffix:
         raise ValidationError("文件名缺少扩展名。")
+    return text
+
+
+def normalize_romset_name(raw: str) -> str:
+    """街机 romset 的落盘名：安全 basename + .zip + 只含 URL/集合名允许的 ASCII 字符。
+
+    不能统一改成 `game.zip`：FBNeo 会把播放 URL 末段当 romset 名去匹配集合。
+    """
+    text = normalize_bundle_name(raw)
+    if not text.lower().endswith(".zip"):
+        raise ValidationError("街机本体必须是 .zip 格式的 ROM 集合。")
+    if not _ROMSET_NAME_RE.fullmatch(text):
+        raise ValidationError(
+            "街机 ROM 文件名只能包含字母、数字、点、下划线和短横线；"
+            "请使用 ROM 集合名（如 mslug.zip）。"
+        )
+    if text.casefold() in _ROMSET_RESERVED_NAMES:
+        raise ValidationError(f"街机 ROM 不能使用保留文件名：{text}。")
     return text
 
 

@@ -91,6 +91,11 @@ server {
     # （H5 游戏根目录的入口文件，见 backend/games/router.py:302），被当成静态文件而 404。
     location ~ ^/(index|emulator-host)\.html$ {
         add_header Cache-Control "no-cache";
+        # PSP / DOS 的线程核要 SharedArrayBuffer，只认带 COOP + COEP 的文档。
+        # 只加在 HTML 上：H5 资源由后端发 unsafe-none，静态核心资产是同源同站，
+        # 不受 require-corp 影响。
+        add_header Cross-Origin-Opener-Policy "same-origin";
+        add_header Cross-Origin-Embedder-Policy "require-corp";
     }
 
     # 版本探针：构建期随产物写出的纯文本小文件，前端定时拉取以判断服务端是否换了新构建。

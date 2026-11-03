@@ -9,6 +9,7 @@
 数据根（`STORAGE_ROOT`）——会被整体拷走交给外部备份的那一份，只放「原始素材」：
 
     game/{game_type}/{卡带ID}/game.{后缀}           本体（H5 就是 game.zip）
+    game/{game_type}/{卡带ID}/{romset}.zip          街机 romset（保留集合名，不能改名）
     game/{game_type}/{卡带ID}/body/{文件名}         多文件本体的各个文件
     game/{game_type}/{卡带ID}/body/manifest.json    多文件本体清单（入口、大小、CRC32）
     game/{game_type}/{卡带ID}/.body-{随机}          多文件本体提交暂存（同层，改名做到原子）
@@ -77,6 +78,14 @@ def game_dir(game_type: str, cartridge_id: str) -> str:
 
 def body_path(game_type: str, cartridge_id: str, extension: str) -> str:
     return f"{game_dir(game_type, cartridge_id)}/{BODY_STEM}{normalize_extension(extension)}"
+
+
+def named_body_path(game_type: str, cartridge_id: str, name: str) -> str:
+    """保留原文件名的单文件本体（街机 romset）；name 必须是已校验的安全 basename。
+
+    FBNeo 用播放 URL 末段当 romset 名，所以街机不能像其它机种那样统一改叫 game.zip。
+    """
+    return f"{game_dir(game_type, cartridge_id)}/{name}"
 
 
 def body_dir(game_type: str, cartridge_id: str) -> str:

@@ -1252,9 +1252,20 @@ function onScreenshotHotkey(event) {
  * 并顺手选中模拟器——不管有没有存档，按完回车都能直接接着玩。
  * **有存档时这一下会被读档吃掉**：不再冒泡给引擎，免得同时还把 Start 按下去；
  * 没有存档时不拦这个键，回车照常传给引擎（引擎默认的 Start）。
+ *
+ * DOS / 街机里回车是常用输入键（DOS 命令行、街机 Start），即使有存档也不拦，
+ * 免得用户按回车就被读档；只保留「把焦点交给引擎」这一段。
  */
+function enterLoadSaveDisabled() {
+    const category = game.value?.category;
+    return category === "dos" || category === "arcade";
+}
+
 function onLoadLocalHotkey(event) {
-    if (takeHotkey(event, null, () => Boolean(getLocalEmuSave(currentGameId.value)))) {
+    if (
+        !enterLoadSaveDisabled() &&
+        takeHotkey(event, null, () => Boolean(getLocalEmuSave(currentGameId.value)))
+    ) {
         void onLoadLocal();
         focusEngineIfNeeded();
         return;
@@ -1803,6 +1814,10 @@ async function launchEngine() {
         // 多文件本体：宿主页先取 /play/manifest，再用 EJS_externalFiles 拉分轨
         if (item.body_kind === "bundle") {
             params.set("bundle", "1");
+        }
+        // 线程核（PSP / DOS）：宿主页据此打开 EJS_threads；没有 COOP/COEP 时它会报中文错
+        if (item.threads === true || meta.value?.threads === true) {
+            params.set("threads", "1");
         }
         // BIOS：列表条目自带（不依赖 /status 是否加载成功），类型元数据兜底。
         // 宿主页只接受 bios/ 下的安全 zip 文件名，自己拼路径。

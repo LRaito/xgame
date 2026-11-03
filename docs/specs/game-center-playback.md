@@ -20,7 +20,8 @@
 | 主机 ROM | `/games/play/{id}` | 宿主 iframe + EmulatorJS |
 
 - 播放路径只有一份实现：`play_path(game_type, id)`，列表载荷的 `path` 也用它。
-- 宿主页请求本体时用 `/api/games/{id}/play/<落盘名>`（如 `game.chd`）：
+- 宿主页请求本体时用 `/api/games/{id}/play/<落盘名>`（普通类型如 `game.chd`，
+  街机是 `mslug.zip`）：
   EmulatorJS 把 URL 末段当 ROM 文件名，`.pbp` 等核依赖后缀；不带末段的 `/play` 仍保留。
 - 主机播放页外层是 SPA 壳，内嵌 `/emulator-host.html`，EmulatorJS 官方要求 iframe 隔离。
 - **多文件本体**：列表条目带 `body_kind="bundle"`，播放页给宿主页加 `?bundle=1`；
@@ -39,6 +40,20 @@
 - BIOS 是用户自备 ZIP，放在 `frontend/public/emulatorjs/bios/<id>.zip`，不进 git。
 - 播放页把 `bios` / `biosfiles` / `biosoptional` 传给宿主页；宿主页只接受安全文件名，
   自己拼 `/emulatorjs/bios/<file>`。
+- **线程核**：列表条目的 `threads=true`（PSP / DOS）时，播放页给宿主页加 `?threads=1`；
+  宿主页据此设 `EJS_threads=true`。其余机种始终关闭线程。
+- **跨源隔离**：SPA 入口与 `emulator-host.html` 在 Docker nginx、Windows 静态站与
+  Vite dev server 三处都带 `COOP: same-origin` + `COEP: require-corp`。宿主页在启动前
+  检查 `window.crossOriginIsolated` 与 `SharedArrayBuffer`，缺一个就给中文提示。
+- H5 资源响应带 `COEP: unsafe-none` 与 `CORP: cross-origin`，保证沙箱页在隔离的父页里
+  仍能加载自己的外链资源。
+- **街机 romset**：本体落盘名就是集合名（如 `mslug.zip`），播放 URL 末段因此也是集合名；
+  FBNeo 用末段匹配 romset，不能统一改成 `game.zip`。
+- **PSP**：核 `ppsspp` 只有线程变体，强制 WebGL2；EJS 启动时还会拉
+  `cores/ppsspp-assets.zip`，构建期必须一起打包。首次加载明显慢于老机种。
+- **DOS**：核 `dosbox_pure` 只有线程变体；本体是 jsdos 包（`.jsdos` 或显式选 DOS 的 `.zip`），
+  键盘 / 鼠标由引擎默认处理。DOS 与街机不吃「回车载入本地存档」快捷键，
+  因为回车是 DOS 命令行与街机 Start 的常用键。
 - `emulatorjs/bios/` 前缀在 nginx 与 `static_site.py` 里单独 no-cache。
 - 宿主页启动前对 BIOS 做 HEAD 预检；必需包缺失时给中文提示，可选包缺失时跳过并继续启动。
 - H5 解包产物在运行时根的 `game/{类型}/{卡带ID}/h5/`，首次访问资源接口时按需生成。
@@ -54,7 +69,8 @@
 | `GET/HEAD /api/games/{id}/guide/{路径}` | ZIP 攻略资源 | 需要 | 按后缀现算 |
 | `GET/HEAD /api/games/{id}/guide.pdf` | PDF 攻略 | 需要 | `application/pdf` inline |
 
-- 本体文件名取落盘名 `game.{后缀}`；文件不存在或本体未上传时返回中文 400/404。
+- 本体文件名取落盘名：普通类型是 `game.{后缀}`，街机是 romset 名（如 `mslug.zip`）；
+  文件不存在或本体未上传时返回中文 400/404。
 - `/play/manifest` 返回 `{entry, files:[{name,size}], total_size}`；单文件游戏也返回
   只有入口一条的等价结构。它必须注册在 `/play/{filename}` **之前**，否则 `manifest`
   会被当成文件名。
@@ -113,6 +129,8 @@
 - 面板里括号中的尺寸是真实窗口像素尺寸，不是帧缓冲像素数。
 - 基准分辨率为：NES 256×224、SNES 256×224、GB/GBC 160×144、GBA 240×160。
 - 基准还含：NDS 默认 256×438、MD 320×224、GG 160×144、SMS 256×192。
+- 第 5 档初始值：PSP 480×272、DOS 640×400、街机 320×240；仍以引擎上报的
+  `videoInfo.aspect` 为准。
 - NDS 的 `NDS_NATIVE` 另给 `top` 256×192、`side` 563×192（左右间隙由宿主页合成）。
 - **舞台长宽比取引擎上报的显示宽高比**，即 `__ejsRpc.videoInfo().aspect`。
 - 不能用帧缓冲比例代替：引擎按内核上报的 aspect 等比摆放画面，画布填不满处即黑边。
@@ -133,8 +151,8 @@
 - **复古滤镜。** 选择器是 `frontend/src/components/games/EmuFilterSelect.vue`，清单在 `frontend/src/constants/emuFilters.js`。
 - 清单按游戏类型给出，每个滤镜 = 内核选项键值对 + EmulatorJS 内置 GLSL 着色器键名。
 - 着色器对所有内核通用；内核选项按各内核自身能力配置。
-- 当前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、SMS 七个机种；NDS 与第 1、2、3 档新增的
-  21 个机种暂未配清单，所以不显示入口。
+- 当前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、SMS 七个机种；NDS 与第 1–5 档新增的
+  26 个机种暂未配清单，所以不显示入口。
 - 每张清单第一项恒为「无」，也是表外取值的回落目标。
 - 选择按游戏类型记在 localStorage 的 `games.emu.filter`，整张表存一个 JSON。
 - 拉起引擎前先清掉设置块里滤镜相关的旧值，再写入本次选择。
@@ -220,7 +238,7 @@
 | `·`（Backquote） | 捕捉当前进度并同步云端 | 三个播放页 |
 | ``Alt + ` ``（Backquote） | 打开存档管理 | Flash、模拟器 |
 | `-` / `=` | NDS 屏幕布局上一个/下一个 | 模拟器 |
-| `回车` | 载入本地存档并交出键盘焦点 | 模拟器 |
+| `回车` | 载入本地存档并交出键盘焦点 | 模拟器（DOS / 街机除外） |
 
 - `Ctrl+Shift+S` 与标题栏「截图」按钮同效；F12 是浏览器开发者工具保留键，页面拦不住。
 - 截图截下后不直接下载，先走确认框；完整流程见 [`./game-assets.md`](./game-assets.md)。
@@ -233,6 +251,7 @@
 - 小键盘的 `-` / `+` 不生效；`+` 就是 `Shift + =`，按不按 Shift 都算下一个。
 - `-` / `=` 带 Ctrl/Alt/Meta 时不生效；焦点在输入框或引擎菜单/设置面板里时不抢。
 - 回车优先载入最近一份本地存档；没有本地存档时不拦键，回车照常传给引擎。
+- DOS 与街机例外：回车是常用输入键，即使有存档也不拦，只把焦点交给引擎。
 - 无论有没有存档，回车后都会把焦点交给模拟器（已选中时不动）。
 - 焦点在按钮、链接、下拉、输入框或弹框里时，回车不抢。
 - H5 没有存档管理，也没有 ``Alt + ` `` 与 `-` / `=`。
@@ -251,6 +270,8 @@
 - 滤镜切换失败返回「切换滤镜失败。」；引擎未开始时提示「请先开始游戏再切换滤镜。」。
 - NDS 布局切换失败回滚并提示「切换屏幕布局失败。」。
 - 需要 BIOS 的机种缺包时，播放页给中文安装提示，不会只留黑屏。
+- 线程核（PSP / DOS）缺 COOP/COEP 或浏览器没有 `SharedArrayBuffer` 时，
+  宿主页给中文提示并停止启动。
 - H5 资源解包或读取写盘失败返回 500，并提示检查运行时目录是否可写、空间是否充足。
 - 攻略资源与 PDF 文件不存在、形态不符时返回 404。
 - 本体未上传时 play 接口返回 400「游戏文件尚未上传。」。

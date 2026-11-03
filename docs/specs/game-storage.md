@@ -39,7 +39,11 @@
 ### 游戏类型
 
 - 游戏类型由「本体后缀 + 用户选择」判定，唯一入口是 `resolve_game_type()`。
-- `flash` ← `.swf`；`h5` ← `.zip`；其余 31 个主机类型见 [机种词表](./platforms.md)。
+- `flash` ← `.swf`；`h5` ← `.zip`；其余 34 个主机类型见 [机种词表](./platforms.md)。
+- `.zip` 同时是 H5 静态包、DOS 的 jsdos 包与街机 romset：候选是
+  `h5` / `dos` / `arcade`。用户不传类型时保持历史默认 `h5`；DOS 与街机必须显式选择。
+  `.jsdos` 唯一对应 `dos`，`.cso` 唯一对应 `psp`。
+- `.iso` 候选是 `psx` / `psp` / `3do`，默认仍是 PS1。
 - 扩展名白名单 `_GAME_TYPE_EXTENSIONS` 从机种词表派生，未收录后缀中文 400。
 - 后缀唯一对应一个机种时自动确定，类型不可选；后缀有多个候选时（Commodore 的
   `.d64` / `.prg`，CD 镜像的 `.chd` / `.iso`）必须由用户选择。
@@ -62,6 +66,8 @@
 - 改写五处路径列：`games.game_path`、`games.cover_path`、`game_gallery_images.file_path`、
   `game_cloud_snapshot_files.file_path`、`game_screenshots.file_path`。
 - 目标类型下已有同名游戏：中文 400，磁盘与库都不动。
+- `.zip` 本体（H5 / DOS / 街机）不支持改类型：同一个 ZIP 在三种类型里含义不同，
+  迁移只会得到打不开的游戏；显式中文 400，请删除后重新上传。
 - 新类型不支持美化封面时清空 `cover_type`，封面文件随目录搬走。
 - 旧运行时解包产物作废，下次访问按新类型重新解包。
 
@@ -178,6 +184,24 @@
 - 多文件本体不支持改游戏类型（中文 400）；改卡带 ID 仍整目录搬家，删游戏删整棵目录。
 - 多文件游戏不提供「下载本体为单个文件」，管理详情提示从数据目录整体备份。
 
+### 线程核与街机本体
+
+- PSP 与 DOS 的核只有线程变体（`Platform.threads=True`），宿主页只对它们打开
+  `EJS_threads`；页面必须带 COOP/COEP，否则播放前给中文提示。
+- PSP 收 `.iso` / `.cso`，分别存 `game.iso` / `game.cso`；无 BIOS。
+- DOS 收 `.jsdos` / `.zip`，分别存 `game.jsdos` / `game.zip`；包内结构由 DOSBox 解析。
+  DOS 的 `.zip` 不走 H5 的 ZIP 清单校验，128MB 上限也只约束 H5。
+- 街机收 romset `.zip`，存 `game/{arcade}/{卡带ID}/{romset}.zip`，保留集合名
+  （如 `mslug.zip`）；`EJS_gameUrl` 末段必须就是集合名，FBNeo 靠它找集合。
+- 街机文件名：安全 basename，只含字母、数字、点、下划线与短横线，以 `.zip` 结尾，
+  且不能占用 `guide.zip`；非法名中文 400。
+- 街机只接受本地上传；网络直链的临时名 `remote.zip` 无法满足集合名要求，中文 400。
+- 街机可选 `arcade.zip` BIOS 包（内含 `neogeo.zip`、`pgm.zip` 等）；缺包不拦启动，
+  只影响需要该 BIOS 的集合。
+- 街机的 `size` / `crc32` 仍是 zip 本身的；`body_kind` 为 `file`，可正常下载单文件。
+- 只打包默认 FBNeo；设置菜单切到未打包的 CPS1/CPS2 会缺资产，与 NDS 只打包
+  melonds 的现状一致。
+
 ### H5 与攻略包
 
 - H5 上传只校验、不解压：zip 原样存数据根的 `game.zip`，就是 `game_path`。
@@ -215,6 +239,8 @@
 - 分片长度不符、序号越界、缺片、总大小不符：中文 400；别人的 `upload_id`：404。
 - 多文件本体缺入口、缺引用、引用子目录/远程地址/大小写不一致、重名、超过 64 个文件：
   中文 400，旧本体不动。
+- 街机 romset 文件名非法、不是 `.zip`、占用保留名：中文 400；街机网络直链：中文 400。
+- `.zip` 本体改类型（H5 / DOS / 街机互转）：中文 400，旧档不动。
 - 分片上传的 chunks 与 complete 路由允许没有 `Content-Length`（HTTP/2），其它写方法仍返回 411。
 - 封面后缀或封面类型非法、上传文件为空、网络直链不合法或超 512MB：中文 400。
 - H5 / 攻略 ZIP 缺入口、路径越界、重名、超限、加密条目：中文 400。

@@ -26,6 +26,8 @@ postMessage 回退。
    也不依赖系统 MIME 表。
 7. 路径安全自己兜：拒绝 `..`、反斜杠、NUL、含 `:` 的段（Windows 盘符 / ADS），
    解析后确认仍在 dist 根之内。
+8. index.html 与 emulator-host.html 带 COOP/COEP：PSP / DOS 的线程核需要
+   SharedArrayBuffer；H5 资源由后端单独发 `unsafe-none`，不在这里处理。
 """
 
 import logging
@@ -50,6 +52,9 @@ _IMMUTABLE_NAMES = tuple(prefix.rstrip("/") for prefix in _IMMUTABLE_PREFIXES)
 _NO_CACHE_PREFIXES = ("emulatorjs/bios/",)
 # 文件名固定、不带内容哈希，一旦被启发式缓存就会与换名的新产物错配
 _NO_CACHE_FILES = frozenset({_INDEX, "emulator-host.html", "version.txt"})
+# 需要跨源隔离的 HTML：PSP / DOS 的线程核要求 SharedArrayBuffer，而 SharedArrayBuffer
+# 只在带 COOP + COEP 的文档里可用。H5 资源由后端单独发 unsafe-none，不受这里影响。
+_ISOLATED_HTML_FILES = frozenset({_INDEX, "emulator-host.html"})
 
 _IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 _NO_CACHE = "no-cache"
@@ -129,6 +134,10 @@ def _file_response(path: Path, rel: str) -> FileResponse:
         headers["Cache-Control"] = _NO_CACHE
     elif rel.startswith(_IMMUTABLE_PREFIXES):
         headers["Cache-Control"] = _IMMUTABLE_CACHE
+    if rel in _ISOLATED_HTML_FILES:
+        # 与 nginx 的 HTML location 保持一致；SPA 深链回落也算 index.html
+        headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        headers["Cross-Origin-Embedder-Policy"] = "require-corp"
     return FileResponse(
         path,
         media_type=_mime_for(rel),

@@ -13,7 +13,8 @@
 
 ## 数据与路径
 
-- `Platform` 字段：`id` / `label` / `cores` / `aliases` / `extensions` / `default_extension` / `bios`。
+- `Platform` 字段：`id` / `label` / `cores` / `aliases` / `extensions` / `default_extension` /
+  `bios` / `bundle_extensions` / `bundle_entries` / `threads`。
 - `label` 是统一中文显示名，格式为「厂商 + 空格 + 型号」，如「任天堂 FC」「世嘉 土星」。
 - 没有厂商名的机种只写型号，如 `Amiga`、`DOS`。
 - 认不出机种的原始名展示时也按同一格式补空格，如 `任天堂3DS` → `任天堂 3DS`。
@@ -31,7 +32,7 @@
 
 ## 行为与规则
 
-### 可玩机种（31 个）
+### 可玩机种（34 个）
 
 | game_type | 显示名 | 扩展名 | 默认后缀 | EmulatorJS core |
 |---|---|---|---|---|
@@ -49,6 +50,7 @@
 | `sega32x` | 世嘉 32X | `.32x` | `.32x` | `picodrive` |
 | `segaSaturn` | 世嘉 土星 | `.chd` | `.chd` | `yabause` |
 | `psx` | 索尼 PS1 | `.chd` `.pbp` `.iso` | `.chd` | `pcsx_rearmed` / `mednafen_psx_hw` |
+| `psp` | 索尼 PSP | `.iso` `.cso` | `.iso` | `ppsspp`（线程 + WebGL2） |
 | `pce` | 日电 PCE | `.pce` `.sgx` | `.pce` | `mednafen_pce` |
 | `pcfx` | 日电 PC-FX | `.chd` | `.chd` | `mednafen_pcfx` |
 | `ngp` | SNK NGPC | `.ngc` `.ngp` | `.ngc` | `mednafen_ngp` |
@@ -66,13 +68,20 @@
 | `plus4` | Commodore Plus/4 | `.prg` `.d64` | `.prg` | `vice_xplus4` |
 | `vic20` | Commodore VIC-20 | `.prg` `.d64` | `.prg` | `vice_xvic` |
 | `amiga` | Amiga | `.adf` `.hdf`（多盘另见下） | `.adf` | `puae` |
+| `dos` | DOS | `.jsdos` `.zip` | `.jsdos` | `dosbox_pure`（线程） |
+| `arcade` | 街机 | `.zip`（romset，保留集合名） | `.zip` | `fbneo` |
 
 - `cores` 记录引擎支持的全部 core，不代表本项目都打包了资产；NDS 只打包 `melonds`。
   N64 打包 `mupen64plus_next` 与 `parallel_n64`（iOS Safari 会默认选后者）；
-  PS1 两个 core 都打包。
+  PS1 两个 core 都打包。街机只打包默认 `fbneo`，CPS1/CPS2 切过去会缺资产。
 - **扩展名可以跨机种重叠**：Commodore 共用 `.d64` / `.prg`；CD 镜像共用 `.chd`
-  （世嘉 CD / 土星 / PS1 / PC-FX / 3DO）与 `.iso`（PS1 / 3DO）。
+  （世嘉 CD / 土星 / PS1 / PC-FX / 3DO）与 `.iso`（PS1 / PSP / 3DO）；
+  `.zip` 在 H5、DOS 与街机之间共用。
   判定时取「后缀候选集」，候选第 1 个（词表顺序）是默认项；唯一候选自动确定。
+  `.zip` 是例外：不传类型时回到历史默认 `h5`，DOS / 街机必须由用户显式选择。
+- **线程核**：`threads=True` 的机种（PSP / DOS）只有 `-thread` 变体，宿主页必须
+  打开 `EJS_threads`；页面还要带 COOP/COEP 才能拿到 `SharedArrayBuffer`。
+  其余机种保持 `EJS_threads=false`，设置菜单里的线程开关统一隐藏。
 - **多文件本体**：`bundle_extensions` 是包内允许出现的全部后缀，`bundle_entries`
   是其中可当入口的后缀。当前只有 `segaCD` 与 `amiga` 声明：
   - `segaCD`：`bundle_extensions=(".cue",".bin",".m3u",".chd")`，
@@ -82,14 +91,15 @@
   `.cue` / `.m3u` / `.bin` 不进单文件 `extensions`，单独上传仍被拒绝；
   多文件以用户选的类型为准，后缀只做合法性校验。
 - 多候选后缀的默认项可被 `_EXTENSION_DEFAULT_OVERRIDES` 覆盖：`.chd` 默认 PS1，
-  不改变候选列表顺序。
-- `GAME_TYPES` 派生为 `flash`、`h5` 加 31 个可玩机种 id，顺序与词表一致。
+  不改变候选列表顺序。`.zip` 的默认 `h5` 在 `service.py` 的
+  `_DEFAULT_GAME_TYPES_BY_EXTENSION` 里维护。
+- `GAME_TYPES` 派生为 `flash`、`h5` 加 34 个可玩机种 id，顺序与词表一致。
 - 后端扩展名白名单、默认后缀表、候选表与 `GAME_TYPE_LABELS` 都从词表派生。
 - 前端不保存映射：`GET /api/games/status` 的 `types` / `extension_candidates` /
   `default_game_type_by_extension` 是唯一来源。
 - 加机种要同步：本表（词表）、`fetch-emulatorjs.mjs` 的 core 资产、前端
   `constants/emulatorScreens.js` 的帧缓冲尺寸；需要 BIOS 时再补 `BiosSpec` 与
-  `emulatorjs/bios/<id>.zip`。label 与扩展名不用再抄。
+  `emulatorjs/bios/<id>.zip`；核只有线程变体时设 `threads=True`。label 与扩展名不用再抄。
 - 不再收 `.bin`：2600/5200/7800 都用它，没法判型，各自用专属后缀。
 - 改词表不会挪动任何文件；`id` 同时是磁盘目录名与库里的 `game_type`。
   已有游戏改类型走显式迁移接口（见 `game-storage.md`）。
@@ -108,8 +118,11 @@
 | `3do` | `3do.zip` | `panafz1.bin` | 必需（也可用其他 3DO BIOS 文件名） |
 | `segaCD` | `segaCD.zip` | `bios_CD_E.bin`、`bios_CD_U.bin`、`bios_CD_J.bin` | 必需（按区，至少放一个） |
 | `amiga` | `amiga.zip` | `kick34005.A500`、`kick40068.A1200` | 可选（PUAE 有 AROS 回退） |
+| `arcade` | `arcade.zip` | `neogeo.zip`、`pgm.zip` | 可选（ROM 集合也可自带 BIOS） |
 
-- N64 不需要 BIOS。
+- N64、PSP、DOS 不需要 BIOS。
+- 街机的 `arcade.zip` 里放的是 BIOS 集合 zip（如 `neogeo.zip`），不是裸文件；
+  FBNeo 需要时由引擎解到虚拟文件系统。缺包时只影响需要该 BIOS 的集合。
 - 土星也可用 `sega_101.bin` / `mpr-17933.bin`，3DO 也可用 `panafz10.bin` 等；
   文件名必须与 core 查找名完全一致。
 

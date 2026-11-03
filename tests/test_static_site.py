@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 from backend import create_app
 from backend.games.platforms import playable_platforms
@@ -50,6 +51,9 @@ def test_serves_index_and_spa_fallback(site):
         assert response.status_code == 200
         assert response.content == INDEX_HTML
         assert response.headers["cache-control"] == "no-cache"
+        # 线程核（PSP / DOS）要 SharedArrayBuffer，SPA 入口必须跨源隔离
+        assert response.headers["cross-origin-opener-policy"] == "same-origin"
+        assert response.headers["cross-origin-embedder-policy"] == "require-corp"
 
 
 def test_serves_hashed_assets_with_immutable_cache(site):
@@ -119,6 +123,15 @@ def test_emulator_host_is_no_cache(site):
     response = site.get("/emulator-host.html")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["cross-origin-opener-policy"] == "same-origin"
+    assert response.headers["cross-origin-embedder-policy"] == "require-corp"
+
+
+def test_version_probe_is_not_cross_origin_isolated(site):
+    """COOP/COEP 只给 HTML 文档；版本探针是纯文本，不需要也不该带。"""
+    response = site.get("/version.txt")
+    assert "cross-origin-opener-policy" not in response.headers
+    assert "cross-origin-embedder-policy" not in response.headers
 
 
 def test_other_static_files_get_no_cache_header(site):
@@ -143,6 +156,15 @@ def test_api_routes_still_work_with_site_mounted(site):
         == 200
     )
     assert site.get("/api/me").json()["data"] == {"username": "alice"}
+
+
+def test_nginx_html_location_sets_cross_origin_isolation():
+    """Docker 路线的 HTML 头与 static_site.py 保持一致，防止只改一边。"""
+    template = (
+        Path(__file__).resolve().parents[1] / "frontend/nginx.conf.template"
+    ).read_text(encoding="utf-8")
+    assert "Cross-Origin-Opener-Policy" in template
+    assert "Cross-Origin-Embedder-Policy" in template
 
 
 @pytest.mark.parametrize(

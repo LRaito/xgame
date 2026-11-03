@@ -141,7 +141,9 @@ def test_todo_only_lists_emulatorjs_supported_platforms():
         pytest.skip("还没有拉取 EmulatorJS 资产（npm run dev / make all 时会拉）")
     systems = _emulatorjs_cores()
     rows = _todo_platform_rows()
-    assert rows, "没从 todo.md 的机种清单里解析到任何条目"
+    # 全部机种接入后待接清单为空，这是正常状态，不是解析失败
+    if not rows:
+        return
     for key, cores in rows:
         assert key in systems, f"todo.md 列了 EJS 不支持的机种：{key}"
         assert cores, f"todo.md 的 {key} 没写 core"
@@ -231,6 +233,11 @@ def test_bios_specs_are_well_formed():
     assert PLATFORM_BY_ID["amiga"].bios == BiosSpec(
         "amiga.zip", ("kick34005.A500", "kick40068.A1200"), optional=True
     )
+    assert PLATFORM_BY_ID["arcade"].bios == BiosSpec(
+        "arcade.zip", ("neogeo.zip", "pgm.zip"), optional=True
+    )
+    assert PLATFORM_BY_ID["psp"].bios is None
+    assert PLATFORM_BY_ID["dos"].bios is None
     assert PLATFORM_BY_ID["n64"].bios is None
     assert PLATFORM_BY_ID["nes"].bios is None
 
@@ -307,7 +314,11 @@ def test_tier3_platform_extensions_resolve():
     assert default_playable_platform_for_extension(".v64").id == "n64"
 
     assert [p.id for p in playable_platforms_for_extension(".pbp")] == ["psx"]
-    assert [p.id for p in playable_platforms_for_extension(".iso")] == ["psx", "3do"]
+    assert [p.id for p in playable_platforms_for_extension(".iso")] == [
+        "psx",
+        "psp",
+        "3do",
+    ]
     assert [p.id for p in playable_platforms_for_extension(".chd")] == [
         "segaCD",
         "segaSaturn",
@@ -323,6 +334,37 @@ def test_tier3_platform_extensions_resolve():
     # 多文件 / 歧义后缀继续不开放
     assert playable_platforms_for_extension(".cue") == ()
     assert playable_platforms_for_extension(".bin") == ()
+
+
+def test_tier5_platform_extensions_resolve():
+    """第 5 档：PSP 的 .cso 唯一，DOS 的 .jsdos 唯一，.zip 由 DOS / 街机共用。"""
+    assert [p.id for p in playable_platforms_for_extension(".cso")] == ["psp"]
+    assert [p.id for p in playable_platforms_for_extension(".jsdos")] == ["dos"]
+    assert [p.id for p in playable_platforms_for_extension(".zip")] == [
+        "dos",
+        "arcade",
+    ]
+    assert default_playable_platform_for_extension(".cso").id == "psp"
+    assert default_playable_platform_for_extension(".jsdos").id == "dos"
+
+
+def test_threaded_platforms_match_emulatorjs():
+    """`Platform.threads` 必须与 EJS 的 requiresThreads() 一致。"""
+    if not _EJS_BUNDLE.is_file():  # pragma: no cover
+        pytest.skip("还没有拉取 EmulatorJS 资产（npm run dev / make all 时会拉）")
+    source = _EJS_BUNDLE.read_text(encoding="utf-8", errors="replace")
+    match = re.search(
+        r"requiresThreads\(t\)\{return\[([^\]]*)\]\.includes\(t\)\}", source
+    )
+    if match is None:  # pragma: no cover - 引擎换了写法才会走到
+        pytest.fail(f"没能在 {_EJS_BUNDLE} 里找到 requiresThreads()")
+    required_cores = set(re.findall(r'"([^"]+)"', match.group(1)))
+    for platform in playable_platforms():
+        expected = bool(set(platform.cores) & required_cores)
+        assert platform.threads == expected, platform.id
+    assert PLATFORM_BY_ID["psp"].threads is True
+    assert PLATFORM_BY_ID["dos"].threads is True
+    assert PLATFORM_BY_ID["arcade"].threads is False
 
 
 def test_extension_candidates_follow_registry_order():

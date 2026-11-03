@@ -50,6 +50,9 @@ export const EMU_NATIVE = {
     // 第 4 档：世嘉 CD 与 MD 同核；Amiga 先按 PAL 常见值，运行时以 videoInfo.aspect 校准
     segaCD: { width: 320, height: 224 },
     amiga: { width: 320, height: 256 },
+    psp: { width: 480, height: 272 },
+    dos: { width: 640, height: 400 },
+    arcade: { width: 320, height: 240 },
 };
 
 /**

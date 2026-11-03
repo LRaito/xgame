@@ -210,6 +210,9 @@
                             />
                             <span v-else class="game-manage__type-value">{{ typeFieldText }}</span>
                         </el-form-item>
+                        <p v-if="bodyTypeHint" class="game-manage__file-hint muted">
+                            {{ bodyTypeHint }}
+                        </p>
                         <!-- 封面类型：这盘封面被美化成的外观，值就是封面样式 id。
                              选项由「这次会落成的游戏类型」决定（见 coverTypeOptions）；
                              新建时不给这一行——新建一律留空，只有编辑能改、或美化封面时自动写。
@@ -780,6 +783,24 @@ const bodySourceType = computed(() => {
 const hasBodySource = computed(() =>
     Boolean(form.gameFile || form.gameFiles.length || form.bodyUrl)
 );
+// 类型选择后的准备提示：.zip 三义最容易选错，这里把三种包的区别直接写出来。
+// 只做文案，不参与判型；真正的规则仍在后端 platforms / service。
+const bodyTypeHint = computed(() => {
+    const type = form.gameType || bodySourceType.value;
+    if (type === "arcade") {
+        return "街机本体必须是 FBNeo ROM 集合 zip，文件名就是集合名（如 mslug.zip），不能改名；只支持本地上传，不同引擎版本的集合不通用。Neo Geo 等 BIOS 可选 arcade.zip。";
+    }
+    if (type === "dos") {
+        return "DOS 本体是 jsdos 压缩包：优先选 .jsdos；选 .zip 时请在这里明确选 DOS。包内需含 DOSBox 配置与游戏文件。";
+    }
+    if (type === "psp") {
+        return "PSP 需要浏览器 WebGL2 与线程（页面须带 COOP/COEP），首次加载较慢；推荐 .iso 或体积更小的 .cso。";
+    }
+    if (type === "h5" && form.gameFile && extensionOfFilename(form.gameFile.name) === ".zip") {
+        return "HTML5 本体是含 index.html 的静态站 zip；DOS 游戏请改选 DOS，街机 ROM 请改选街机。";
+    }
+    return "";
+});
 const gameAccept = computed(() => {
     if (formMode.value === "edit") {
         // 编辑只能换同类型本体：文件选择器直接收窄到当前类型（含多文件包内后缀）
@@ -816,6 +837,10 @@ const editingTypeCandidates = computed(() => {
     }
     // 多文件本体不支持改类型（后端也会拒绝），下拉只保留当前类型
     if (item.body_kind === "bundle") {
+        return item.game_type ? [item.game_type] : [];
+    }
+    // ZIP 在 HTML5 / DOS / 街机之间含义不同，后端拒绝改类型，编辑时不显示下拉
+    if (["h5", "dos", "arcade"].includes(item.game_type)) {
         return item.game_type ? [item.game_type] : [];
     }
     const candidates = gameTypeCandidatesByFilename(item.game_path || "");

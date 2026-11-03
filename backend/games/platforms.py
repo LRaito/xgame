@@ -18,9 +18,10 @@ EJS 4.2.3 的 `EmulatorJS.getCores()`
 2. **`label` 是三处共用的显示名**（中文，厂商 + 空格 + 型号；没有厂商名的只写型号），
    前端 `constants/gameTypes.js` 里按 id 保留图标/描述等 UI 元数据，
    label 与扩展名由 `/api/games/status` 从本表派生。
-3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 31 个机种有；其余机种（含 EJS 支持
-   但本项目还没打包 core 的 psp 等）只用来给外部名录「对上号」，不开放上传。
+3. **`extensions` 非空才代表本项目已收录、可上传可玩**——当前 34 个机种有；`sega` / `mame`
+   两个兜底 key 只用来给外部名录「对上号」，不开放上传。
    `bundle_extensions` 描述多文件本体的包内后缀（cue/bin/m3u 这类），不影响单文件判型。
+   `threads` 表示该机种的核只能用线程变体（PSP / DOS），宿主页据此打开 `EJS_threads`。
 
 `flash` / `h5` **不是机种**（它们是载体类型：Ruffle 播的 SWF 与上传 ZIP 解包的网页游戏），
 所以不在这张表里，它们的 `game_type` 与显示名仍由 `service.py` 自己管。
@@ -62,6 +63,9 @@ class Platform:
     bundle_extensions: tuple[str, ...] = ()
     # 多文件本体里可以当入口的后缀；必须是 bundle_extensions 的子集。
     bundle_entries: tuple[str, ...] = ()
+    # 核只有线程变体（EJS requiresThreads）；宿主页要打开 EJS_threads，
+    # 因此页面必须带 COOP/COEP 让 SharedArrayBuffer 可用。
+    threads: bool = False
 
 
 # 顺序即下拉展示顺序：按厂商分组。
@@ -232,6 +236,11 @@ PLATFORMS: tuple[Platform, ...] = (
         label="索尼 PSP",
         cores=("ppsspp",),
         aliases=("索尼PSP", "PSP"),
+        # 只收单文件镜像；.iso 与 PS1 / 3DO 共用，创建时由用户选类型。
+        extensions=(".iso", ".cso"),
+        default_extension=".iso",
+        # ppsspp 只有线程变体，还强制 WebGL2。
+        threads=True,
     ),
     # —— 日电 ——
     Platform(
@@ -410,12 +419,30 @@ PLATFORMS: tuple[Platform, ...] = (
             optional=True,
         ),
     ),
-    Platform(id="dos", label="DOS", cores=("dosbox_pure",), aliases=("DOS",)),
+    Platform(
+        id="dos",
+        label="DOS",
+        cores=("dosbox_pure",),
+        aliases=("DOS",),
+        # .jsdos 是 jsdos 打包的 zip；也接受普通 .zip，创建时由用户显式选 DOS。
+        extensions=(".jsdos", ".zip"),
+        default_extension=".jsdos",
+        threads=True,
+    ),
     Platform(
         id="arcade",
         label="街机",
         cores=("fbneo", "fbalpha2012_cps1", "fbalpha2012_cps2"),
         aliases=("ARCADE",),
+        # romset zip：落盘名必须保持集合名（如 mslug.zip），FBNeo 用 URL 末段找集合。
+        extensions=(".zip",),
+        default_extension=".zip",
+        # BIOS 由集合自带或放可选 arcade.zip（内含 neogeo.zip / pgm.zip 等），缺包不拦启动。
+        bios=BiosSpec(
+            file="arcade.zip",
+            required_files=("neogeo.zip", "pgm.zip"),
+            optional=True,
+        ),
     ),
     # 与 arcade 重叠的另一个街机 system，只作引擎侧的兜底，没有外部名录对应
     Platform(id="mame", label="街机（MAME）", cores=("mame2003_plus", "mame2003")),
@@ -631,3 +658,9 @@ def platform_cores(platform_id: str) -> tuple[str, ...]:
     """该机种在 EJS 里的 core 列表；不是机种时返回空元组。"""
     platform = PLATFORM_BY_ID.get(platform_id or "")
     return platform.cores if platform else ()
+
+
+def platform_threads(platform_id: str) -> bool:
+    """该机种是否必须用线程核；不是机种或不需要线程时返回 False。"""
+    platform = PLATFORM_BY_ID.get(platform_id or "")
+    return bool(platform.threads) if platform else False

@@ -277,6 +277,49 @@ def test_chunked_h5_upload_and_commit(logged_in, storage_root, small_chunks):
     assert (storage_root / item["game_path"]).read_bytes() == data
 
 
+def test_chunked_arcade_upload_keeps_romset_name(
+    logged_in, storage_root, small_chunks
+):
+    """街机分片上传：落盘名必须是 ROM 集合名，不能改成 game.zip。"""
+    data = b"romset-body"
+    upload = _init(logged_in, "mslug.zip", len(data), "arcade")
+    offset = 0
+    for index in range(upload["total_chunks"]):
+        end = min(offset + upload["chunk_size"], len(data))
+        _put(logged_in, upload["upload_id"], index, data[offset:end])
+        offset = end
+    assert _complete(logged_in, upload["upload_id"]).status_code == 200
+
+    created = logged_in.post(
+        "/api/games/manage",
+        data={
+            "name": "分片街机",
+            "cartridge_id": "CHUNK07",
+            "body_game_type": "arcade",
+            "upload_id": upload["upload_id"],
+        },
+    )
+    assert created.status_code == 201, created.text
+    item = created.json()["data"]
+    assert item["game_type"] == "arcade"
+    assert item["game_path"] == "game/arcade/CHUNK07/mslug.zip"
+    assert (storage_root / item["game_path"]).read_bytes() == data
+
+
+def test_zip_size_limit_only_applies_to_h5(logged_in, monkeypatch):
+    """128MB ZIP 上限只约束 H5；DOS / 街机的 ZIP 由引擎解，不受这个应用层限制。"""
+    monkeypatch.setattr("backend.games.archive.MAX_ZIP_SIZE", 4)
+    for game_type in ("arcade", "dos"):
+        upload = _init(logged_in, "demo.zip", 8, game_type)
+        assert upload["total_chunks"] >= 1
+    rejected = logged_in.post(
+        "/api/games/uploads",
+        json={"filename": "demo.zip", "size": 8, "game_type": "h5"},
+    )
+    assert rejected.status_code == 400
+    assert "压缩包过大" in rejected.json()["message"]
+
+
 def test_cleanup_stale_uploads(app, logged_in, storage_root, small_chunks):
     old = _init(logged_in, "old.nes", 4)
     fresh = _init(logged_in, "fresh.nes", 4)

@@ -40,13 +40,16 @@
 `/api/games` 与 `/api/games/recent` 的每条游戏都带 `bios`：无 BIOS 需求时为 `null`，
 否则为 `{file, required_files, optional}`；`/api/games/status.types[]` 的每条类型也带同形状字段。
 `file` 是 `emulatorjs/bios/` 下的 ZIP 文件名，`required_files` 是包内必需文件。
+每条游戏还带 `threads`（布尔）：`true` 表示 PSP / DOS 这类必须开线程的机种。
 
 `/api/games/status.upload` 为 `{single_file_max_bytes, chunk_size_bytes}`：前端据此决定
 本体走单文件还是分片，阈值与后端常量一致；分片总数另由 init 响应返回。
 
 `/api/games/status.types[]` 的每条类型另带 `multi_file`、`bundle_extensions`、
-`bundle_entries` 与 `upload_extensions`：前端据此决定文件框是否多选、accept 与类型候选，
-不手写机种映射。
+`bundle_entries`、`upload_extensions` 与 `threads`：前端据此决定文件框是否多选、accept、
+类型候选，以及是否给播放器开线程，不手写机种映射。
+`.zip` 的候选是 `h5` / `dos` / `arcade`，`extension_candidates[".zip"]` 会返回三项；
+不传 `body_game_type` 时后端仍按历史默认落 `h5`。
 
 ### 游戏管理与入库
 
@@ -72,6 +75,8 @@
 `upload_ids`（每个物理文件一个现有分片会话），与 `file` / `url` / `upload_id` 互斥。
 新建与换本体时 `file` / `url` / `upload_id` / `upload_ids` 只能选一种。
 分片会话绑定当前账号，别人的 `upload_id` 一律 404。
+`.zip` 的 128MB 应用层上限只约束 H5；DOS 与街机不受。街机只接受本地上传，
+`url` 方式返回中文 400（直链临时名无法满足 romset 名）。
 
 ### 素材读取
 
@@ -79,7 +84,7 @@
 |---|---|---|---|
 | GET | `/api/games/{id}/cover` | 需登录 | 封面 inline；`?download=1` 转附件 |
 | GET / HEAD | `/api/games/{id}/play` | 需登录 | 本体下载；`.swf` 用 Flash 类型，其余 `octet-stream` |
-| GET / HEAD | `/api/games/{id}/play/{文件名}` | 需登录 | 同上；文件名段必须是落盘名（如 `game.chd`），供 EmulatorJS 识别格式 |
+| GET / HEAD | `/api/games/{id}/play/{文件名}` | 需登录 | 同上；文件名段必须是落盘名（如 `game.chd`，街机是 `mslug.zip`），供 EmulatorJS 识别格式 |
 | GET / HEAD | `/api/games/{id}/play/manifest` | 需登录 | 多文件本体清单 `{entry, files, total_size}`；单文件也返回入口一条 |
 | GET / HEAD | `/api/games/{id}/play/files/{name}` | 需登录 | 多文件本体的单个文件；只服务清单内 basename |
 | GET / HEAD | `/api/games/{id}/h5/{资源路径}` | **免登录** | H5 资源；沙箱安全头，首次访问触发解包 |
@@ -135,6 +140,8 @@
 - 单文件本地本体超过 30MB：400，提示改用分片上传；分片本体不设总大小上限。
 - `.cue` / `.m3u` 单文件上传或作为网络直链：400，提示改用多文件本地上传；
   `.bin` 单文件上传也 400，但直链会按所选类型补默认后缀（沿用旧规则）。
+- `.zip` 不传 `body_game_type` 时按历史默认落 `h5`；要传 DOS / 街机必须显式指定。
+- 街机 romset 文件名非法、不是 `.zip`、占用 `guide.zip`，或使用网络直链：400。
 - 多文件本体缺入口、缺引用、引用子目录/远程地址/大小写不一致、重名、超过 64 个文件：400。
 
 ## 测试要点

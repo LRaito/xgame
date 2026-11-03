@@ -71,6 +71,7 @@ function decorateType(item) {
             ? item.upload_extensions
             : [...new Set([...extensions, ...bundleExtensions])],
         multiFile: item.multi_file === true || bundleExtensions.length > 0,
+        threads: item.threads === true,
         bios: normalizeBios(item.bios),
         icon: iconOf(item.id),
     };
@@ -89,6 +90,7 @@ function fallbackMeta(id) {
         bundleEntries: [],
         uploadExtensions: [],
         multiFile: false,
+        threads: false,
         default_extension: "",
         bios: null,
         icon: iconOf(id),

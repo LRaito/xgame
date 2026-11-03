@@ -32,6 +32,7 @@ from backend.games.body_bundle import (
     StagedBundleFile,
     build_bundle,
     normalize_bundle_name,
+    normalize_romset_name,
 )
 from backend.games.models import (
     CARTRIDGE_ID_MAX_LENGTH,
@@ -57,6 +58,7 @@ from backend.games.platforms import (
     normalize_extension,
     platform_bundle_entries,
     platform_bundle_extensions,
+    platform_threads,
     platform_upload_extensions,
     playable_platforms,
 )
@@ -68,14 +70,15 @@ logger = logging.getLogger(__name__)
 
 GAME_TYPE_FLASH = "flash"
 GAME_TYPE_H5 = "h5"
+GAME_TYPE_ARCADE = "arcade"
 
 # 游戏类型（game_type 落库值）。顺序即 /status 与前端下拉/分组顺序。
 # h5 走 ZIP 解包 + 沙箱 iframe 播放；flash 走 Ruffle；其余为 EmulatorJS。
 #
 # **机种那部分从 `backend/games/platforms.py` 的机种词表派生**（id 就是 EJS 的 system key，
 # 也就是 game_type 的值），所以「哪些机种能上传」只需要改那张表——但 `extensions` 非空的
-# 机种才会出现在这里：词表里还有 7 个 EJS 支持、本项目还没打包 core 的机种（segaCD/psp…），
-# 它们只用来给游戏发现的外部名录「对上号」，不开放上传。
+# 机种才会出现在这里：词表里还有 `sega` / `mame` 两个兜底 key，只用来给外部名录
+# 「对上号」，不开放上传。
 #
 # flash 与 h5 **不是机种**（是载体类型），所以不来自词表、写在这里，永远排在最前。
 GAME_TYPES: tuple[str, ...] = (
@@ -85,13 +88,18 @@ GAME_TYPES: tuple[str, ...] = (
 )
 
 # 各类型允许的本体扩展名白名单（封面统一走 _COVER_EXTENSIONS）。
-# 只收单文件 ROM；不开放 .bin（GB/MD/SMS 等多机种歧义）与压缩/多碟格式。
-# h5 收 ZIP 压缩包，由后端解包为多文件。
+# 单文件 ROM 之外，h5 / dos / arcade 都收 .zip：同一个后缀有三种含义，
+# 创建时由用户显式选类型；不选时按 _DEFAULT_GAME_TYPES_BY_EXTENSION 回到 h5。
 _GAME_TYPE_EXTENSIONS: dict[str, frozenset[str]] = {
     GAME_TYPE_FLASH: frozenset({".swf"}),
     GAME_TYPE_H5: frozenset({".zip"}),
     **{platform.id: frozenset(platform.extensions) for platform in playable_platforms()},
 }
+
+# 多候选后缀的默认类型（只在用户没传 body_game_type 时生效）。
+# `.zip` 历史上一直自动判成 h5，保留这个默认，社区里已有的 H5 上传不受影响；
+# DOS / 街机必须显式选类型，避免把静态站 zip 当 romset 存进去。
+_DEFAULT_GAME_TYPES_BY_EXTENSION: dict[str, str] = {".zip": GAME_TYPE_H5}
 
 # 只能作为多文件本体成员、不能单独成盘的后缀（cue/bin/m3u）。
 _BUNDLE_ONLY_EXTENSIONS = frozenset(all_bundle_extensions()) - frozenset(
@@ -203,6 +211,12 @@ def _remote_body_filename(url: str, game_type: str) -> str:
     """
     if game_type not in _GAME_TYPE_EXTENSIONS:
         raise ValidationError("请选择游戏类型。")
+    if game_type == GAME_TYPE_ARCADE:
+        # FBNeo 用 URL 末段当集合名；直链下载只能存成 remote.zip，必然对不上。
+        raise ValidationError(
+            "街机 ROM 请使用本地上传：文件名必须是 ROM 集合名（如 mslug.zip），"
+            "网络直链无法保证集合名。"
+        )
     extension = _remote_extension(url)
     if extension in _BUNDLE_ENTRY_ONLY_EXTENSIONS:
         raise ValidationError("多文件本体请使用本地上传：网络直链只支持单个文件。")
@@ -222,7 +236,8 @@ def resolve_game_type(
     - 后缀没有候选：本地文件直接拒绝；直链在 `allow_unknown_extension=True` 时
       允许用户任选一个已收录类型（地址可能根本看不出后缀）。
     - 候选唯一：自动确定；用户传了不同的类型仍拒绝。
-    - 候选多个：必须由用户选择，且必须落在候选集内。
+    - 候选多个：有默认覆盖的（`.zip` → h5）先取默认；其余必须由用户选择，
+      且必须落在候选集内。
     """
     candidates = game_types_of_extension(extension)
     if not candidates:
@@ -245,6 +260,9 @@ def resolve_game_type(
         return value
     if len(candidates) == 1:
         return candidates[0]
+    default = _DEFAULT_GAME_TYPES_BY_EXTENSION.get(normalize_extension(extension))
+    if default and default in candidates:
+        return default
     raise ValidationError(f"该后缀对应多个机种（{_type_labels(candidates)}），请选择游戏类型。")
 
 
@@ -315,6 +333,8 @@ def game_type_descriptors() -> list[dict]:
                 "extensions": sorted(_GAME_TYPE_EXTENSIONS[game_type]),
                 "default_extension": _DEFAULT_EXTENSIONS[game_type],
                 "bios": bios_descriptor(game_type),
+                # 线程核（PSP / DOS）：播放页据此给宿主页传 threads=1
+                "threads": platform_threads(game_type),
                 # 多文件本体：前端据此决定文件框是否多选、accept 与类型候选
                 "multi_file": bool(platform_bundle_extensions(game_type)),
                 "bundle_extensions": list(platform_bundle_extensions(game_type)),
@@ -338,9 +358,13 @@ def extension_candidates() -> dict[str, list[str]]:
 
 
 def default_game_types_by_extension() -> dict[str, str]:
-    """后缀 → 默认类型（先看覆盖表，再取候选第 1 个）。"""
+    """后缀 → 默认类型（先看 `.zip` 覆盖表，再取词表默认机种，最后取候选第 1 个）。"""
     result: dict[str, str] = {}
     for extension, candidates in extension_candidates().items():
+        override = _DEFAULT_GAME_TYPES_BY_EXTENSION.get(extension)
+        if override in candidates:
+            result[extension] = override
+            continue
         platform = default_playable_platform_for_extension(extension)
         result[extension] = platform.id if platform else candidates[0]
     return result
@@ -1006,6 +1030,12 @@ class GameService:
         if paths.is_bundle_body(row.game_path):
             raise ValidationError("多文件本体不支持修改游戏类型，请删除后重新上传。")
         extension = Path(row.game_path).suffix.lower()
+        if extension == ".zip":
+            # 同一个 ZIP 在 HTML5 / DOS / 街机里含义完全不同；迁移只会得到打不开的游戏。
+            raise ValidationError(
+                "ZIP 本体在 HTML5、DOS 与街机之间含义不同，不支持修改类型，"
+                "请删除后重新上传。"
+            )
         candidates = game_types_of_extension(extension)
         if target not in candidates:
             raise ValidationError(
@@ -1449,7 +1479,16 @@ class GameService:
                 return self._upload_h5_zip(
                     row, stream=upload.stream, size=upload.size, mime=upload.mime, crc32=crc32
                 )
-            path = paths.body_path(row.game_type, row.cartridge_id, extension)
+            if row.game_type == GAME_TYPE_ARCADE:
+                # FBNeo 用文件名匹配 romset，不能统一改名 game.zip
+                romset = PurePosixPath(filename.replace("\\", "/")).name
+                path = paths.named_body_path(
+                    row.game_type,
+                    row.cartridge_id,
+                    normalize_romset_name(romset),
+                )
+            else:
+                path = paths.body_path(row.game_type, row.cartridge_id, extension)
         elif kind == "cover":
             if extension not in _COVER_EXTENSIONS:
                 raise ValidationError("封面仅支持 jpg、png、gif、webp 图片。")
@@ -1528,6 +1567,12 @@ class GameService:
 
         if row.game_type == GAME_TYPE_H5:
             target = paths.h5_zip_path(row.game_type, row.cartridge_id)
+        elif row.game_type == GAME_TYPE_ARCADE:
+            target = paths.named_body_path(
+                row.game_type,
+                row.cartridge_id,
+                normalize_romset_name(staged.filename),
+            )
         else:
             target = paths.body_path(row.game_type, row.cartridge_id, extension)
         if not self._storage.move(part, target):
@@ -1737,6 +1782,9 @@ class GameService:
         manifest = self.body_manifest(row)
         if value not in {item["name"] for item in manifest["files"]}:
             raise NotFoundError("游戏文件不存在。")
+        if not paths.is_bundle_body(row.game_path):
+            # 单文件本体（含街机 romset）：清单里只有入口，直接开 game_path
+            return self._storage.open_download(row.game_path)
         return self._storage.open_download(
             paths.body_file_path(row.game_type, row.cartridge_id, value)
         )

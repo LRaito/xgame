@@ -166,7 +166,7 @@ def test_detect_game_type_by_extension():
     )
     assert resolve_game_type(".d64", "c128") == "c128"
     assert resolve_game_type(".prg", "vic20") == "vic20"
-    # 第 3/4 档 CD 镜像跨机种：.chd 五候选、.iso 两候选，不带选择时有歧义
+    # 第 3/4/5 档 CD 镜像跨机种：.chd 五候选、.iso 三候选，不带选择时有歧义
     with pytest.raises(Exception):
         detect_game_type("demo.chd")
     with pytest.raises(Exception):
@@ -181,7 +181,14 @@ def test_detect_game_type_by_extension():
         "pcfx",
         "3do",
     )
-    assert game_types_of_extension(".iso") == ("psx", "3do")
+    assert game_types_of_extension(".iso") == ("psx", "psp", "3do")
+    assert game_types_of_extension(".zip") == ("h5", "dos", "arcade")
+    # .zip 不选类型时保持历史默认 h5；DOS / 街机必须显式选
+    assert detect_game_type("demo.zip") == "h5"
+    assert resolve_game_type(".zip", "dos") == "dos"
+    assert resolve_game_type(".zip", "arcade") == "arcade"
+    assert resolve_game_type(".jsdos") == "dos"
+    assert resolve_game_type(".cso") == "psp"
     assert resolve_game_type(".chd", "psx") == "psx"
     assert resolve_game_type(".iso", "3do") == "3do"
     assert require_body_type_for_current(".chd", "pcfx") == "pcfx"
@@ -604,6 +611,10 @@ def test_manage_filter_combines_with_pagination(logged_in_games):
         ("psx", ".chd"),
         ("psx", ".pbp"),
         ("psx", ".iso"),
+        ("psp", ".iso"),
+        ("psp", ".cso"),
+        ("dos", ".jsdos"),
+        ("dos", ".zip"),
         ("pcfx", ".chd"),
         ("3do", ".chd"),
         ("3do", ".iso"),
@@ -662,6 +673,101 @@ def test_play_with_filename_suffix_streams_body(logged_in_games):
     # 文件名必须与落盘名一致，避免 EJS 缓存/格式识别错位
     wrong = logged_in_games.get(f"/api/games/{game_id}/play/game.bin")
     assert wrong.status_code == 404
+
+
+def test_arcade_keeps_romset_filename_and_plays(logged_in_games, storage_root):
+    """街机：ZIP 落盘名必须是 ROM 集合名，FBNeo 才能按 URL 末段找到集合。"""
+    create = _create_game(
+        logged_in_games,
+        "街机 ROM",
+        "mslug.zip",
+        b"romset-body",
+        game_type="arcade",
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()["data"]
+    assert body["game_type"] == "arcade"
+    assert body["body_kind"] == "file"
+    cid = body["cartridge_id"]
+    assert body["game_path"] == f"game/arcade/{cid}/mslug.zip"
+    assert _read(storage_root, body["game_path"]) == b"romset-body"
+
+    game_id = body["id"]
+    listing = logged_in_games.get("/api/games").json()["data"]
+    item = next(game for game in listing if game["id"] == game_id)
+    assert item["category"] == "arcade"
+    assert item["threads"] is False
+
+    play = logged_in_games.get(f"/api/games/{game_id}/play/mslug.zip")
+    assert play.status_code == 200
+    assert play.content == b"romset-body"
+    # 不能是统一的 game.zip，否则 FBNeo 会找一个不存在的集合
+    assert logged_in_games.get(f"/api/games/{game_id}/play/game.zip").status_code == 404
+
+    manifest = logged_in_games.get(f"/api/games/{game_id}/play/manifest")
+    assert manifest.status_code == 200
+    assert manifest.json()["data"]["entry"] == "mslug.zip"
+    assert logged_in_games.get(f"/api/games/{game_id}/play/files/mslug.zip").status_code == 200
+
+
+def test_arcade_rejects_remote_body_and_bad_filename(logged_in_games):
+    """街机只收本地上传；文件名必须是安全集合名，且不能占用 guide.zip。"""
+    remote = logged_in_games.post(
+        "/api/games/manage",
+        data={
+            "name": "远程街机",
+            "cartridge_id": "ARC-REMOTE",
+            "body_url": "https://example.com/mslug.zip",
+            "body_game_type": "arcade",
+        },
+    )
+    assert remote.status_code == 400
+    assert "街机" in remote.json()["message"]
+
+    bad = _create_game(
+        logged_in_games,
+        "坏名字",
+        "Metal Slug.zip",
+        b"romset",
+        game_type="arcade",
+    )
+    assert bad.status_code == 400
+    assert "集合名" in bad.json()["message"]
+
+    reserved = _create_game(
+        logged_in_games,
+        "保留名",
+        "guide.zip",
+        b"romset",
+        game_type="arcade",
+    )
+    assert reserved.status_code == 400
+    assert "保留" in reserved.json()["message"]
+
+
+def test_zip_does_not_allow_changing_game_type(logged_in_games):
+    """ZIP 在 HTML5 / DOS / 街机之间含义不同，改类型只会得到打不开的游戏。"""
+    arcade = _create_game(
+        logged_in_games,
+        "街机不改型",
+        "kof98.zip",
+        b"romset",
+        game_type="arcade",
+    ).json()["data"]
+    response = logged_in_games.put(
+        f"/api/games/manage/{arcade['id']}/game-type",
+        json={"game_type": "h5"},
+    )
+    assert response.status_code == 400
+    assert "ZIP" in response.json()["message"]
+
+    h5 = _upload_h5(logged_in_games, name="H5 不改型")
+    response = logged_in_games.put(
+        f"/api/games/manage/{h5}/game-type",
+        json={"game_type": "dos"},
+    )
+    assert response.status_code == 400
+    assert "ZIP" in response.json()["message"]
 
 
 def test_replacing_body_cross_type_rejected(logged_in_games, storage_root):
@@ -1725,6 +1831,16 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
     assert types["amiga"]["extensions"] == [".adf", ".hdf"]
     assert types["amiga"]["bundle_extensions"] == [".adf", ".hdf", ".m3u"]
     assert types["amiga"]["bundle_entries"] == [".m3u", ".adf", ".hdf"]
+    # 第 5 档：线程核与 ZIP 三义
+    assert types["psp"]["extensions"] == [".cso", ".iso"]
+    assert types["psp"]["threads"] is True
+    assert types["psp"]["bios"] is None
+    assert types["dos"]["extensions"] == [".jsdos", ".zip"]
+    assert types["dos"]["threads"] is True
+    assert types["arcade"]["extensions"] == [".zip"]
+    assert types["arcade"]["threads"] is False
+    assert types["arcade"]["bios"]["file"] == "arcade.zip"
+    assert types["arcade"]["bios"]["optional"] is True
     assert types["nes"]["multi_file"] is False
     assert types["nes"]["bundle_extensions"] == []
     assert types["flash"]["multi_file"] is False
@@ -1742,11 +1858,15 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
         "pcfx",
         "3do",
     ]
-    assert status["extension_candidates"][".iso"] == ["psx", "3do"]
+    assert status["extension_candidates"][".iso"] == ["psx", "psp", "3do"]
+    assert status["extension_candidates"][".zip"] == ["h5", "dos", "arcade"]
+    assert status["extension_candidates"][".jsdos"] == ["dos"]
+    assert status["extension_candidates"][".cso"] == ["psp"]
     assert status["default_game_type_by_extension"][".d71"] == "c128"
-    # 候选顺序按词表，默认项由覆盖表指定为更常见的 PS1
+    # 候选顺序按词表，默认项由覆盖表指定为更常见的 PS1；.zip 保持历史默认 h5
     assert status["default_game_type_by_extension"][".chd"] == "psx"
     assert status["default_game_type_by_extension"][".iso"] == "psx"
+    assert status["default_game_type_by_extension"][".zip"] == "h5"
 
 
 def test_status_bios_metadata_matches_registry(logged_in_games):
@@ -2203,6 +2323,9 @@ def test_h5_upload_and_serve(logged_in_games, storage_root, runtime_root):
     assert "allow-same-origin" not in entry.headers["content-security-policy"]
     assert entry.headers["x-content-type-options"] == "nosniff"
     assert entry.headers["access-control-allow-origin"] == "*"
+    # 播放页外层带 COEP require-corp；H5 沙箱页显式退出隔离，外链资源才不会被拦
+    assert entry.headers["cross-origin-embedder-policy"] == "unsafe-none"
+    assert entry.headers["cross-origin-resource-policy"] == "cross-origin"
 
     # 首次访问之后才有解包产物，垃圾条目被跳过
     assert _exists(runtime_root, f"game/h5/{cid}/h5/index.html")

@@ -51,6 +51,12 @@
 - `/assets/`、`/ruffle/`、`/emulatorjs/` 是 immutable 长缓存。
 - 这些前缀未命中就 404，不回落 `index.html`。
 - `index.html` 与 `emulator-host.html` 是 no-cache。
+- 这两个 HTML 响应另带 `Cross-Origin-Opener-Policy: same-origin` 与
+  `Cross-Origin-Embedder-Policy: require-corp`，供 PSP / DOS 的线程核使用
+  `SharedArrayBuffer`；SPA 深链经 `try_files` 内部跳转后同样命中这组头。
+- H5 资源由后端单独发 `Cross-Origin-Embedder-Policy: unsafe-none` 与
+  `Cross-Origin-Resource-Policy: cross-origin`，沙箱页里的外链资源不受隔离策略影响。
+- 静态核心资产与 ROM 都是同源请求，不需要额外 CORP。
 
 **api 服务。**
 

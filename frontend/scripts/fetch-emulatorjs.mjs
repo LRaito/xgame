@@ -4,13 +4,13 @@
  *
  * 与 scripts/copy-ruffle.mjs 的分工一致，但 EmulatorJS 没有官方 npm 包、官方 release
  * 是 303MB 的全量 .7z，因此这里只从官方 CDN（与 release 同源同版本）按需拉取最小集：
- *  loader + 引擎（emulator.min.js/.css）+ 本项目 30 个唯一 core（覆盖 29 个可玩机种，wasm.data + report）。
+ *  loader + 引擎（emulator.min.js/.css）+ 本项目 34 个唯一 core（覆盖 34 个可玩机种，wasm.data + report）。
  *
  * core 文件命名规则（EmulatorJS 4.2.3 引擎逻辑）：
  *   cores/<core>[-thread][-legacy]-wasm.data
  * 引擎默认（core report 未声明 options.defaultWebGL2 时）会请求 <core>-legacy-wasm.data；
  * 只有在引擎设置里打开 WebGL2 后才改用无后缀的 <core>-wasm.data。为离线兜底两种都打包。
- * 本播放页固定 EJS_threads=false，不需要 -thread 变体。
+ * 本播放页只对 PSP / DOS 打开 EJS_threads，因此只打包这两个核的 -thread 变体。
  * reports/<core>.json 提供 buildStart，让 EJS 能把 core 缓存进 IndexedDB，二次游玩免下载。
  * 本地化：引擎会按浏览器语言自动请求 data/localization/<locale>.json（本次 404 即 zh-CN）。
  * 官方 zh-CN 翻译不全，直接加载会让引擎对缺词条逐个打 “Translation not found”。因此构建时
@@ -41,7 +41,7 @@ const DONE_MARKER = ".emulatorjs.done";
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const destRoot = join(root, "public/emulatorjs", "data");
 
-// data/ 目录下相对路径清单（顶层引擎文件 + 31 个唯一 core，覆盖 31 个可玩机种）
+// data/ 目录下相对路径清单（顶层引擎文件 + 34 个唯一 core，覆盖 34 个可玩机种）
 const FILES = [
     "loader.js",
     "emulator.min.js",
@@ -158,6 +158,19 @@ const FILES = [
     "cores/puae-wasm.data",
     "cores/puae-legacy-wasm.data",
     "cores/reports/puae.json",
+    // 第 5 档：PSP（ppsspp）只有 -thread 变体，且强制 WebGL2；
+    // EJS 启动时还会额外拉 cores/ppsspp-assets.zip，必须一起打包。
+    "cores/ppsspp-thread-wasm.data",
+    "cores/reports/ppsspp.json",
+    "cores/ppsspp-assets.zip",
+    // DOS（dosbox_pure）同样只有 -thread 变体；WebGL2 开关决定取不取 legacy
+    "cores/dosbox_pure-thread-wasm.data",
+    "cores/dosbox_pure-thread-legacy-wasm.data",
+    "cores/reports/dosbox_pure.json",
+    // 街机只打包默认 FBNeo；CPS1/CPS2 仍保留在词表里，切过去会缺资产（与 NDS 现状一致）
+    "cores/fbneo-wasm.data",
+    "cores/fbneo-legacy-wasm.data",
+    "cores/reports/fbneo.json",
 ];
 
 // 本地化合并的输入（官方语言包，仅构建期下载、不入 data/）与合并产物输出（相对 data/）

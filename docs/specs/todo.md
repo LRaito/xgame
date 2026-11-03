@@ -8,8 +8,8 @@
 - 下拉顺序 = `/status.game_types` = `flash`、`h5` + 词表里的可玩机种。
 - 引擎基线固定 EmulatorJS **4.2.3**，system key 与 core 取自其 `getCores()`。
 - 下表只列 EmulatorJS 支持的机种；key / core 与 `getCores()` 一致，由 `tests/test_platforms.py` 钉住。
-- 词表当前共 36 个机种，已可玩 31 个，剩余 5 个。
-- 剩余 5 个中 `sega` / `mame` 是引擎兜底 key，不单独接，真正可新增 **3 个**。
+- 词表当前共 36 个机种，已可玩 34 个，剩余 2 个。
+- 剩余 2 个 `sega` / `mame` 是引擎兜底 key，不单独接，因此没有待新增机种。
 - 第 1 档 13 个已全部接入，包括 Commodore 五个：
   `c64`、`c128`、`pet`、`plus4`、`vic20`。
 - 第 2 档 3 个已全部接入：`atari5200`、`lynx`、`coleco`；BIOS 机制已通用化。
@@ -19,8 +19,10 @@
   `EJS_externalFiles`，多碟用 m3u。
 - Commodore 共用 `.d64` / `.prg`，由「后缀候选集 + 用户选择」消歧；
   创建后也能在编辑弹框里改类型。
-- 下表仍按词表顺序列出待接机种，不按难度重排；难度用「档」标注。
-- 结论：第 1–4 档已完成，剩下第 5 档的线程与数据模型。
+- 第 5 档 3 个已全部接入：`psp`、`dos`、`arcade`；线程按机种开启，
+  `.zip` 三义（HTML5 / DOS / 街机）由用户显式选择，街机保留 romset 名。
+- 机种清单当前为空；以后新增待接机种时再按词表顺序补表。
+- 结论：第 1–5 档已完成，词表 36 个机种中 34 个可玩，剩下 `sega` / `mame` 两个兜底 key。
 
 ## 工作量的五个档位
 
@@ -30,18 +32,12 @@
 | 2 | 0 | 已全部接入（BIOS 机制已通用化） | — |
 | 3 | 0 | 已全部接入（单文件 CD 镜像） | — |
 | 4 | 0 | 已全部接入（多文件本体 + m3u 多碟） | — |
-| 5 | 3 | 线程、COOP/COEP、数据模型 | 每个 3 天以上，街机以周计 |
+| 5 | 0 | 已全部接入（线程 + COOP/COEP + ZIP 三义） | — |
 
 ## 机种清单（按词表顺序）
 
-已可玩的 31 个不在下表重复列出。下表是剩余 3 个待接机种，按其在词表中的先后排列，
-接入后在下拉里的相对位置与此一致。
-
-| 机种 | key / core | 扩展名 | 档 | 说明 |
-|---|---|---|---|---|
-| 索尼 PSP | `psp` / `ppsspp` | `.iso` `.cso` | 5 | 强制线程 + WebGL2 |
-| DOS | `dos` / `dosbox_pure` | jsdos zip | 5 | 强制线程；键鼠 |
-| 街机 | `arcade` / `fbneo` | romset zip | 5 | `mame` 是独立兜底 key，不单独接；数据治理最重 |
+已可玩的 34 个不在下表重复列出。当前没有待接机种；`sega` / `mame` 是引擎兜底 key，
+不单独接入。新增机种时再在这里补表。
 
 ## 各档说明
 
@@ -116,17 +112,24 @@
 - PS1、土星、3DO 若收 cue+bin 原盘格式，可直接复用本档的 bundle 机制。
 - 同一游戏多盘的自研换盘 UI 暂不做，先用 EJS Disk 菜单；实机不支持时再补。
 
-### 第 5 档：需要改运行环境或数据模型
+### 第 5 档：线程与 ZIP 三义（已全部接入）
 
-对应：`psp`、`dos`、`arcade`。
+对应：`psp`、`dos`、`arcade`，均已接入。
 
-- 宿主页现在固定 `EJS_threads=false`。
-- PSP 与 DOS 要开线程，同时补齐 COOP/COEP，`SharedArrayBuffer` 才可用。
-- 需要改的位置：Docker 的 nginx、Windows 静态站、vite dev server。
-- PSP 核只有线程变体，约 4.5 MB；ISO/CSO 体积大，但本地分片上传已不设总大小上限。
-- DOS 核也只有线程变体，游戏要打成 jsdos ZIP。
-- 街机不需要线程，但 romset 与 FBNeo/MAME 版本绑定，数据治理最重。
-- 街机核体积：FBNeo 约 8.3 MB，MAME 2003 Plus 约 5.4 MB。
+- 宿主页不再固定 `EJS_threads=false`：`Platform.threads` 为真的机种（PSP / DOS）
+  由播放页传 `threads=1`，其余机种保持关闭。
+- HTML 文档（SPA 入口与 `emulator-host.html`）在 Docker nginx、Windows 静态站与
+  Vite dev server 三处都带 `Cross-Origin-Opener-Policy: same-origin` 与
+  `Cross-Origin-Embedder-Policy: require-corp`，让 `SharedArrayBuffer` 可用。
+- H5 资源响应显式 `Cross-Origin-Embedder-Policy: unsafe-none` 与
+  `Cross-Origin-Resource-Policy: cross-origin`，沙箱页里的外链资源不被隔离策略拦掉。
+- PSP 收 `.iso` / `.cso`，核 `ppsspp` 只有线程变体并强制 WebGL2；
+  除核心外还要打包 `cores/ppsspp-assets.zip`。
+- DOS 收 `.jsdos` 与 `.zip`，核 `dosbox_pure` 只有线程变体；`.zip` 与 H5 / 街机共用后缀，
+  创建时三选一，默认仍是 HTML5。
+- 街机收 romset `.zip`，落盘名保持集合名（如 `mslug.zip`），否则 FBNeo 找不到集合；
+  只打包默认 `fbneo`，BIOS 用可选 `arcade.zip`（`neogeo.zip`、`pgm.zip`）。
+- 街机只接受本地上传；网络直链的临时名 `remote.zip` 无法满足集合名要求。
 
 ## 共性注意事项
 
@@ -135,7 +138,7 @@
 - 新增机种的显示名统一为「公司名 + 空格 + 型号」，由 `tests/test_platforms.py` 钉住。
 - **`.zip` 已被 H5 占用**：不能把 `.zip` 直接加给街机、DOS、Sega CD、Amiga。
 - 多文件类型必须改成「用户选类型优先」，后缀只做提示。
-- 线程开关现在是全局的；按机种开线程要避免影响现有 31 个机种。
+- 线程开关现在是按机种的；PSP / DOS 之外保持关闭，避免影响其余 32 个机种。
 - EJS 文档里的 3DS 属于 4.3-pre；本仓库钉死 4.2.3，不接。
 - 不新增 `sega` / `mame` 两个兜底 key 的入口。
 
@@ -146,7 +149,7 @@
 3. ~~第 1 档 13 个全部接入，含 Commodore 与类型选择/修改机制。~~ 已完成。
 4. ~~接 `n64`，跑通第一个重核机种。~~ 第 3 档 5 个已全部接入。
 5. ~~第 4 档 `segaCD`、`amiga` 与多文件本体。~~ 已完成。
-6. 最后做第 5 档：PSP、DOS、街机。
+6. ~~最后做第 5 档：PSP、DOS、街机。~~ 已完成；后续只剩 PCE CD 与街机数据治理增强。
 
 ## 测试要点
 
@@ -154,7 +157,7 @@
 - BIOS 档：BIOS 缺失时有中文提示，补齐后可正常启动。
 - 重核档：确认帧率与截图比例，低配设备要有可接受的降级表现。
 - 多文件档：多盘切换、存档、删除时不残留临时文件。
-- 线程档：确认响应头带 COOP/COEP，且现有 31 个机种不受影响。
+- 线程档：确认响应头带 COOP/COEP，且 PSP / DOS 之外的机种不受影响。
 - 每档都要更新 `tests/test_platforms.py` 的词表不变量（显示名格式、扩展名、BIOS 规格）
   与 EJS `getCores()` 一致性断言。
 - 待接清单本身也由测试校验：只允许列 EJS 支持的 key / core，且覆盖全部剩余机种。

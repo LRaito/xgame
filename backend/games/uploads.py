@@ -7,6 +7,10 @@
 多文件本体（cue+bin / m3u / 多盘）的每个物理文件各开一个这样的会话，创建/换本体时
 用 `claim_many()` 一次取全，再由 `body_bundle` 校验成组；本节不引入打包格式。
 
+第 5 档的 DOS（`.jsdos` / `.zip`）与街机（romset `.zip`）仍是单文件会话：
+DOS 由引擎解包，街机由 FBNeo 直接读 zip；`uploads.create()` 只按所选类型放行
+`.zip`，不在这里做内容校验。
+
 暂存区在**数据根**下（与最终素材同一文件系统），提交只是 `os.replace`。会话元数据
 用 JSON 落盘，进程重启后仍能清理；超过 24 小时的会话在启动时删掉。
 """
@@ -76,7 +80,11 @@ def _candidate_game_types(extension: str) -> tuple[str, ...]:
     if extension == ".swf":
         return ("flash",)
     if extension == ".zip":
-        return ("h5",)
+        # ZIP 同时是 H5 静态包、DOS 的 jsdos 包与街机 romset；具体类型由用户选。
+        return (
+            "h5",
+            *(platform.id for platform in playable_platforms_for_any_extension(".zip")),
+        )
     return tuple(
         platform.id for platform in playable_platforms_for_any_extension(extension)
     )
@@ -173,10 +181,15 @@ class BodyUploadService:
             raise ValidationError(f"无法识别的游戏文件格式，仅支持 {allowed}。")
         if not isinstance(size, int) or size <= 0:
             raise ValidationError("文件大小无效。")
-        if extension == ".zip" and size > archive.MAX_ZIP_SIZE:
+        hint = (game_type or "").strip()
+        # 128MB 只约束 H5 静态包；DOS 的 jsdos 包与街机 romset 不受这个应用层上限。
+        if (
+            extension == ".zip"
+            and hint not in ("dos", "arcade")
+            and size > archive.MAX_ZIP_SIZE
+        ):
             raise ValidationError("压缩包过大。")
         candidates = _candidate_game_types(extension)
-        hint = (game_type or "").strip()
         if hint and hint not in candidates:
             raise ValidationError("所选游戏类型与文件后缀不符。")
         upload_id = uuid.uuid4().hex
