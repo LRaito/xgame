@@ -36,9 +36,9 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 
 // 播放页标题栏里的通用下拉：触发按钮与面板格子统一用 AppButton（深色、大号触发、
-// 小号格子），「滤镜 / 画质 / 窗口」三处共用这一个组件，样式保持一致。
+// 小号格子），「画质 / 窗口」两处共用这一个组件，样式保持一致。
 const props = defineProps({
-    // 左侧标签（滤镜 / 画质 / 窗口）；空字符串则不显示
+    // 左侧标签（画质 / 窗口）；空字符串则不显示
     label: { type: String, default: "" },
     modelValue: { type: String, default: "" },
     // [{ value, label }]；当前值不在表里时显示第一项
