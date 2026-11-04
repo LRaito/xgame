@@ -359,8 +359,16 @@ def test_resolve_platform_ignores_case_and_whitespace():
 
 def test_platform_label_falls_back_to_the_raw_name():
     assert platform_label("nes") == "任天堂 FC"
-    assert platform_label(None, "3DS") == "3DS"
-    assert platform_label("raw:3ds", "3DS") == "3DS"
+    assert platform_label(None, "未知机种") == "未知机种"
+    assert platform_label("raw:unknown", "未知机种") == "未知机种"
+
+
+def test_platform_label_uses_unified_names_for_unmatched_consoles():
+    """榜单里出现的未收录机种也按统一描述展示，不吐 CSV 原文。"""
+    assert platform_label(None, "3DS") == "任天堂 3DS"
+    assert platform_label("raw:3ds", "3DS") == "任天堂 3DS"
+    assert platform_label(None, "CD-I") == "飞利浦 CD-i"
+    assert platform_label("raw:cd-i", "CD-I") == "飞利浦 CD-i"
 
 
 def test_platform_label_formats_unmatched_company_names():

@@ -82,7 +82,7 @@ class GameRankingService:
         """机种清单（去重、按词表顺序）与默认机种。
 
         `MIN(console)` 取的是该机种在 CSV 里出现过的写法中最小的一条，只用于「认不出机种」
-        的那些（`3DS`、`CD-I`）当显示名；认得出的用词表里的统一显示名。
+        的那些当兜底；认得出的用词表统一显示名，未收录但登记了显示名的（`3DS`、`CD-I`）也统一。
         """
         if not self.is_indexed():
             return RankingConsoles(False, False, [], None)

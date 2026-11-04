@@ -517,12 +517,29 @@ def platform_order(platform_id: str | None) -> int:
     return PLATFORM_ORDER.get(platform_id or "", len(PLATFORMS))
 
 
+# 未收录机种的统一显示名。这些机器没有 EmulatorJS system（进不了 `PLATFORMS`），
+# 但外部名录里出现过；名字本身不带厂商，光靠 `display_console_name` 补不出厂商前缀。
+# 键是 `normalize_name()` 的口径，值是统一显示名。
+_UNMATCHED_CONSOLE_LABELS: dict[str, str] = {
+    normalize_name("3DS"): "任天堂 3DS",
+    normalize_name("任天堂3DS"): "任天堂 3DS",
+    normalize_name("CD-I"): "飞利浦 CD-i",
+    normalize_name("飞利浦CD-i"): "飞利浦 CD-i",
+}
+
+
+def console_label(raw: str) -> str:
+    """外部名录机种的显示名：认不出的机种先查显式表，否则只补厂商名后的空格。"""
+    text = (raw or "").strip()
+    return _UNMATCHED_CONSOLE_LABELS.get(normalize_name(text)) or display_console_name(text)
+
+
 def platform_label(platform_id: str | None, fallback: str = "") -> str:
-    """机种的统一显示名；认不出机种时回退给调用方给的原文，并补齐厂商名后的空格。"""
+    """机种的统一显示名；认不出机种时回退给调用方给的原文，并走未收录机种的显示名。"""
     platform = PLATFORM_BY_ID.get(platform_id or "")
     if platform:
         return platform.label
-    return display_console_name(fallback) or platform_id or ""
+    return console_label(fallback) or platform_id or ""
 
 
 def playable_platforms() -> tuple[Platform, ...]:

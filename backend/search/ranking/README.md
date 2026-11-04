@@ -60,7 +60,8 @@
 
 - 手动：在项目根目录跑 `make index`（会连检索索引一起重建，约 1 秒）。
 - **换了机种写法**（写了词表里还没有的名字）要去 `backend/games/platforms.py` 补一条别名，
-  否则它会被归为「未收录」、下拉里以原文出现；`tests/test_platforms.py` 会拿这份数据提醒你。
+  否则它会被归为「未收录」、下拉里以原文出现（名字里没有厂商的可在未收录显示名表里登记统一
+  称呼，如 `3DS` → `任天堂 3DS`、`CD-I` → `飞利浦 CD-i`）；`tests/test_platforms.py` 会拿这份数据提醒你。
 - 自动：服务启动时发现 `game.db` 里的榜单指纹与这份 CSV 不一致（或还没加载过），会就地补一次；
   源文件没变时一个字节都不写。
 - 只重建检索、暂时不碰榜单：`python -m backend.cli index --skip-ranking`。
