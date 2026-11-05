@@ -1,5 +1,7 @@
 # H5 与攻略包
 
+本文件回答：H5 与攻略包如何校验、解包和读取。
+
 ## 范围与权威
 
 - H5 游戏与 ZIP 形态的攻略共用一套压缩包校验与解包原语。
@@ -8,6 +10,24 @@
 - 攻略入口在游戏中心卡片的右键菜单。
 - 设计取舍见 `../architecture.md` 的「决策 6」与「决策 14」。
 - 制作攻略的流程见 `.claude/skills/make-guide`。
+
+## 职责
+
+- 校验 H5 与攻略 ZIP，只在播放或查看时解包。
+- 提供 H5 沙箱资源与攻略资源的读取。
+- 保存原始 ZIP/PDF，维护攻略形态。
+
+## 关键接口
+
+- `POST|DELETE /api/games/manage/{id}/guide`。
+- `GET|HEAD /api/games/{id}/h5/{路径}`、`/guide/{路径}`、`/guide.pdf`。
+- 领域实现：`backend/games/archive.py`、`runtime_assets.py`、`service.py`。
+
+## 依赖
+
+- 数据根与运行时根两个 `LocalStorage`。
+- `backend/games/paths.py` 的 `h5/` 与 `guide/` 目录约定。
+- CSP `sandbox` 与 `nosniff` 等响应头。
 
 ## 数据与路径
 
@@ -80,7 +100,8 @@
 - 加登录依赖只会让游戏加载不了 JS 与图片。
 - 播放页本身仍要登录；未登录拿不到游戏 id 与入口地址。
 - 响应强制 CSP `sandbox`，且不含 `allow-same-origin`。
-- sandbox 还带 `allow-scripts allow-forms allow-modals allow-popups`。
+- sandbox 还带 `allow-scripts allow-forms allow-modals allow-popups
+  allow-pointer-lock allow-downloads allow-presentation`。
 - 另加 `nosniff`、`Referrer-Policy: no-referrer`、`ACAO: *`、`no-cache`。
 - `no-cache` 避免重传后仍取到旧资源。
 - 首次访问会触发解包写盘，代价上界是一份已上传内容的解压副本。

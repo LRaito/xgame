@@ -1,15 +1,35 @@
 # Docker 交付
 
+本文件回答：Docker 路线如何构建、部署与备份。
+
 ## 范围与权威
 
 - Docker 是正式运行方式，由根目录 `docker-compose.yml` 编排。
 - 只有两个服务：`web` 与 `api`，没有对象存储。
 - api 镜像来自 `backend/Dockerfile`，web 镜像来自 `frontend/Dockerfile`。
 - 容器入口是 `backend/entrypoint.sh`。
-- 配置在 `backend/config.py`；`.env` 只给 compose 读。
+- 配置在 `backend/config.py`；`.env` 由 compose 与 Makefile 读取。
 - 哨兵检查见 `backend/mount_guard.py`，备份见 `backend/backup.py`。
 - 索引构建见 `backend/games/search_index.py`。
 - 设计背景见 `../architecture.md` 的「运行架构」与「配置」。
+
+## 职责
+
+- 用 Docker Compose 交付 web 与 api 两个容器。
+- 把两个宿主目录 bind 进容器，并做启动哨兵检查。
+- 维护 HTTPS、反向代理、上传闸门与 SQLite 备份。
+
+## 关键接口
+
+- 部署入口：`docker-compose.yml`、`Makefile`。
+- 镜像：`backend/Dockerfile`、`frontend/Dockerfile`。
+- 网关：`frontend/nginx.conf.template`；启动检查：`backend/entrypoint.sh`、`mount_guard.py`。
+
+## 依赖
+
+- Docker Compose、nginx、Gunicorn + uvicorn。
+- `STORAGE_HOST_DIR`、`RUNTIME_HOST_DIR`、`WEB_HTTPS_PORT` 三个 `.env` 键。
+- 仓库内 `certs/` 的自签名证书。
 
 ## 数据与路径
 
@@ -48,7 +68,8 @@
 - `/api/` 同时用 `proxy_http_version 1.1`，没有长度的流式请求可用 chunked 转给后端。
 - 本体超过 30MB 由前端切 16MB 分片；攻略 ZIP/PDF 仍限 128MB。
 - 多文件本体（cue+bin / m3u / 多盘）每个物理文件各开一个分片会话，单请求仍受 130m 网关限制。
-- `/assets/`、`/ruffle/`、`/emulatorjs/` 是 immutable 长缓存。
+- `/assets/`、`/ruffle/`、`/emulatorjs/` 是 immutable 长缓存；
+  更具体的 `/emulatorjs/bios/` 例外，改为 `no-cache`。
 - 这些前缀未命中就 404，不回落 `index.html`。
 - `index.html` 与 `emulator-host.html` 是 no-cache。
 - 这两个 HTML 响应另带 `Cross-Origin-Opener-Policy: same-origin` 与
@@ -111,7 +132,8 @@
 - 文件不存在或 `schema_version` 不符时整库重建。
 - 已存在且版本一致时，`ensure_ranking_loaded()` 就地补榜单。
 - 手动重建入口是 `make index`；整库重建 + `os.replace()`，不开 WAL。
-- `cp .env.example .env` 可选，只放三个键；`make all` 等价 build + up -d。
+- `cp .env.example .env` 可选，只放三个键；`make all` 等于 build + up，
+  `up` 在 `compose up -d` 之后还会重启 api 与 web 各一次。
 - 浏览器打开 `https://localhost`，点「注册一个」建号。
 
 ## 边界与错误

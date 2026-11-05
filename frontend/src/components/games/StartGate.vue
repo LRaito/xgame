@@ -1,14 +1,16 @@
 <template>
     <div class="start-gate" @click="$emit('start')">
         <div class="start-gate__content">
-            <button
-                type="button"
+            <app-button
                 class="start-gate__start"
+                text
+                size="lg"
+                tone="dark"
                 aria-label="开始游戏"
             >
                 <span class="start-gate__press">PRESS START</span>
                 <span class="start-gate__zh">投币开始</span>
-            </button>
+            </app-button>
             <span class="start-gate__coin" aria-hidden="true">INSERT COIN</span>
         </div>
     </div>
@@ -81,18 +83,16 @@ defineEmits(["start"]);
     gap: clamp(18px, 2vw, 26px);
 }
 
-/* 按钮只承载 PRESS START 与中文提示，投币字样留在外面 */
+/* 按钮只承载 PRESS START 与中文提示，投币字样留在外面；
+   边框、背景与游标交给 AppButton 的 text 形态 */
 .start-gate__start {
-    display: flex;
     flex-direction: column;
-    align-items: center;
     gap: clamp(8px, 1vw, 12px);
-    padding: 0;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    font: inherit;
     color: inherit;
+}
+
+.app-button.start-gate__start:hover {
+    text-decoration: none;
 }
 
 .start-gate__press {

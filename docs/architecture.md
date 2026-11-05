@@ -6,7 +6,7 @@
 
 - 编码约定见 [`AGENTS.md`](../AGENTS.md)。
 - 数据与文件结构见 [`data_dict.md`](data_dict.md)。
-- 功能实现细节见 [`specs/`](specs/README.md)。
+- 功能实现细节见 [``](README.md)。
 
 读者：仓库主人，以及之后修改代码的 Agent。
 
@@ -14,8 +14,8 @@
 
 x 是私人游戏平台，不是对外 SaaS。
 
-只做一件事：把 Flash、HTML5 与 8/16/32-bit 主机游戏收进自己的库里，
-在浏览器里即开即玩，并让每个账号有独立的模拟器配置与存档。
+只做一件事：把 Flash、HTML5 与 8/16/32/64-bit 主机游戏、PSP、DOS 与街机收进自己的库里，
+在浏览器里即开即玩，并让每个账号有独立的模拟器配置、存档、截图与统计。
 
 三块界面：
 
@@ -29,8 +29,8 @@ x 是私人游戏平台，不是对外 SaaS。
 3. **游戏发现**（`/games/discover`）— 外部中英文名录的只读全文检索 + 按机种榜单。
 
 界面是 Vue 3 SPA，FastAPI 只提供 JSON API。
-开放注册；除注册/登录接口与 H5 资源外，所有页面与接口都要求登录。
-账号不做安全机制，只用于隔离模拟器配置与存档。
+开放注册；除注册/登录、CSRF、健康检查与 H5 资源外，所有页面与接口都要求登录。
+账号不做安全机制，只用于隔离模拟器配置、存档、截图与统计。
 
 ## 高层架构
 
@@ -92,7 +92,7 @@ x 是私人游戏平台，不是对外 SaaS。
 frontend/     Vue 3 SPA：views / api / components / utils / router
 backend/      FastAPI：auth / games / tools / storage
 tests/        pytest
-docs/         architecture / data_dict / specs
+docs/         architecture / data_dict / modules / common / plans
 packaging/    Windows 解压即用包
 certs/        自签名证书
 scripts/      版本号与证书脚本
@@ -102,7 +102,7 @@ scripts/      版本号与证书脚本
 - 一个功能一块：`router.py` + `service.py`。
 - 游戏相关代码集中在 `backend/games/`。
 - 跨模块存储与下载在 `backend/storage/`。
-- 各功能细节见 [`specs/`](specs/README.md)。
+- 各功能细节见 [``](README.md)。
 
 ## 关键设计决策
 
@@ -132,13 +132,13 @@ scripts/      版本号与证书脚本
 - **原因：** 数据要能直接拿到，备份/迁移/排查都是普通文件操作。
 - **为什么库单独放：** 库一直被写，网盘客户端拷不动；数据目录则要能整体备份。
 - **代价：** 宿主 bind 有时序要求，`/mnt` 盘上缺 `.mounted` 会拒绝启动。
-- **细节：** 见 [`delivery-docker.md`](specs/delivery-docker.md) 与
+- **细节：** 见 [`delivery-docker.md`](modules/delivery-docker.md) 与
   [`DEVELOP.md`](../DEVELOP.md) 的「根目录哨兵（操作）」。
 
 ### 决策 5：账号只做隔离，不做安全机制
 
 - **决定：** 开放注册，只填用户名与密码；无邮箱、验证码、找回密码、OAuth。
-- **原因：** 只用于隔离配置与存档，不承载敏感数据。
+- **原因：** 只用于隔离配置、存档、截图与统计，不承载敏感数据。
 - **用户名收窄字符集：** 它会被直接当成存档目录名。
 - **何时重评：** 真要放敏感数据时，先补多因子与权限模型。
 
@@ -149,7 +149,7 @@ scripts/      版本号与证书脚本
 - **原因：** H5 是第三方 HTML/JS；不透明源让它读不到 cookie/DOM、无法调 `/api`。
 - **代价：** 沙箱下 `localStorage` / IndexedDB / Worker 不可用；H5 不接云存档。
 - **何时重评：** 大量 H5 依赖浏览器存储时，改为独立源承载。
-- **细节：** 见 [`guide-and-h5.md`](specs/guide-and-h5.md)。
+- **细节：** 见 [`guide-and-h5.md`](modules/guide-and-h5.md)。
 
 ### 决策 7：文件存储走「相对路径 + 本地目录」，保留流式协议
 
@@ -158,44 +158,45 @@ scripts/      版本号与证书脚本
 - **原因：** SQLite 只存相对路径，换盘只改环境变量；分层上 service 不知道根在哪。
 - **代价：** 磁盘没有元数据，读取时按后缀猜 MIME。
 - **何时重评：** 需要多机共享或对象存储语义时再换实现。
-- **细节：** 见 [`game-storage.md`](specs/game-storage.md)。
+- **细节：** 见 [`game-storage.md`](modules/game-storage.md)。
 
-### 决策 8：全部页面与接口需登录（H5 资源接口除外）
+### 决策 8：全部业务页面与接口需登录（基础设施接口与 H5 资源除外）
 
-- **决定：** 不做游客模式；前端路由经 `permission.js`，后端接口依赖 `CurrentUser`。
-- **唯一例外：** H5 资源 `GET /api/games/{id}/h5/{路径}`。
+- **决定：** 不做游客模式；前端路由经 `permission.js`，后端业务接口依赖 `CurrentUser`。
+- **免登录例外：** `/health`、`/api/csrf`、`/api/register`、`/api/login` 与
+  H5 资源 `GET /api/games/{id}/h5/{路径}`。
 - **原因：** H5 在沙箱不透明源里，`SameSite=Lax` cookie 带不上，加登录只会让资源加载失败。
 - **攻略不在例外里：** 它是新标签页顶层导航的同源页面，照常带 cookie。
 - **何时重评：** 要严格鉴权 H5 时，改承载方式，而不是给资源接口加登录。
-- **细节：** 见 [`auth.md`](specs/auth.md)。
+- **细节：** 见 [`auth.md`](modules/auth.md)。
 
 ### 决策 9：云端存档按整体快照
 
 - **决定：** 把某 (用户, 游戏) 此刻全部本地存档上传成一个不可变快照。
 - **原因：** 存档是回滚点，快照保证还原一致性。
 - **边界：** 快照之间是同一 (用户, 游戏) 内的父子森林，不是通用 DAG。
-- **细节：** 见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- **细节：** 见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 ### 决策 10：卡带 ID 是游戏身份，改名走显式迁移
 
 - **决定：** 每盘游戏有全局唯一的卡带 ID；目录名用它而不是数据库 id 或游戏名。
 - **原因：** 游戏名会改；卡带 ID 可读、稳定，改游戏名不挪文件。
 - **代价：** 改名要搬三类目录、改写五处路径列，做成独立接口便于回滚。
-- **细节：** 见 [`game-storage.md`](specs/game-storage.md)。
+- **细节：** 见 [`game-storage.md`](modules/game-storage.md)。
 
 ### 决策 11：模拟器设置按平台随账号同步
 
 - **决定：** 设置按 (用户, 平台) 各存一套，整块 JSON 存 SQLite。
 - **原因：** 引擎只在启动时读一次设置，必须在拉起 iframe 前写回。
 - **代价：** 按平台存，同平台不同游戏互相覆盖；忘记点「保存配置」只留在本机。
-- **细节：** 见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- **细节：** 见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 ### 决策 12：游戏截图按账号隔离，封面全站共享
 
 - **决定：** 截图元数据按 (用户, 游戏) 存，字节按账号目录落盘。
 - **图集不同：** 按游戏共享，存在游戏目录内。
 - **原因：** 截图是「我的游玩记录」；封面与图集是「这盘卡带长什么样」。
-- **细节：** 见 [`game-assets.md`](specs/game-assets.md)。
+- **细节：** 见 [`game-assets.md`](modules/game-assets.md)。
 
 ### 决策 13：游戏发现是独立只读派生库
 
@@ -203,7 +204,7 @@ scripts/      版本号与证书脚本
 - **写入：** 只有 `search_index.py`；整库重建 + `os.replace` 原子替换。
 - **运行期：** 只读连接，每请求一条短连接；不参与备份。
 - **原因：** 数据可从 CSV 重建，不该混进业务库。
-- **细节：** 见 [`game-discover.md`](specs/game-discover.md)。
+- **细节：** 见 [`game-discover.md`](modules/game-discover.md)。
 
 ### 决策 14：H5 与 ZIP 攻略只上传 zip，按需解到运行时根
 
@@ -211,14 +212,15 @@ scripts/      版本号与证书脚本
 - **PDF 攻略：** 原样存数据根，不解包。
 - **原因：** 解包产物是派生物，放进数据根会让备份体积膨胀。
 - **代价：** 首次访问多一次解压；解包锁要求 Gunicorn 单进程。
-- **细节：** 见 [`guide-and-h5.md`](specs/guide-and-h5.md)。
+- **细节：** 见 [`guide-and-h5.md`](modules/guide-and-h5.md)。
 
 ## 模块依赖
 
 ```
 frontend views / api/*
         ↓
-  routers（tools、auth、games、games/saves、games/screenshots、games/settings、games/stats）
+  routers（tools、auth、games、games/uploads、games/search、games/ranking、
+           games/saves、games/screenshots、games/gallery、games/settings、games/stats）
         ↓
      services（auth/game/cloud-save/screenshot/emulator-settings/game-stats …）
         ↓
@@ -240,35 +242,35 @@ frontend views / api/*
 - 登录页调 `POST /api/register` 或 `/api/login`，成功后拿到 session cookie。
 - 前端再取 `GET /api/csrf`，写操作带 `X-CSRFToken`。
 - 所有页面经 `permission.js`，所有业务接口经 `CurrentUser`。
-- 细节见 [`auth.md`](specs/auth.md)。
+- 细节见 [`auth.md`](modules/auth.md)。
 
 ### 游戏入库与播放
 
 - 管理页上传/直链/搬运 → 服务端写入数据根 → SQLite 落一条 `games` 行。
 - 游戏中心列表读 SQLite，按类型给出播放路径。
 - 播放页按类型分派：Flash/Ruffle、H5/sandbox iframe、主机/EmulatorJS。
-- 细节见 [`game-storage.md`](specs/game-storage.md) 与
-  [`game-center-playback.md`](specs/game-center-playback.md)。
+- 细节见 [`game-storage.md`](modules/game-storage.md) 与
+  [`game-center-playback.md`](modules/game-center-playback.md)。
 
 ### 存档与统计
 
 - 播放页把本地存档整体上传成云端快照；快照按 (用户, 游戏) 隔离。
 - 模拟器设置按平台随账号同步；游玩时长每 30 秒心跳累加。
 - 进度只由用户手动设置，不随游玩自动变化。
-- 细节见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- 细节见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 ### 游戏发现
 
 - 37 个名录 CSV + 1 个榜单 CSV 构建成只读库 `game.db`。
 - 检索走 FTS5；榜单在请求期按卡带 ID 关联库存。
-- 细节见 [`game-discover.md`](specs/game-discover.md)。
+- 细节见 [`game-discover.md`](modules/game-discover.md)。
 
 ### 交付
 
 - Docker：web + api 两服务，两个宿主目录 bind 进容器。
 - Windows：后端托管前端 dist，单进程 uvicorn，http。
-- 细节见 [`delivery-docker.md`](specs/delivery-docker.md) 与
-  [`delivery-windows.md`](specs/delivery-windows.md)。
+- 细节见 [`delivery-docker.md`](modules/delivery-docker.md) 与
+  [`delivery-windows.md`](modules/delivery-windows.md)。
 
 ## 数据模型
 
@@ -300,14 +302,14 @@ JSON 一律在 `/api/` 下。信封：
 | `/api/games/recent` | 最近游玩 |
 | `/api/games/search` | 游戏检索与榜单 |
 
-完整端点表见 [`specs/api.md`](specs/api.md)。
+完整端点表见 [`common/http-api.md`](common/http-api.md)。
 
 ## 安全架构
 
 - 只支持 HTTPS；80 端口不发布。对外端口由 `WEB_HTTPS_PORT` 决定。
 - session cookie：HttpOnly、SameSite=Lax、HTTPS 下 Secure。
 - 写操作（除 register/login/csrf/health）校验 `X-CSRFToken`。
-- 免登录面只有注册/登录、`/health` 与 H5 资源；攻略资源需登录。
+- 免登录面只有注册/登录、`/api/csrf`、`/health` 与 H5 资源；攻略资源需登录。
 - H5 内容按不可信处理：CSP `sandbox` + `nosniff` + `Referrer-Policy: no-referrer`。
 - SPA 入口与模拟器宿主页带 COOP/COEP，仅用于让 PSP / DOS 的线程核拿到
   `SharedArrayBuffer`；H5 资源显式 `unsafe-none` + `CORP: cross-origin`，
@@ -333,11 +335,11 @@ docker compose
 - 数据根可整体拷走；运行时根不备份，解包产物自动重建。
 
 开发与 Docker 的差异、备份细节见 [`DEVELOP.md`](../DEVELOP.md) 与
-[`delivery-docker.md`](specs/delivery-docker.md)。
+[`delivery-docker.md`](modules/delivery-docker.md)。
 
 ## 配置
 
-配置写死在 `backend/config.py`。`.env` 只有三个键，且只给 docker compose 读：
+配置写死在 `backend/config.py`。`.env` 只有三个键，由 docker compose 与 Makefile 读取：
 
 | 变量 | 默认 | 用途 |
 |---|---|---|
@@ -348,8 +350,9 @@ docker compose
 不建 `.env` 时 compose 把两个根都退回 `./data/storage`；
 `.env.example` 才给出分开的默认值（`./data/runtime`）。
 
-代码内固定：`SECRET_KEY`、两个根路径、`WINDOWS_MOUNT_PREFIX`、
+代码内固定：`SECRET_KEY`、两个根路径的默认值、`WINDOWS_MOUNT_PREFIX`、
 SQLite 路径、备份间隔、证书路径、session cookie 策略。
+两个根路径是 `Settings` 字段，Dockerfile 与 Windows 启动器会按部署路线覆盖。
 
 ## 性能
 
@@ -370,24 +373,24 @@ python -m pytest # 只跑后端
 - 只改文档不跑测试。
 - 覆盖重点：账号、存储、入库、卡带 ID、H5/攻略、存档、截图/图集、
   设置、统计、检索/榜单、静态站、请求上限、Windows 启动器。
-- 每个功能的测试要点见对应 [`specs/*.md`](specs/README.md) 的「测试要点」。
+- 每个功能的测试要点见对应 [`modules/*.md`](README.md) 的「测试要点」。
 
 ## 排障索引
 
 | 症状 | 先看 |
 |---|---|
 | `/mnt` 盘上数据像是空的、api 反复重启 | [`DEVELOP.md`](../DEVELOP.md) 的「排障」 |
-| 登录被锁定 | [`auth.md`](specs/auth.md) |
-| 卡带 ID 被占用 | [`game-storage.md`](specs/game-storage.md) |
-| H5 资源 404 | [`guide-and-h5.md`](specs/guide-and-h5.md) |
+| 登录被锁定 | [`auth.md`](modules/auth.md) |
+| 卡带 ID 被占用 | [`game-storage.md`](modules/game-storage.md) |
+| H5 资源 404 | [`guide-and-h5.md`](modules/guide-and-h5.md) |
 | 页面还是旧版 | [`DEVELOP.md`](../DEVELOP.md) 的「排障」 |
-| 索引构建失败 / 榜单没加载 | [`game-discover.md`](specs/game-discover.md) |
+| 索引构建失败 / 榜单没加载 | [`game-discover.md`](modules/game-discover.md) |
 | Windows 包被系统拦截 | [`packaging/windows/说明.txt`](../packaging/windows/说明.txt) |
 
 ## 相关资源
 
 - [`AGENTS.md`](../AGENTS.md) — 编码约定
 - [`data_dict.md`](data_dict.md) — SQLite 表与文件路径
-- [`specs/README.md`](specs/README.md) — 功能规格索引
+- [`README.md`](README.md) — 功能规格索引
 - [FastAPI](https://fastapi.tiangolo.com/) / [SQLModel](https://sqlmodel.tiangolo.com/)
 - [Ruffle](https://ruffle.rs/) / [EmulatorJS](https://emulatorjs.org/)

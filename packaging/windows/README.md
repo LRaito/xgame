@@ -27,8 +27,8 @@ curl / zip**。
 镜像 tag 是「Dockerfile + 上面这几个输入文件」的哈希：改了任一处就自动重建，没改就一直复用。
 要强制刷新（比如拿传递依赖的安全更新）：`WINBUILD_NO_CACHE=1 make win-image`。
 
-**模拟器 BIOS 不在这份预置资产里**：它们是用户自备文件（NDS 的 `nds.zip`、Lynx 的 `lynx.zip`、
-ColecoVision 的 `coleco.zip`，以及可选的 `atari5200.zip`），不随仓库提交。组装时如果宿主机有
+**模拟器 BIOS 不在这份预置资产里**：它们是用户自备文件，完整清单与包内文件见根
+[`README.md`](../../README.md) 的「玩游戏」BIOS 表，不随仓库提交。组装时如果宿主机有
 `frontend/public/emulatorjs/bios/`，会原样拷进包里的 `web/emulatorjs/bios/`；没有就跳过，
 需要 BIOS 的机种会在启动前提示缺少对应 ZIP。
 
@@ -41,7 +41,7 @@ EmulatorJS CDN），之后每次出包都是离线的。
 Windows 的 `python.exe`；宿主机不是 WSL 就跳过。
 
 版本号由 `scripts/version.sh` 从 git tag 算（就是 `xgame_v<版本>.zip` 里那个），
-规则见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。
+规则见 [`docs/modules/delivery-windows.md`](../../docs/modules/delivery-windows.md)。
 
 ## 包里是什么
 
@@ -89,7 +89,7 @@ make_icon.py / xgame.png  从源图生成 xgame.ico（换图标 = 替换 xgame.p
 - 上传闸门由 `backend/request_limit.py` 顶替 nginx 的 `client_max_body_size`。
 
 完整对照、代价与原因见
-[`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。
+[`docs/modules/delivery-windows.md`](../../docs/modules/delivery-windows.md)。
 
 ## 升级
 
@@ -99,7 +99,7 @@ make_icon.py / xgame.png  从源图生成 xgame.ico（换图标 = 替换 xgame.p
 - 停止服务 = 关掉控制台窗口；硬杀不会坏库。
 - 桌面快捷方式与开机自启要重新跑一次对应的 `.bat`。
 
-完整步骤见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)
+完整步骤见 [`docs/modules/delivery-windows.md`](../../docs/modules/delivery-windows.md)
 与包内 `说明.txt`。
 
 ## 构建细节
@@ -143,4 +143,4 @@ make win                                   # 重新组装
 - 面向用户的中文由 Python 或 PowerShell 输出。
 - 从网上下载的 zip 会带 MOTW，处理办法见包内 `说明.txt` 第一节。
 
-细节与原因见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。
+细节与原因见 [`docs/modules/delivery-windows.md`](../../docs/modules/delivery-windows.md)。

@@ -2,7 +2,7 @@
 
 盘查日期：2026-11-04。状态随代码变化，动手前先按下面的「完成标准」核对。
 
-- 机种清单取自 [`platforms.md`](platforms.md) 的权威表 `backend/games/platforms.py`。
+- 机种清单取自 [`platforms.md`](../common/platforms.md) 的权威表 `backend/games/platforms.py`。
 - 只列已收录、可上传可玩的机种（`extensions` 非空，共 34 个）。
 - `sega` / `mame` 是外部名录的兜底 key，不开放上传，不在表内。
 - 顺序与词表一致：按厂商分组。
@@ -65,6 +65,6 @@
 
 ## 相关文档
 
-- 素材位置、洞口几何与合成规则 → [`game-assets.md`](game-assets.md)
-- 机壳渲染与 NDS 多布局 → [`game-center-playback.md`](game-center-playback.md)
-- 机种词表与接入步骤 → [`platforms.md`](platforms.md)
+- 素材位置、洞口几何与合成规则 → [`game-assets.md`](../modules/game-assets.md)
+- 机壳渲染与 NDS 多布局 → [`game-center-playback.md`](../modules/game-center-playback.md)
+- 机种词表与接入步骤 → [`platforms.md`](../common/platforms.md)

@@ -1,5 +1,7 @@
 # 存档、设置、最近游玩与统计
 
+本文件回答：云端存档、模拟器设置、最近游玩与游玩统计如何工作。
+
 ## 范围与权威
 
 - 本规格覆盖云端存档快照、本地存档、存档管理弹框、模拟器设置同步、最近游玩与游玩统计。
@@ -9,6 +11,25 @@
 - 前端权威在 `frontend/src/components/games/SaveManager.vue`、`SaveTreeView.vue`。
 - 本地档与计时权威在 `frontend/src/utils/emulatorSaves.js`、`gamePlaytime.js`、`recentGames.js`。
 - 播放页入口与快捷键见 [`./game-center-playback.md`](./game-center-playback.md)。
+
+## 职责
+
+- 按整体快照上传、还原与编排云端存档。
+- 按账号与平台同步模拟器设置。
+- 记录最近游玩、累计时长与手动进度。
+
+## 关键接口
+
+- `GET|POST /api/games/saves` 与快照子资源。
+- `GET|PUT /api/games/emulator-settings`。
+- `GET|POST /api/games/recent`、`POST /api/games/stats/playtime`、`PUT /api/games/stats/{id}/*`。
+
+## 依赖
+
+- SQLModel 表 `game_cloud_snapshots`、`game_cloud_snapshot_files`、
+  `game_emulator_settings`、`game_recent_plays`、`game_user_stats`。
+- `backend/storage/` 与 `backend/games/paths.py`。
+- 前端播放页的本地存档与心跳逻辑。
 
 ## 数据与路径
 

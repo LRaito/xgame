@@ -1,11 +1,32 @@
 # 游戏存储与入库
 
+本文件回答：游戏文件放在哪、如何入库，以及卡带 ID 如何迁移。
+
 ## 范围与权威
 
 - 本文说明游戏文件放在哪、怎么读写，以及新建 / 换本体 / 搬运 / 删除的规则。
 - 路径权威是 `backend/games/paths.py`；入库逻辑权威是 `backend/games/service.py`。
 - 两个包的校验与解包原语在 `backend/games/archive.py`。
 - 数据库表结构见 `../data_dict.md`，本文不重复列字段。
+
+## 职责
+
+- 把游戏本体收进数据根：本地上传、网络直链、站点搬运。
+- 维护卡带 ID、封面类型、游戏目录与显式迁移。
+- 删除游戏时清理本体、封面、攻略与各账号的关联目录。
+
+## 关键接口
+
+- `GET|POST /api/games/manage`、`POST /api/games/manage/import`。
+- `PUT /api/games/manage/{id}/cartridge-id`、`PUT /api/games/manage/{id}/game-type`。
+- 领域实现：`backend/games/service.py`、`importer.py`、`remote.py`、`uploads.py`、`paths.py`。
+
+## 依赖
+
+- `backend/storage/` 的 `StorageBackend` 协议与 `LocalStorage` 实现。
+- SQLModel 表 `games`。
+- `backend/games/platforms.py` 提供机种、扩展名与候选顺序。
+- `backend/games/archive.py` 与 `runtime_assets.py` 处理 ZIP 与解包。
 
 ## 数据与路径
 
@@ -39,7 +60,7 @@
 ### 游戏类型
 
 - 游戏类型由「本体后缀 + 用户选择」判定，唯一入口是 `resolve_game_type()`。
-- `flash` ← `.swf`；`h5` ← `.zip`；其余 34 个主机类型见 [机种词表](./platforms.md)。
+- `flash` ← `.swf`；`h5` ← `.zip`；其余 34 个主机类型见 [机种词表](../common/platforms.md)。
 - `.zip` 同时是 H5 静态包、DOS 的 jsdos 包与街机 romset：候选是
   `h5` / `dos` / `arcade`。用户不传类型时保持历史默认 `h5`；DOS 与街机必须显式选择。
   `.jsdos` 唯一对应 `dos`，`.cso` 唯一对应 `psp`。
@@ -270,7 +291,7 @@
 
 ## 相关文档
 
-- [机种词表](./platforms.md)
+- [机种词表](../common/platforms.md)
 - [数据字典](../data_dict.md)
 - [架构说明](../architecture.md)
 - [编码约定](../../AGENTS.md)

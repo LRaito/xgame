@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from sqlmodel import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -85,6 +86,11 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     async def handle_http_exception(_request, exc: HTTPException):
         message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         return json_err(message, exc.status_code)
+
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation(_request, _exc: RequestValidationError):
+        # Pydantic 默认返回英文 422，会绕开统一错误信封；这里统一成中文 400。
+        return json_err("请求参数不合法。", 400)
 
     app.include_router(tools_router)
     app.include_router(auth_router)

@@ -6,7 +6,7 @@
 
 - SQLite 结构源头：`backend/*/models.py`（SQLModel `table=True`）。
 - 文件路径规则源头：`backend/games/paths.py`。
-- 业务行为与边界见 [`specs/`](specs/README.md)。
+- 业务行为与边界见 [``](README.md)。
 
 ## 存储总览
 
@@ -26,8 +26,9 @@
 - 文件本身是普通文件，可直接拷走、备份、浏览。
 - 相对路径统一用 `/` 分隔，由 `LocalStorage` 拼上根路径。
 
-类型映射：`str(max_length=n)` → `VARCHAR(n)`；`str` → `TEXT`；
-`int` → `INTEGER`；`datetime` → `DATETIME`；整型主键即自增 `INTEGER PRIMARY KEY`。
+类型映射：`str(max_length=n)` → `VARCHAR(n)`；无长度 `str` → `VARCHAR`；
+`int` → `INTEGER`；`float` → `FLOAT`；`datetime` → `DATETIME`；
+整型主键即自增 `INTEGER PRIMARY KEY`。
 
 ## SQLite 结构
 
@@ -63,7 +64,7 @@
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | id | INTEGER | PK 自增 | |
-| username | VARCHAR(32) | NOT NULL, UNIQUE | 登录名；规则见 [`auth.md`](specs/auth.md) |
+| username | VARCHAR(32) | NOT NULL, UNIQUE | 登录名；规则见 [`auth.md`](modules/auth.md) |
 | password_hash | VARCHAR(255) | NOT NULL | werkzeug 单向哈希 |
 | created_at | DATETIME | NOT NULL | UTC |
 
@@ -75,7 +76,7 @@
 | failed_count | INTEGER | NOT NULL | 累计失败次数 |
 | locked_until | DATETIME | NULL | 解锁时刻；NULL = 未锁定 |
 
-锁定阈值与行为见 [`auth.md`](specs/auth.md)。
+锁定阈值与行为见 [`auth.md`](modules/auth.md)。
 
 ### games — 游戏中心
 
@@ -85,8 +86,8 @@
 |---|---|---|---|
 | id | INTEGER | PK 自增 | 路由 `{game_id}`；与磁盘目录无关 |
 | name | VARCHAR(255) | NOT NULL, 唯一 `(game_type, name)` | 合法的 Windows / 网盘文件名 |
-| cartridge_id | VARCHAR(64) | NOT NULL, 唯一 | 大写；见 [`game-storage.md`](specs/game-storage.md) |
-| cover_type | VARCHAR(20) | NULL | 封面样式 id；见 [`game-storage.md`](specs/game-storage.md) |
+| cartridge_id | VARCHAR(64) | NOT NULL, 唯一 | 大写；见 [`game-storage.md`](modules/game-storage.md) |
+| cover_type | VARCHAR(20) | NULL | 封面样式 id；见 [`game-storage.md`](modules/game-storage.md) |
 | description | VARCHAR(200) | NOT NULL, 默认 `''` | 上限 200 字 |
 | game_type | VARCHAR(50) | NOT NULL, 索引 | `flash` / `h5` / 主机平台键 |
 | size | INTEGER | NOT NULL, 默认 0 | 本体字节数；多文件本体为 `body/` 下全部文件之和 |
@@ -101,9 +102,11 @@
 
 - `uq_games_cartridge_id`：卡带 ID 全局唯一。
 - `uq_games_game_type_name`：同类型下游戏名唯一。
+- `ix_games_name`：游戏名普通索引。
+- `ix_games_game_type`：游戏类型普通索引。
 - 中心列表按 `game_path != ''` 过滤。
 
-卡带 ID 改名、封面类型、命名规则见 [`game-storage.md`](specs/game-storage.md)。
+卡带 ID 改名、封面类型、命名规则见 [`game-storage.md`](modules/game-storage.md)。
 
 **`game_cloud_snapshots`**
 
@@ -113,13 +116,13 @@
 | user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 归属用户 |
 | game_id | INTEGER | NOT NULL, 索引 | 所属游戏；无 FK |
 | parent_id | INTEGER | NULL, 索引 | NULL = 顶层；无物理外键 |
-| sort_order | REAL | NOT NULL, 默认 0 | 展示分数，越小越靠前 |
+| sort_order | FLOAT | NOT NULL, 默认 0 | 展示分数，越小越靠前 |
 | remark | VARCHAR(100) | NOT NULL, 默认 `''` | 备注，上限 100 字 |
 | created_at | DATETIME | NOT NULL | 决定「最新一条」 |
 
 - 复合索引：`ix_game_cloud_snapshots_user_game_order`。
 - 父子关系、排序、删除父节点行为见
-  [`game-saves-stats.md`](specs/game-saves-stats.md)。
+  [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 **`game_cloud_snapshot_files`**
 
@@ -142,7 +145,7 @@
 | id | INTEGER | PK 自增 | |
 | user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 归属用户 |
 | game_id | INTEGER | NOT NULL, 索引 | 所属游戏；无 FK |
-| sort_order | REAL | NOT NULL, 默认 0 | 展示分数 |
+| sort_order | FLOAT | NOT NULL, 默认 0 | 展示分数 |
 | description | VARCHAR(15) | NOT NULL, 默认 `''` | 描述，上限 15 字 |
 | file_path | VARCHAR(500) | NOT NULL, 默认 `''` | 磁盘相对路径；不下发前端 |
 | size | INTEGER | NOT NULL, 默认 0 | 字节数 |
@@ -151,7 +154,7 @@
 
 - 复合索引：`ix_game_screenshots_user_game_order`。
 - 刻意不加唯一约束：分数排序靠中值插入。
-- 上传、删除、排序行为见 [`game-assets.md`](specs/game-assets.md)。
+- 上传、删除、排序行为见 [`game-assets.md`](modules/game-assets.md)。
 
 **`game_gallery_images`**
 
@@ -159,7 +162,7 @@
 |---|---|---|---|
 | id | INTEGER | PK 自增 | |
 | game_id | INTEGER | NOT NULL, 索引 | 所属游戏；无 FK |
-| sort_order | REAL | NOT NULL, 默认 0 | 展示分数 |
+| sort_order | FLOAT | NOT NULL, 默认 0 | 展示分数 |
 | description | VARCHAR(15) | NOT NULL, 默认 `''` | 描述，上限 15 字 |
 | file_path | VARCHAR(500) | NOT NULL, 默认 `''` | 磁盘相对路径；不下发前端 |
 | size | INTEGER | NOT NULL, 默认 0 | 字节数 |
@@ -168,7 +171,7 @@
 
 - 复合索引：`ix_game_gallery_images_game_order`。
 - 与截图相反：按游戏共享，不记上传者。
-- 行为见 [`game-assets.md`](specs/game-assets.md)。
+- 行为见 [`game-assets.md`](modules/game-assets.md)。
 
 **`game_emulator_settings`**
 
@@ -177,12 +180,12 @@
 | id | INTEGER | PK 自增 | |
 | user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 归属用户 |
 | game_type | VARCHAR(50) | NOT NULL, 唯一 `(user_id, game_type)` | 平台键 |
-| payload | TEXT | NOT NULL, 默认 `''` | `{controlSettings, settings, cheats}` |
+| payload | VARCHAR | NOT NULL, 默认 `''` | `{controlSettings, settings, cheats}` |
 | updated_at | DATETIME | NOT NULL | |
 
 - 只覆盖 34 个主机平台，不含 flash/h5。
 - 内容只存 SQLite，不落文件。
-- 行为见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- 行为见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 **`game_recent_plays`**
 
@@ -194,7 +197,7 @@
 | played_at | DATETIME | NOT NULL | 最近一次开玩时间 |
 
 - 每 (用户, 游戏) 一行；重玩只刷新时间。
-- 行为见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- 行为见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 **`game_user_stats`**
 
@@ -208,7 +211,7 @@
 | updated_at | DATETIME | NOT NULL | |
 
 - 与游戏类型无关：三类播放都往同一张表累加。
-- 心跳、覆盖式改写、进度规则见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- 心跳、覆盖式改写、进度规则见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 ## 文件存储结构
 
@@ -231,11 +234,11 @@
 - 空文件，**人工创建**，代码不代建。
 - 只在宿主路径落在 `WINDOWS_MOUNT_PREFIX`（默认 `/mnt`）下时检查。
 - 数据根与运行时根各查一份；两个根相同时就是同一个文件。
-- 机制与排障见 [`delivery-docker.md`](specs/delivery-docker.md) 与
+- 机制与排障见 [`delivery-docker.md`](modules/delivery-docker.md) 与
   [`DEVELOP.md`](../DEVELOP.md)。
 
 目录名一律用「游戏类型键 + 卡带 ID」，不随游戏名变化。
-改卡带 ID 与改游戏类型的迁移范围见 [`game-storage.md`](specs/game-storage.md)。
+改卡带 ID 与改游戏类型的迁移范围见 [`game-storage.md`](modules/game-storage.md)。
 
 ### 路径规则
 
@@ -279,10 +282,10 @@
 - **云端存档**目录带快照当时的类型；同样按 `file_path` 反推。
 - **分片上传暂存**是可丢弃的临时数据：提交后立即删除，未完成的会话在启动时按 24 小时 TTL 清理。
   它和数据根在同一文件系统，提交只是把 `body.part` 改名进 `game/…`。
-- 具体行为见 [`game-storage.md`](specs/game-storage.md)、
-  [`guide-and-h5.md`](specs/guide-and-h5.md)、
-  [`game-assets.md`](specs/game-assets.md)、
-  [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- 具体行为见 [`game-storage.md`](modules/game-storage.md)、
+  [`guide-and-h5.md`](modules/guide-and-h5.md)、
+  [`game-assets.md`](modules/game-assets.md)、
+  [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 ## 游戏发现索引（`game.db`）
 
@@ -322,4 +325,4 @@
 - 榜单与库存的关联在请求期做，不落库、不进索引、不缓存。
 - 榜单 CSV 格式见
   [`backend/search/ranking/README.md`](../backend/search/ranking/README.md)。
-- 详细行为见 [`game-discover.md`](specs/game-discover.md)。
+- 详细行为见 [`game-discover.md`](modules/game-discover.md)。

@@ -47,6 +47,13 @@ def test_recent_requires_login(client):
     assert client.post(URL, json={"game_id": 1}).status_code == 401
 
 
+def test_recent_missing_game_id_returns_envelope(logged_in):
+    """请求体缺字段时返回中文 400 信封，而不是 FastAPI 原生 422。"""
+    response = logged_in.post(URL, json={})
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "message": "请求参数不合法。"}
+
+
 def test_recent_empty_before_first_play(logged_in):
     response = logged_in.get(URL)
     assert response.status_code == 200

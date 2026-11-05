@@ -1,10 +1,30 @@
 # 账号与会话
 
+本文件回答：账号如何注册、登录、锁定，以及 session 与 CSRF 如何工作。
+
 ## 范围与权威
 
 - 后端实现是 `backend/auth/` 的 `router.py` / `service.py` / `login_lockout.py` / `models.py`。
 - 表结构见 `../data_dict.md` 的「auth — 账号」；前端守卫是 `frontend/src/permission.js`。
-- 账号只用于隔离各人的模拟器配置与存档，不做更强的安全机制。
+- 账号只用于隔离模拟器配置、存档、截图与统计，不做更强的安全机制。
+
+## 职责
+
+- 提供注册、登录、登出与当前用户查询。
+- 维护登录失败计数与临时锁定。
+- 提供 CSRF token，供前端写操作携带。
+
+## 关键接口
+
+- `POST /api/register`、`POST /api/login`、`POST /api/logout`、`GET /api/me`、`GET /api/csrf`。
+- 领域实现：`backend/auth/service.py`、`backend/auth/login_lockout.py`。
+- HTTP 入口：`backend/auth/router.py`。
+
+## 依赖
+
+- SQLModel 表 `users` 与 `login_attempts`。
+- `SessionMiddleware`、`CSRFMiddleware`。
+- `backend/deps.py` 的 `CurrentUser` 与 `DbSession`。
 
 ## 数据与路径
 
@@ -57,7 +77,8 @@
 - 非敏感用户名可缓存在 sessionStorage，键是 `x_username`。
 - `clearSession()` 按约定 key 清单同时清 sessionStorage 与 localStorage。
 - 401 拦截器单飞处理：清本地缓存并跳 `/login?redirect=…`。
-- 路由守卫白名单只有 `/login`：先 `fetchMe()`，失败则带 `redirect` 去登录页。
+- 路由守卫白名单只有 `/login`：sessionStorage 有缓存用户名时直接放行；
+  没有缓存才 `fetchMe()`，失败则带 `redirect` 去登录页，401 再由拦截器兜底。
 
 ### 免登录例外与不做项
 
@@ -84,7 +105,7 @@
 
 ## 相关文档
 
-- [HTTP 端点总表](./api.md)
+- [HTTP 端点总表](../common/http-api.md)
 - [数据字典](../data_dict.md)
 - [架构说明](../architecture.md) 的「决策 5」与「决策 8」
 - [编码约定](../../AGENTS.md)

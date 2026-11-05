@@ -16,7 +16,7 @@ description: 把封面图四周的杂色/黑边去掉，抠成透明底 PNG 并�
 - 游戏中心卡片。
 - 两边都吃透明 PNG。
 - 封面渲染与素材规则见
-  [`docs/specs/game-assets.md`](../../../docs/specs/game-assets.md)。
+  [`docs/modules/game-assets.md`](../../../docs/modules/game-assets.md)。
 
 ## 用法
 

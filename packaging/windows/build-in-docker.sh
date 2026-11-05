@@ -36,6 +36,7 @@ IMAGE_ONLY=0
 HASH_INPUTS=(
     "$DOCKERFILE"
     "$HERE/runtime.env"
+    "$HERE/fetch-runtime.sh"
     "$HERE/requirements-win.txt"
     "$REPO/frontend/package.json"
     "$REPO/frontend/package-lock.json"

@@ -1164,7 +1164,7 @@ function onSaveManagerHotkey(event) {
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
         return;
     }
-    if (!game.value || saveManagerVisible.value || shotDialogVisible.value) {
+    if (!game.value || saveManagerVisible.value || shotDialogVisible.value || syncingCloud) {
         return;
     }
     // 捕获阶段拦下：引擎自己也监听 keydown，Alt+` 不该同时进游戏

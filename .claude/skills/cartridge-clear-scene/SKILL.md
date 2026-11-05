@@ -25,7 +25,7 @@ description: 把卡带成品图里贴纸窗那一整块（封面图案 + 左右�
 - 底图放 `src/assets/`，由 Vite 加内容哈希，换图后 URL 自动变。
 - 别放 `public/`：文件名固定，nginx 不带 Cache-Control，会被浏览器启发式缓存顶住。
 - 素材几何与多样式对齐规则见
-  [`docs/specs/game-assets.md`](../../../docs/specs/game-assets.md)。
+  [`docs/modules/game-assets.md`](../../../docs/modules/game-assets.md)。
 
 ## 用法
 

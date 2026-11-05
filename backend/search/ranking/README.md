@@ -66,4 +66,4 @@
   源文件没变时一个字节都不写。
 - 只重建检索、暂时不碰榜单：`python -m backend.cli index --skip-ranking`。
 - 索引构建、只读连接与库存关联细节见
-  [`docs/specs/game-discover.md`](../../../docs/specs/game-discover.md)。
+  [`docs/modules/game-discover.md`](../../../docs/modules/game-discover.md)。

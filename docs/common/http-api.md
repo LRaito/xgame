@@ -1,10 +1,30 @@
 # HTTP 端点总表
 
+本文件回答：有哪些 HTTP 端点，登录与错误边界如何。
+
 ## 范围与权威
 
 - 本文只列稳定 HTTP 契约，实现细节以 `backend/*/router.py` 为准；业务路径都在 `/api/` 下。
 - 服务端不提供 HTML 页面路由，FastAPI 只返回 JSON 或文件流。
 - 信封：成功 `{ "ok": true, "data": ... }`；失败 `{ "ok": false, "message": "中文" }`。
+
+## 职责
+
+- 列出稳定的 HTTP 契约与统一响应信封。
+- 标明各端点的登录要求与 CSRF 要求。
+- 汇总错误状态码与业务边界。
+
+## 关键接口
+
+- 实现分散在 `backend/*/router.py`，由 `backend/__init__.py::create_app()` 注册。
+- 响应辅助在 `backend/http.py`；错误类型在 `backend/errors.py`。
+- 鉴权依赖在 `backend/deps.py`。
+
+## 依赖
+
+- FastAPI 与 Pydantic。
+- session cookie、`CSRFMiddleware` 与 `RequestBodyLimitMiddleware`。
+- 各功能模块的 service。
 
 ## 行为与规则
 
@@ -57,7 +77,7 @@
 |---|---|---|---|
 | GET | `/api/games/manage` | 需登录 | 服务端分页：`page` / `page_size` / `game_type` / `q` |
 | GET | `/api/games/manage/{id}` | 需登录 | 管理详情，含 CRC32、创建与更新时间 |
-| POST | `/api/games/manage` | 需登录 | multipart 新建：`name` / `cartridge_id` / `description` / `file`、`upload_id` 或 `upload_ids`[+`cover`] |
+| POST | `/api/games/manage` | 需登录 | multipart 新建：`name` / `cartridge_id` / `description` / 本体四选一（`file`、`body_url`、`upload_id`、`upload_ids`）/ 封面二选一（`cover`、`cover_url`）/ `body_game_type` |
 | POST | `/api/games/uploads` | 需登录 | 开分片会话：body `{filename, size, game_type?}`，返回 `{upload_id, chunk_size, total_chunks}` |
 | PUT | `/api/games/uploads/{upload_id}/chunks/{index}` | 需登录 | 原始分片字节流，长度必须等于约定值；返回 `{index, size}` |
 | POST | `/api/games/uploads/{upload_id}/complete` | 需登录 | 校验分片齐全与总大小，返回 `{upload_id, filename, size}` |
@@ -133,6 +153,7 @@
 - 未登录访问业务接口：401；写操作缺 `X-CSRFToken`：400。
 - 登录连续失败触发锁定：429；用户名或密码错误：401；注册重名：409。
 - 游戏 / 快照 / 截图 / 图集不存在或越权：404；参数、类型、文件校验失败：400；索引版本不符：503。
+- 请求体不符合 Pydantic 模型时也返回中文 400 信封，不返回 FastAPI 原生 422。
 - 索引未构建返回 `indexed:false` 与空列表；榜单未加载返回 `has_ranking:false`，都是 200。
 - 请求体超过上限：413；分块传输缺少长度：411（`backend/request_limit.py`）。
   例外是分片上传的 `POST /uploads` 完成接口与 `PUT /chunks/{index}`：允许无 `Content-Length`，
@@ -152,7 +173,7 @@
 
 ## 相关文档
 
-- [账号与会话](./auth.md)
-- [游戏存储与入库](./game-storage.md)
+- [账号与会话](../modules/auth.md)
+- [游戏存储与入库](../modules/game-storage.md)
 - [架构说明](../architecture.md)
 - [编码约定](../../AGENTS.md)

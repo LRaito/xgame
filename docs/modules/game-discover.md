@@ -1,5 +1,7 @@
 # 游戏发现（检索与榜单）
 
+本文件回答：游戏检索与榜单的数据从哪来、如何查询。
+
 ## 范围与权威
 
 - 页面是侧栏第 3 项「游戏发现」，路由 `/games/discover`。
@@ -15,6 +17,24 @@
 - 榜单 CSV 的格式契约见 `backend/search/ranking/README.md`。
 - 检索 CSV 的目录约定见 `backend/search/csv/README.md`。
 - 前端页面是 `frontend/src/views/games/discover/index.vue`。
+
+## 职责
+
+- 从外部名录 CSV 与榜单 CSV 构建只读索引库。
+- 提供中英文全文检索与机种筛选。
+- 提供按机种榜单，并把榜单条目关联到库存卡带。
+
+## 关键接口
+
+- `GET /api/games/search`、`GET /api/games/search/consoles`。
+- `GET /api/games/search/ranking`、`GET /api/games/search/ranking/consoles`。
+- 构建入口：`backend/games/search_index.py`；查询：`search_service.py`、`ranking_service.py`。
+
+## 依赖
+
+- `<数据根>/db/game.db` 与 SQLite FTS5。
+- `backend/search/csv/` 的 37 个名录 CSV 与 `backend/search/ranking/ranking.csv`。
+- `make index` 与启动时的自动补建。
 
 ## 数据与路径
 
@@ -74,7 +94,7 @@
 - 任一处漏调中文归一化，中文就静默搜不到。
 - 查询把词包成短语、词间用 AND，顺带做 NFKC。
 - 英文按整词索引，缩写 `ff vii` 搜不到；不做拼音、错别字或中英互搜。
-- 中文为空的约 2,632 行只能靠英文搜到。
+- 去重后共 51,359 行，其中中文为空的 2,623 行只能靠英文搜到。
 
 **结尾标签与去重。**
 
@@ -209,7 +229,8 @@
 - `make index` 先 `test -w` 预检并提示 `sudo chown -R "$USER" "$STORAGE_HOST_DIR"`。
 - 容器里跑的是 root，不受这个权限问题影响。
 - 坏库不会自愈，要重跑 `make index`。
-- 服务端只提供 `/api/` 与 `/health`，没有服务端渲染页面。
+- Docker/API 路线服务端只提供 `/api/` 与 `/health`，没有服务端渲染页面；
+  Windows 包设 `STATIC_DIR` 时由 `static_site.py` 额外托管前端。
 
 ## 测试要点
 

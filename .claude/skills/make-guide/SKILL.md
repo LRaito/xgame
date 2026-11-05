@@ -12,7 +12,7 @@ description: 把现成的攻略素材——网上静态 HTML 攻略站、官方�
 - 整个包套一层顶层目录会自动剥掉。
 - 上传入口：游戏管理页的编辑弹框 →「上传攻略」。
 - 平台侧的包契约、上限与读取接口见
-  [`docs/specs/guide-and-h5.md`](../../../docs/specs/guide-and-h5.md)。
+  [`docs/modules/guide-and-h5.md`](../../../docs/modules/guide-and-h5.md)。
 
 本技能把**现成的攻略素材**变成这样一个目录，输入有两类：
 
@@ -69,7 +69,7 @@ guide/                 ← 成品目录（打包后就是 zip 的根）
 - **条目数**：解压后 ≤ 2000。
 - **zip 本体**：≤ 128MB。
 - 其余上限与路径/重名规则见
-  [`docs/specs/guide-and-h5.md`](../../../docs/specs/guide-and-h5.md)：
+  [`docs/modules/guide-and-h5.md`](../../../docs/modules/guide-and-h5.md)：
   单条 ≤64MB、总量 ≤256MB、压缩比 ≤200、路径与重名限制。
 
 ### 压缩包命名

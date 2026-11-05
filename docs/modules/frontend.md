@@ -1,5 +1,7 @@
 # 前端框架与交互
 
+本文件回答：前端路由、API 调用、组件与交互如何组织。
+
 ## 范围与权威
 
 - 前端是 Vue 3 SPA，UI 底座用 Element Plus。
@@ -12,6 +14,24 @@
 - 接口封装在 `frontend/src/api/`，按业务域导出 `xxxAPI`。
 - 设计背景见 `../architecture.md` 的「分层规则」与「项目结构」。
 - 编码约定以根目录 `AGENTS.md` 为准。
+
+## 职责
+
+- 提供 Vue 3 SPA 的路由、布局与页面。
+- 统一 API 调用、登录态与错误处理。
+- 维护通用组件、样式 token 与展示层常量。
+
+## 关键接口
+
+- 路由表：`frontend/src/router/index.js`。
+- API 层：`frontend/src/api/*.js`；唯一 axios 实例：`utils/request.js`。
+- 页面：`src/views/`；通用组件：`src/components/common/`。
+
+## 依赖
+
+- Vue 3、Vite、vue-router、Pinia、Element Plus、axios。
+- 后端 `/api/` 的 JSON 信封与 session cookie。
+- 构建期脚本 `scripts/fetch-emulatorjs.mjs` 与 `copy-ruffle.mjs`。
 
 ## 数据与路径
 

@@ -1,5 +1,7 @@
 # Windows 解压即用包
 
+本文件回答：Windows 解压即用包如何构建、启动与自检。
+
 ## 范围与权威
 
 - 这是第二条交付路线，与 Docker 并存。
@@ -13,6 +15,24 @@
 - 请求体上限见 `backend/request_limit.py`。
 - 设计背景见 `../architecture.md`；包内分工见 `packaging/windows/README.md`。
 
+## 职责
+
+- 构建 Windows「解压即用」包。
+- 由启动器拉起单进程 uvicorn 并托管前端静态站。
+- 处理 HTTP、编码、包内自检与数据目录迁移。
+
+## 关键接口
+
+- 构建：`packaging/windows/build-in-docker.sh`、`build-win-dist.sh`。
+- 启动：`启动游戏平台.cmd`、`launcher.py` 与 `xgame.ini`。
+- 静态托管：`backend/static_site.py`。
+
+## 依赖
+
+- 预置 CPython 运行时、Windows 轮子与 `frontend/dist`。
+- EmulatorJS / Ruffle 构建期资产。
+- `scripts/version.sh` 与 `smoke_win.py`。
+
 ## 数据与路径
 
 - 两条路线数据格式完全一致，同一份数据目录两边都能读。
@@ -23,7 +43,7 @@
 - 还有 `启动游戏平台.cmd`、`允许局域网访问.bat` 与 `allow-lan.ps1`。
 - `data/` 是数据目录，首次启动自动建。
 - `runtime/` 是包内临时目录，放 `port.txt` 与 `last-error.txt`。
-- 数据库固定在 `data/runtime/db/app.db`。
+- 数据库默认在 `data/runtime/db/app.db`；`runtime_dir` 可改。
 - H5/攻略解包缓存在 `data/runtime/game/...`。
 - 数据目录可以改到包外，用 `xgame.ini` 的 `data_dir` 指绝对路径。
 - `runtime_dir` 不填就跟着 `data_dir` 走。
@@ -57,7 +77,8 @@
 - 版本号唯一出处是 `scripts/version.sh`，Docker 与 Windows 包共用。
 - HEAD 正好停在最新 tag 上：`v1.0.0`。
 - HEAD 在 tag 之后：`v1.0.0-<HEAD 提交时间毫秒>`。
-- 包里不做版本比较，也没有自动升级。
+- 包里不做自动升级；前端仍会探测 `/version.txt` 并提示刷新，
+  同一包内版本一致，通常不会触发。
 
 **前端静态托管。**
 
@@ -67,7 +88,7 @@
 - 改 nginx 配置时必须同步改 `static_site.py`。
 - 语义一：`/api/` 下未匹配路径回 JSON 404，不回落 `index.html`。
 - 语义二：`/version.txt` 不缓存，缺失即 404，不回落。
-- 语义三：三个 immutable 前缀未命中即 404。
+- 语义三：三个 immutable 前缀未命中即 404；`/emulatorjs/bios/` 例外，改为 `no-cache`。
 - 三个前缀是 `assets/`、`ruffle/`、`emulatorjs/`。
 - 语义四：`index.html` 与 `emulator-host.html` 必须 no-cache。
 - 语义五：其余未命中回落 `index.html`，支持 SPA 深链。
@@ -97,7 +118,7 @@
 - 还设 `STATIC_DIR`，让后端托管前端 dist。
 - 还设 `SESSION_COOKIE_SECURE=false`。
 - 原因是局域网走 http，Secure cookie 不会被浏览器保存，登录会静默失效。
-- `xgame.ini` 的键：`data_dir`、`host`、`port`、`open_browser`。
+- `xgame.ini` 的键：`data_dir`、`runtime_dir`、`host`、`port`、`open_browser`。
 - 默认 `data_dir = data`、`host = 0.0.0.0`、`port = 8910`、`open_browser = yes`。
 - 自检先查 MSVC 运行库 `vcruntime140.dll`。
 - 再探本机 SQLite 有没有 FTS5。
@@ -146,7 +167,7 @@
 | 协议 | HTTPS | HTTP |
 | session cookie | `Secure` | 启动器设成 false |
 | 上传闸门 | nginx 130m | `request_limit.py` |
-| 后端配置 | 只认 `STORAGE_ROOT` | 启动器另设 `STATIC_DIR` |
+| 后端配置 | `STORAGE_ROOT` + `RUNTIME_ROOT`（另有 `*_HOST_DIR` 供哨兵） | 启动器另设 `STATIC_DIR` |
 
 - PSP / DOS 需要跨源隔离（`EJS_threads=true`），`index.html` 与 `emulator-host.html`
   必须带 COOP/COEP；其余机种仍关闭线程。
@@ -168,7 +189,7 @@
 
 ## 测试要点
 
-- `tests/test_static_site.py` 钉住七条静态站语义。
+- `tests/test_static_site.py` 钉住八条静态站语义。
 - 覆盖 SPA 回落、`/version.txt` 404、immutable 前缀未命中 404。
 - 覆盖两个入口 no-cache、显式 MIME、API 404 保持 JSON。
 - 覆盖路径穿越与非法路径拒绝、未设 `STATIC_DIR` 时不挂载。

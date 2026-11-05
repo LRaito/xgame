@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 > 给 Claude Code 的会话入口：只放结论与硬规则。
-> 实现细节在 `docs/specs/`，写代码前读 [`AGENTS.md`](AGENTS.md)。
+> 实现细节在 `docs/`，写代码前读 [`AGENTS.md`](AGENTS.md)。
 
 ## 一分钟了解本仓库
 
@@ -10,7 +10,7 @@
 - 两条交付路线：Docker（正式运行）与 Windows「解压即用」包。
 - 两条路数据格式一致，但**不能同时打开同一份数据目录**。
 - 三块功能：游戏中心、游戏管理、游戏发现。
-- 账号开放注册，只用于隔离各人的模拟器配置与存档。
+- 账号开放注册，只用于隔离各人的模拟器配置、存档、截图与统计。
 
 ## 先读哪份文档
 
@@ -19,7 +19,7 @@
 | 写代码、改代码 | [`AGENTS.md`](AGENTS.md) |
 | 理解设计取舍 | [`docs/architecture.md`](docs/architecture.md) |
 | 查表结构、磁盘路径 | [`docs/data_dict.md`](docs/data_dict.md) |
-| 查某个功能的实现细节 | [`docs/specs/README.md`](docs/specs/README.md) |
+| 查某个功能的实现细节 | [`docs/README.md`](docs/README.md) |
 | 用户怎么操作 | [`README.md`](README.md) |
 | 开发、部署、排障 | [`DEVELOP.md`](DEVELOP.md) |
 
@@ -63,7 +63,7 @@ make index       # 重建游戏发现索引
 - 一个功能一块：`router.py` 只管 HTTP，`service.py` 管领域逻辑。
 - 前端分层：`views/` → `api/*` → `utils/request.js` → FastAPI。
 - 响应信封：成功 `{ok:true,data}`；失败 `{ok:false,message:"中文"}`。
-- 配置写死在 `backend/config.py`；`.env` 只有三个键且只给 compose 读。
+- 配置写死在 `backend/config.py`；`.env` 只有三个键，由 compose 与 Makefile 读取。
 - 数据分两个根：数据根放原始素材，运行时根放 SQLite 与解包产物。
 - 全站需登录，唯一业务例外是 H5 资源接口。
 - 详细设计见 [`docs/architecture.md`](docs/architecture.md)。
@@ -99,23 +99,23 @@ make index       # 重建游戏发现索引
 
 细节链接：
 
-- 文件存储 / 卡带 ID / 封面类型 → [`game-storage.md`](docs/specs/game-storage.md)
-- 机种词表 → [`platforms.md`](docs/specs/platforms.md)
-- 播放器 / 机壳 / NDS → [`game-center-playback.md`](docs/specs/game-center-playback.md)
-- 截图 / 图集 / 封面美化 → [`game-assets.md`](docs/specs/game-assets.md)
-- 存档 / 设置 / 统计 → [`game-saves-stats.md`](docs/specs/game-saves-stats.md)
-- H5 / 攻略 → [`guide-and-h5.md`](docs/specs/guide-and-h5.md)
-- 游戏发现 → [`game-discover.md`](docs/specs/game-discover.md)
-- 账号与会话 → [`auth.md`](docs/specs/auth.md)
-- Docker → [`delivery-docker.md`](docs/specs/delivery-docker.md)
-- Windows 包 → [`delivery-windows.md`](docs/specs/delivery-windows.md)
+- 文件存储 / 卡带 ID / 封面类型 → [`game-storage.md`](docs/modules/game-storage.md)
+- 机种词表 → [`platforms.md`](docs/common/platforms.md)
+- 播放器 / 机壳 / NDS → [`game-center-playback.md`](docs/modules/game-center-playback.md)
+- 截图 / 图集 / 封面美化 → [`game-assets.md`](docs/modules/game-assets.md)
+- 存档 / 设置 / 统计 → [`game-saves-stats.md`](docs/modules/game-saves-stats.md)
+- H5 / 攻略 → [`guide-and-h5.md`](docs/modules/guide-and-h5.md)
+- 游戏发现 → [`game-discover.md`](docs/modules/game-discover.md)
+- 账号与会话 → [`auth.md`](docs/modules/auth.md)
+- Docker → [`delivery-docker.md`](docs/modules/delivery-docker.md)
+- Windows 包 → [`delivery-windows.md`](docs/modules/delivery-windows.md)
 
 ## 目录速查
 
 ```
 frontend/        Vue 3 SPA
 backend/         FastAPI API（auth / games / tools / storage）
-docs/            architecture.md / data_dict.md / specs/
+docs/            architecture.md / data_dict.md / modules / common / plans
 packaging/       windows/
 tests/           pytest
 ```

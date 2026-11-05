@@ -9,7 +9,7 @@
             <div class="brand">
                 <span class="brand-mark">X</span>
                 <span class="brand-name">GAME</span>
-                <span class="brand-version" :title="`构建版本 ${APP_VERSION}`">{{ APP_VERSION }}</span>
+                <span class="brand-version">{{ APP_VERSION }}</span>
             </div>
             <nav class="nav">
                 <router-link

@@ -414,6 +414,23 @@ def test_manage_api_rejects_unknown_body_format(logged_in_games, storage_root):
     assert _files(storage_root) == set()
 
 
+def test_create_rejects_file_and_body_url_together(logged_in_games, storage_root):
+    """本地文件与网络直链同时提交：400，且不落任何文件。"""
+    response = logged_in_games.post(
+        "/api/games/manage",
+        data={
+            "name": "双来源",
+            "cartridge_id": _next_cartridge_id(),
+            "body_url": "https://example.com/a.nes",
+        },
+        files={"file": ("a.nes", b"nes-body", "application/octet-stream")},
+    )
+    assert response.status_code == 400
+    assert "一种上传方式" in response.json()["message"]
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
+    assert _files(storage_root) == set()
+
+
 def test_create_rolls_back_when_cover_invalid(logged_in_games, storage_root):
     """封面校验失败：整体回滚，条目与已上传的本体对象都不留。"""
     response = _create_game(

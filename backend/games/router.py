@@ -269,6 +269,10 @@ def games_create(
             raise ValidationError("本体只能选择一种上传方式。")
         if body_url and (upload_id or upload_ids):
             raise ValidationError("本体只能选择一种上传方式。")
+        if file is not None and body_url:
+            raise ValidationError("本体只能选择一种上传方式。")
+        if cover is not None and cover_url:
+            raise ValidationError("封面只能选择一种上传方式。")
         staged = uploads.claim(upload_id) if upload_id else None
         staged_files = uploads.claim_many(upload_ids) if upload_ids else None
         item = service.create(

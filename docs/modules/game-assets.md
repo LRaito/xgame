@@ -1,5 +1,7 @@
 # 游戏素材：封面、截图与图集
 
+本文件回答：截图、图集与封面美化如何存储和展示。
+
 ## 范围与权威
 
 - 本规格覆盖封面渲染、封面美化、游戏截图、截图相册、游戏图集与详情图片栏。
@@ -7,6 +9,24 @@
 - 美化样式、洞口几何与合成算法权威在 `constants/coverStyles.js`、`utils/coverCompose.js`。
 - 截图与图集表结构见 [`../data_dict.md`](../data_dict.md) 的 `game_screenshots`、`game_gallery_images`。
 - 上传校验在 `backend/games/screenshot_service.py`、`gallery_service.py`、`images.py`。
+
+## 职责
+
+- 管理按账号隔离的游戏截图。
+- 管理按游戏共享的图集。
+- 提供封面美化、卡带与机壳素材的几何参数。
+
+## 关键接口
+
+- `GET|POST /api/games/screenshots`、`/gallery`。
+- `POST /api/games/manage/{id}/assets`、`GET /api/games/{id}/cover`。
+- 领域实现：`backend/games/screenshot_*`、`gallery_*`、`images.py`。
+
+## 依赖
+
+- SQLModel 表 `game_screenshots` 与 `game_gallery_images`。
+- `backend/storage/` 与 `backend/games/paths.py`。
+- 前端 `constants/coverStyles.js` 与 `views/games/` 的封面组件。
 
 ## 数据与路径
 

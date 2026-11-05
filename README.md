@@ -1,7 +1,7 @@
 # XGAME
 
 个人自托管的**游戏平台**：把 Flash、HTML5 与 8/16/32/64 位主机游戏收进一个网页，浏览器打开就能玩，
-存档、截图、攻略与游玩进度都跟着账号走。
+存档、截图、键位与游玩进度都跟着账号走；攻略与图集按游戏共享。
 
 > 这是**使用指南**：怎么装起来、怎么玩。要改代码、看架构与数据字典，见 [`DEVELOP.md`](DEVELOP.md)。
 
@@ -95,7 +95,7 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 
 「游戏发现」页第一次用时服务会自己把索引建好，不用管；榜单 CSV 放进
 `backend/search/ranking/ranking.csv` 后重启一次也会自动加载。
-细节见 [`docs/specs/game-discover.md`](docs/specs/game-discover.md)。
+细节见 [`docs/modules/game-discover.md`](docs/modules/game-discover.md)。
 
 ### 注册账号
 
@@ -107,7 +107,8 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 
 ## 界面怎么用
 
-首页就是**游戏中心**（`/` 会自动跳到 `/games`）。左侧栏有「游戏中心」「游戏管理」「游戏发现」三项。
+首页就是**游戏中心**（`/` 会自动跳到 `/games`）。左侧栏有「游戏中心」「游戏管理」「游戏发现」
+「按键管理」四项。
 
 侧栏和播放页的标题栏平时都是**收起的**：鼠标移到屏幕左边缘滑出侧栏，移到页面顶部滑出播放页标题栏
 （全屏时也一样）。它们盖在页面上，不占地方、也不挤小游戏画面。
@@ -159,16 +160,18 @@ PSP / Atari / Commodore / Amiga / DOS / 街机 等，浏览器里跑模拟器，
 > N64、PSP、DOS 不需要 BIOS。ZIP 根目录直接放上面这些文件，不要套子目录。
 > 街机的 `arcade.zip` 里放的是 BIOS 集合 zip（如 `neogeo.zip`）。
 
-### 播放页
+### 主机播放页
 
 标题栏右侧是「全屏」和「返回游戏中心」；左侧按钮自左向右是「加速模式」「截图」「保存配置」
-「窗口倍率」「显示机壳」（只有 GBA / FC / GBC / NDS 有）、「存档管理」。
+「窗口」「显示机壳」（只有 GBA / FC / GBC / NDS 有）、「存档管理」。
+
+Flash 播放页的标题栏按钮是「画质」「窗口」「存档管理」。
 
 - **加速模式** — 点一下一直加速（快进 3×），再点恢复。它开关的就是模拟器自己的
   「Fast Forward」设置，所以下次进这个平台的游戏会直接是加速状态，点「保存配置」还会跟着
   同步到账号；引擎里自己绑的快进键照旧能用（按住加速、松手恢复）。
 - **保存配置** — 键位、模拟器选项、金手指按平台存在账号里，进游戏时会自动写回；**改完记得点它上传**。
-- **窗口倍率** — 弹出矩阵：行是 `1×`–`4×`（含 .5 档）与「适应窗口」，列是显示比例。
+- **窗口** — 弹出矩阵：行是 `1×`–`4×`（含 .5 档）与「适应窗口」，列是显示比例。
   默认「像素完美」；FC 还多一列「4:3」，是真机 CRT 的观感。**NDS 是三列**（上下 / 单屏 / 左右），
   每列独立记住自己的倍率或「适应窗口」，点某一列的格子还会顺便切到那个屏幕布局。
 - **显示机壳** — 把 GBA / FC / GBC / NDS 的机身图盖在画面上，只从屏幕洞里露出游戏画面；再点一次收起。
@@ -264,20 +267,30 @@ PSP / Atari / Commodore / Amiga / DOS / 街机 等，浏览器里跑模拟器，
 | --- | --- |
 | `.swf` | Flash |
 | `.zip` | HTML5 / DOS / 街机（创建时按下拉选类型，默认 HTML5） |
-| `.jsdos` | DOS（jsdos 压缩包；也可以选 `.zip` 后明确选 DOS） |
+| `.jsdos` | DOS（jsdos 压缩包；唯一候选，自动判定） |
 | `.nes` / `.sfc` `.smc` | FC / SNES |
 | `.gb` `.gbc` / `.gba` / `.nds` | GB / GBA / NDS |
+| `.vb` | 任天堂 Virtual Boy |
 | `.md` `.gen` / `.gg` / `.sms` | MD / GG / SMS |
+| `.32x` | 世嘉 32X |
 | `.z64` `.n64` `.v64` | 任天堂 N64 |
+| `.pce` `.sgx` | 日电 PCE |
 | `.chd` | 世嘉 CD / 土星 / PS1 / PC-FX / 3DO（创建时按下拉选类型，默认 PS1） |
 | `.pbp` | PS1 |
 | `.iso` | PS1 / PSP / 3DO（创建时按下拉选类型，默认 PS1） |
 | `.cso` | PSP |
+| `.ngc` `.ngp` | SNK NGPC |
+| `.ws` `.wsc` | 万代 WS |
+| `.a26` `.a52` `.a78` | 雅达利 2600 / 5200 / 7800 |
+| `.j64` `.jag` | 雅达利 Jaguar |
+| `.lnx` | 雅达利 Lynx |
+| `.col` | ColecoVision |
+| `.d64` `.d71` `.tap` `.crt` `.prg` | Commodore 64 / 128 / PET / Plus/4 / VIC-20 |
 | `.adf` `.hdf` | Amiga |
 | `.cue` + `.bin`、`.m3u` | 世嘉 CD / Amiga 的多文件本体（一次选一整组） |
 
 > 多机种共用的后缀（`.chd`、`.iso`、`.zip`、Commodore 的 `.d64` / `.prg`）会在创建时出现类型下拉。
-> `.zip` 不选类型时按 HTML5 处理；DOS 的 jsdos 包与街机 ROM 集合必须在下拉里明确选择。
+> `.zip` 不选类型时按 HTML5 处理；DOS 的 `.zip` 与街机 ROM 集合必须在下拉里明确选择。
 > 本地上传超过 30MB 会按 16MB 分片、5 路并发上传，单盘本体的总大小只受磁盘空间限制；
 > 网络直链仍限 512MB。攻略 ZIP/PDF 上限 128MB。
 > 世嘉 CD 优先用单个 `.chd`；cue+bin 会整份进浏览器内存，体积大时可能卡顿或内存不足。
@@ -326,11 +339,11 @@ PSP / Atari / Commodore / Amiga / DOS / 街机 等，浏览器里跑模拟器，
 - 搜索框支持**中文名或英文名**：中文搜子串（搜「马里奥」能搜到「超级马里奥兄弟」，单个汉字也行），
   英文按整词匹配、不区分大小写，词尾加 `*` 是前缀匹配（如 `mario*`）。多个词用空格隔开。
 - **机种**下拉可以只看某个机种，不选就是全部。
-- 结果按相关度排序、每页 20 条。
+- 结果按相关度排序、每页 10 条。
 
 ### 游戏榜单
 
-按机种看热门游戏排名：一个机种下拉框（默认 GBA）+ 一张极简榜单，一行是**排名、游戏名称、
+按机种看热门游戏排名：一个机种下拉框（默认 FC）+ 一张极简榜单，一行是**排名、游戏名称、
 0~2 个卡带 ID**（查不到编号的就是空的，显示 `—`）。**单击卡带 ID 就复制到剪贴板**，方便直接拿去搜或建条目。
 
 榜单数据来自 `backend/search/ranking/ranking.csv`（四列：`序号,机种名称,游戏名称,游戏卡带ID`，
@@ -410,7 +423,7 @@ PSP / Atari / Commodore / Amiga / DOS / 街机 等，浏览器里跑模拟器，
 3. **只实测了部分游戏类型。** 亲手跑通的是 Flash、FC、GBC、GBA 四类；
    HTML5、SNES、MD、GG、SMS 还没实测过（GB 与 GBC 是同一个游戏类型、走同一条路）。
    NDS 已接入 melonDS，三种屏幕布局可用，但仍需实机确认帧缓冲与间隙的细节；
-   几何参数见 [`docs/specs/game-center-playback.md`](docs/specs/game-center-playback.md)。
+   几何参数见 [`docs/modules/game-center-playback.md`](docs/modules/game-center-playback.md)。
    N64、PS1、土星、PC-FX、3DO 已接入核与 BIOS 机制，仍需自备 ROM / BIOS 做实机确认，
    尤其土星帧率与 PS1 的 `.pbp` / `.chd` 启动。
    世嘉 CD 与 Amiga 已接入单文件与多文件本体，仍需实机确认 cue/bin、m3u 多碟、
@@ -445,8 +458,9 @@ PSP / Atari / Commodore / Amiga / DOS / 街机 等，浏览器里跑模拟器，
 
 `frontend/src/assets/` 下的游戏机机身图
 （`shells/gba-shell.png` / `shells/gbc-shell.png` / `shells/nes-shell.png` /
-`shells/nes-shell-43.png`）、卡带底图（`carts/gba-cart.png` / `carts/gbc-cart.png` /
-`carts/gb-cart.png` / `carts/fc-cart.png` / `carts/nes-cart.png`）与
+`shells/nes-shell-43.png` / `shells/nds-shell.png` / `shells/nds-side-shell.png`）、
+卡带底图（`carts/gba-cart.png` / `carts/gbc-cart.png` / `carts/gb-cart.png` /
+`carts/fc-cart.png` / `carts/nes-cart.png` / `carts/nds-cart.png`）与
 `flash-logo.png` 是界面展示素材，版权归各自权利人所有，
 **不在本项目的 MIT 许可范围内**；要再分发或商用请自行确认来源与许可，或换成自己的图。
 

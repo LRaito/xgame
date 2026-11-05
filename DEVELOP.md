@@ -5,7 +5,7 @@
 - **代码约定**（写代码前先读）：[`AGENTS.md`](AGENTS.md)
 - **设计文档**：[`docs/architecture.md`](docs/architecture.md)
 - **数据结构**：[`docs/data_dict.md`](docs/data_dict.md)
-- **功能规格**：[`docs/specs/`](docs/specs/README.md)
+- **功能规格**：[`docs/`](docs/README.md)
 
 项目默认**中文**：界面文案、文档、注释、提交说明、API 错误 `message` 全用中文；
 代码标识符、路由 path、环境变量名保持英文。**不做 i18n。**
@@ -20,7 +20,7 @@ Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`），ORM 是 SQLModel�
 - **游戏管理**：上传 / 直链 / 搬运、卡带 ID 与元数据、攻略。
 - **游戏发现**：外部名录的只读检索与榜单。
 
-账号开放注册，只用于隔离各人的模拟器配置与存档 / 截图。
+账号开放注册，只用于隔离各人的模拟器配置、存档、截图与统计。
 
 ## 环境要求
 
@@ -86,7 +86,7 @@ mkdir -p "$RUNTIME_HOST_DIR" && touch "$RUNTIME_HOST_DIR/.mounted"
 
 - 哨兵要建在**真实目录**里；换目录要重新建。
 - 代码只检查、绝不代建。
-- 机制与运行行为见 [`docs/specs/delivery-docker.md`](docs/specs/delivery-docker.md)。
+- 机制与运行行为见 [`docs/modules/delivery-docker.md`](docs/modules/delivery-docker.md)。
 
 ## 配置
 
@@ -158,7 +158,7 @@ make win-image    # 只构建/更新构建环境镜像
 构建命令、文件清单与换图标见
 [`packaging/windows/README.md`](packaging/windows/README.md)。
 与 Docker 的差异、编码规则与升级细节见
-[`docs/specs/delivery-windows.md`](docs/specs/delivery-windows.md)。
+[`docs/modules/delivery-windows.md`](docs/modules/delivery-windows.md)。
 
 本机直跑一份「生产形态」（排查用）：
 
@@ -203,7 +203,7 @@ make index
 - 不参与备份，可从 CSV 重建。
 - 重建后不用重启 api。
 
-实现细节见 [`docs/specs/game-discover.md`](docs/specs/game-discover.md)。
+实现细节见 [`docs/modules/game-discover.md`](docs/modules/game-discover.md)。
 
 ### 自动补建失败（PermissionError）
 
@@ -271,7 +271,7 @@ Docker 可能先于 WSL 发行版起来，bind 把空目录挂进了容器。
 | [`AGENTS.md`](AGENTS.md) | 改代码的人 / AI 助手 | 编码约定，写代码前必读 |
 | [`docs/architecture.md`](docs/architecture.md) | 改代码的人 | 设计决策与宏观架构 |
 | [`docs/data_dict.md`](docs/data_dict.md) | 改代码的人 | 表结构与磁盘路径 |
-| [`docs/specs/`](docs/specs/README.md) | 改代码的人 / AI 助手 | 各功能的实现规格 |
+| [`docs/`](docs/README.md) | 改代码的人 / AI 助手 | 各功能的实现规格 |
 | [`packaging/windows/README.md`](packaging/windows/README.md) | 打包的人 | Windows 包构建 |
 | [`backend/search/csv/README.md`](backend/search/csv/README.md) | 维护数据的人 | 检索 CSV 格式 |
 | [`backend/search/ranking/README.md`](backend/search/ranking/README.md) | 维护数据的人 | 榜单 CSV 格式 |

@@ -1,5 +1,7 @@
 # 机种词表
 
+本文件回答：机种名、扩展名与 BIOS 规格以哪份词表为准。
+
 ## 范围与权威
 
 - 权威实现是 `backend/games/platforms.py`，全项目「这是哪台机器」只认这一份。
@@ -10,6 +12,25 @@
 - 游戏管理、游戏检索、游戏榜单三处共用同一套机种名。
 - 前端不手写映射：`/api/games/status` 的 `types` / `extension_candidates` 从本表派生，
   前端只在 Pinia store 里缓存。
+
+## 职责
+
+- 作为机种名、显示名、别名、扩展名、后缀候选与 BIOS 规格的唯一权威。
+- 把外部名录与榜单里的自由文本解析回机种。
+- 向 `/api/games/status` 提供前端所需的类型元数据。
+
+## 关键接口
+
+- 解析：`resolve_platform()`、`platform_label()`、`platform_order()`。
+- 可玩机种：`playable_platforms()`、`playable_platforms_for_extension()`、
+  `default_playable_platform_for_extension()`。
+- 词表定义在 `backend/games/platforms.py`。
+
+## 依赖
+
+- EmulatorJS 的 system key 与 core 列表。
+- `backend/search/csv/` 与 `backend/search/ranking/ranking.csv` 的机种写法。
+- 前端 `constants/gameTypes.js` 只保留图标、描述等纯 UI 元数据。
 
 ## 数据与路径
 
@@ -161,7 +182,7 @@
 
 ## 相关文档
 
-- [游戏存储与入库](./game-storage.md)
+- [游戏存储与入库](../modules/game-storage.md)
 - [数据字典](../data_dict.md)
 - [架构说明](../architecture.md)
 - [编码约定](../../AGENTS.md)

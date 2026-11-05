@@ -1,5 +1,7 @@
 # 游戏中心播放
 
+本文件回答：三类游戏如何播放，标题栏、机壳与 NDS 如何呈现。
+
 ## 范围与权威
 
 - 本规格覆盖 Flash、HTML5、主机 ROM 三类播放器与播放页交互。
@@ -10,6 +12,25 @@
 - 引擎侧 RPC 权威在 `frontend/public/emulator-host.html` 的 `window.__ejsRpc`。
 - 截图与图集的完整规则见 [`./game-assets.md`](./game-assets.md)。
 - 存档、设置、最近游玩与统计的完整规则见 [`./game-saves-stats.md`](./game-saves-stats.md)。
+
+## 职责
+
+- 提供游戏中心列表与类型元数据。
+- 按类型分派 Flash、H5、主机三种播放器。
+- 播放页标题栏、机壳、NDS 屏幕布局与快捷键。
+
+## 关键接口
+
+- `GET /api/games`、`GET /api/games/status`。
+- `GET|HEAD /api/games/{id}/play`、`/play/manifest`、`/play/files/{name}`、`/h5/{路径}`。
+- 前端入口：`frontend/src/views/games/` 与 `components/games/`。
+
+## 依赖
+
+- Ruffle、EmulatorJS 与浏览器沙箱 iframe。
+- `backend/games/platforms.py` 的机种与线程标记。
+- `backend/storage/access.py` 的流式下载。
+- 前端 `constants/gameTypes.js` 与 `coverStyles.js` 的展示元数据。
 
 ## 数据与路径
 
@@ -266,7 +287,7 @@
 
 - 后端：`python -m pytest tests/test_games.py -k "emulator_types_upload_and_play or play_path"`。
 - 上述用例覆盖各主机类型按扩展名入库、列表 `path` 与播放路由一致、本体 `octet-stream` 下发。
-- 后端：`python -m pytest tests/test_static_site.py -k "emulatorjs or bios"`。
+- 后端：`python3 -m pytest tests/test_static_site.py -k "assets or bios"`。
 - 上述用例覆盖引擎资产 immutable、BIOS 前缀 no-cache、每个 BIOS 包缺失时 404。
 - 后端：`python -m pytest tests/test_platforms.py`，确认机种 id 与 EmulatorJS system key 一致。
 - 手工：三种播放页都能从游戏中心进入，误入其它类型会跳到正确路由。

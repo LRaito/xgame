@@ -9,7 +9,7 @@
 | 本文件 | 编码约定：语言、技术栈、目录、分层、风格、Git、测试原则 |
 | [`docs/architecture.md`](docs/architecture.md) | 设计取舍与宏观架构 |
 | [`docs/data_dict.md`](docs/data_dict.md) | SQLite 表结构与磁盘路径 |
-| [`docs/specs/`](docs/specs/README.md) | 各功能的实现规格 |
+| [`docs/`](docs/README.md) | 各功能的实现规格 |
 | [`CLAUDE.md`](CLAUDE.md) | 会话入口与硬规则索引 |
 
 ## 当前状态
@@ -50,10 +50,10 @@
 
 功能边界：
 
-- 游戏中心：Flash、HTML5、8/16/32-bit 主机 ROM。
+- 游戏中心：Flash、HTML5、8/16/32/64-bit 主机 ROM、PSP、DOS 与街机。
 - 游戏管理：上传 / 直链 / 搬运、卡带 ID 与元数据、攻略。
 - 游戏发现：外部名录的只读检索与按机种榜单。
-- 账号：开放注册，只隔离模拟器配置与存档。
+- 账号：开放注册，只隔离模拟器配置、存档、截图与统计。
 
 明确不做：
 
@@ -63,7 +63,7 @@
 - 对象存储（MinIO / S3）
 - JWT、把 token 写进 `localStorage`
 - 把整个文件读进内存再中转
-- 把密钥写进 git、前端源码或日志
+- 把新的密钥写进 git、前端源码或日志（既有的 `SECRET_KEY` 是个人自托管的例外）
 - 自动创建 `.mounted`
 - Windows 包自动升级、安装向导
 
@@ -83,7 +83,7 @@
 前端：
 
 - Vue 3 + Vite
-- vue-router 4
+- vue-router 5
 - Pinia
 - Element Plus
 - axios（唯一实例在 `frontend/src/utils/request.js`）
@@ -99,8 +99,8 @@ frontend/                    # Vue 3 SPA
   src/main.js                # 入口：Pinia、router、Element Plus、permission
   src/permission.js          # 路由守卫（登录态）
   src/router/index.js        # 唯一路由表；菜单由 meta 驱动
-  src/layout/                # 侧栏 + 顶栏 + 内容区
-  src/store/                 # Pinia：app / auth
+  src/layout/                # 侧栏 + 内容区
+  src/store/                 # Pinia：app / auth / gameTypes
   src/api/                   # 按业务域导出 xxxAPI
   src/utils/request.js       # axios 实例 + 拦截器
   src/views/                 # login / games / shortcuts
@@ -137,7 +137,7 @@ backend/
   search/ranking/            # 榜单 CSV
 tests/                       # pytest
 packaging/windows/           # Windows 解压即用包
-docs/                        # architecture / data_dict / specs
+docs/                        # architecture / data_dict / modules / common / plans
 scripts/version.sh           # 版本号唯一出处
 certs/                       # 自签名证书
 ```
@@ -159,7 +159,7 @@ certs/                       # 自签名证书
 6. **导航由路由表驱动。** 侧栏菜单由子路由声明顺序 + `meta.title` 生成，不要在页面里写死链接。
 7. **配置写死。** 全部配置在 `backend/config.py`。
    - `.env` 只有 `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` / `WEB_HTTPS_PORT` 三个键。
-   - `.env` **只给 docker compose 读**，后端不读这个文件。
+   - `.env` 由 docker compose 与 Makefile 读取，后端不读这个文件。
    - 两个 `*_HOST_DIR` 由 compose 作为环境变量传进容器，仅供哨兵前缀判断。
    - 根目录不存在会自动创建，storage 永远可用，没有「未配置」开关。
 8. **SQLite 路径。** 写死为 `<运行时根>/db/app.db`，没有 `DATABASE_URL` 可配；
@@ -183,7 +183,7 @@ certs/                       # 自签名证书
 - 分段/标签统一走 `AppSegmented`；分页、空状态、复制等走 `components/common/`。
 - 样式 token 在 `styles/index.css`，页面里不手写原生 `<button>` 或按钮 CSS。
 - 侧栏与播放页标题栏是浮层：常驻收起、鼠标靠近边缘滑出，不占位、不引起内容缩放。
-- 详细路由、组件与交互约定见 [`docs/specs/frontend.md`](docs/specs/frontend.md)。
+- 详细路由、组件与交互约定见 [`docs/modules/frontend.md`](docs/modules/frontend.md)。
 
 ## Git 分支与提交
 
@@ -203,8 +203,8 @@ certs/                       # 自签名证书
 ## 测试原则
 
 ```bash
-make test        # = python -m pytest + cd frontend && npm run lint
-python -m pytest # 只跑后端
+make test          # = python3 -m pytest + cd frontend && npm run lint
+python3 -m pytest  # 只跑后端
 ```
 
 - 用 `python -m pytest`，不要用裸 `pytest`（后者加不进仓库根目录）。
@@ -214,7 +214,7 @@ python -m pytest # 只跑后端
 - 最低覆盖范围：账号与锁定、存储读写与越界、游戏入库与卡带 ID、H5/攻略、
   云端存档、截图与图集、模拟器设置、最近游玩、游玩统计、检索与榜单、
   静态站、请求上限、Windows 启动器。
-- 每个功能的详细测试要点见对应 `docs/specs/*.md` 的「测试要点」。
+- 每个功能的详细测试要点见对应 `docs/modules/*.md` 的「测试要点」。
 
 ## 新增功能 / 工具
 
@@ -231,18 +231,18 @@ python -m pytest # 只跑后端
 
 | 功能域 | 规格 |
 |---|---|
-| 账号、登录、CSRF | [`auth.md`](docs/specs/auth.md) |
-| 存储、卡带 ID、封面类型、导入 | [`game-storage.md`](docs/specs/game-storage.md) |
-| 机种词表 | [`platforms.md`](docs/specs/platforms.md) |
-| 播放器、标题栏、机壳、NDS | [`game-center-playback.md`](docs/specs/game-center-playback.md) |
-| 截图、图集、封面美化 | [`game-assets.md`](docs/specs/game-assets.md) |
-| 存档、设置、最近、统计 | [`game-saves-stats.md`](docs/specs/game-saves-stats.md) |
-| H5 与攻略 | [`guide-and-h5.md`](docs/specs/guide-and-h5.md) |
-| 游戏发现 | [`game-discover.md`](docs/specs/game-discover.md) |
-| 前端框架与交互 | [`frontend.md`](docs/specs/frontend.md) |
-| HTTP 端点 | [`api.md`](docs/specs/api.md) |
-| Docker | [`delivery-docker.md`](docs/specs/delivery-docker.md) |
-| Windows 包 | [`delivery-windows.md`](docs/specs/delivery-windows.md) |
+| 账号、登录、CSRF | [`auth.md`](docs/modules/auth.md) |
+| 存储、卡带 ID、封面类型、导入 | [`game-storage.md`](docs/modules/game-storage.md) |
+| 机种词表 | [`platforms.md`](docs/common/platforms.md) |
+| 播放器、标题栏、机壳、NDS | [`game-center-playback.md`](docs/modules/game-center-playback.md) |
+| 截图、图集、封面美化 | [`game-assets.md`](docs/modules/game-assets.md) |
+| 存档、设置、最近、统计 | [`game-saves-stats.md`](docs/modules/game-saves-stats.md) |
+| H5 与攻略 | [`guide-and-h5.md`](docs/modules/guide-and-h5.md) |
+| 游戏发现 | [`game-discover.md`](docs/modules/game-discover.md) |
+| 前端框架与交互 | [`frontend.md`](docs/modules/frontend.md) |
+| HTTP 端点 | [`api.md`](docs/common/http-api.md) |
+| Docker | [`delivery-docker.md`](docs/modules/delivery-docker.md) |
+| Windows 包 | [`delivery-windows.md`](docs/modules/delivery-windows.md) |
 
 ## 用户意图
 

@@ -22,4 +22,4 @@ ENV TZ=Asia/Shanghai
 RUN cp /usr/share/zoneinfo/$TZ /etc/localtime
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
-EXPOSE 80
+EXPOSE 443
