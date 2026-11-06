@@ -21,10 +21,10 @@ def game_ranking(
     service: GameRankingServiceDep,
     console: str = Query(""),
 ):
-    """取某个机种的整份榜单（`console` 是统一机种键，取自 `/consoles`）。
+    """取榜单（`console` 是统一机种键，取自 `/consoles`；不传则返回全部机种）。
 
     榜单没加载时返回 `has_ranking: false` + 空列表（不是错误）。
-    与平台库存关联上的行会多两个字段（`game_id` / `path`，没命中都是 null）——前端据此把游戏名
+    与平台库存关联上的行会多两个字段（`game_id` / `path`，没命中都是 null）——前端据此把中英文名
     渲染成真的 `<a href>`，单击进播放页、Ctrl/中键开新标签页。关联规则见 service。
     """
     try:
@@ -39,7 +39,9 @@ def game_ranking(
             "items": [
                 {
                     "rank": item.rank,
-                    "title": item.title,
+                    "zh": item.zh,
+                    "en": item.en,
+                    "platform": item.platform,
                     "cartridge_ids": list(item.cartridge_ids),
                     "game_id": item.game_id,
                     "path": item.path,

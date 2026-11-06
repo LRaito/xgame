@@ -10,7 +10,7 @@
 数据源两份，都在 `backend/search/` 下：
 
 - `csv/` 下的一份份 `机种,中文,英文` 三列名录（UTF-8 带 BOM、CRLF、无表头），构成检索索引；
-- `ranking/ranking.csv` 的四列榜单（`序号,机种名称,游戏名称,游戏卡带ID`），构成游戏榜单。
+- `ranking/ranking.csv` 的五列榜单（`序号,机种名称,中文名,英文名,游戏卡带ID`），构成游戏榜单。
 
 榜单单独建表、单独一个版本号：它的表结构变化不影响检索的 `schema_version`，补榜单失败也不会
 把检索一起变成「版本过旧」。
@@ -54,7 +54,8 @@ SCHEMA_VERSION = "2"
 
 # 榜单表结构的版本，独立于上面的检索版本。
 # 2：机种归一（ranking 表加 platform 列，主键从 (console, rank) 改成 (platform, rank)）
-RANKING_SCHEMA_VERSION = "2"
+# 3：单列 title 拆成 zh / en 两列（与检索页的中文名、英文名对齐）
+RANKING_SCHEMA_VERSION = "3"
 
 # 建库语句。game_fts 是 contentless（content=''）表：只存倒排索引、不重复存正文，
 # 正文永远从 game 表取——所以 snippet()/highlight() 在它上面恒返回 NULL，高亮必须在前端做。
@@ -108,7 +109,8 @@ CREATE TABLE IF NOT EXISTS ranking(
     platform      TEXT NOT NULL,
     console       TEXT NOT NULL,
     rank          INTEGER NOT NULL CHECK (rank >= 1),
-    title         TEXT NOT NULL,
+    zh            TEXT NOT NULL,
+    en            TEXT NOT NULL,
     cartridge_ids TEXT NOT NULL,
     PRIMARY KEY (platform, rank)
 ) WITHOUT ROWID;
@@ -121,8 +123,11 @@ _SCHEMA = _SEARCH_SCHEMA + _RANKING_SCHEMA
 _RANKING_ID_SPLIT = re.compile(r"[、,，/;；]+")
 # 允许出现的表头（第一条非空行第一格命中就跳过）。
 _RANKING_HEADERS = {"序号", "排名"}
-# 榜单 CSV 的列数。
-_RANKING_COLUMNS = 4
+# 榜单 CSV 的列数（序号,机种名称,中文名,英文名,游戏卡带ID）；卡带 ID 为空时可省成 4 列。
+_RANKING_COLUMNS = 5
+# 旧版榜单表头第三格。看到它在表头里要给出明确的升级提示，避免四列旧数据被当成
+# 「中文名,英文名」静默解析。
+_RANKING_OLD_TITLE_HEADER = "游戏名称"
 
 
 class IndexBuildError(Exception):
@@ -149,7 +154,8 @@ class RankingRow:
     platform: str  # 统一机种键（认不出机种时就是 CSV 原文）
     console: str  # CSV 原文，仅作溯源与展示兜底
     rank: int
-    title: str
+    zh: str
+    en: str
     cartridge_ids: tuple[str, ...]
 
 
@@ -589,17 +595,23 @@ def _load_ranking_csv(csv_path: Path) -> RankingData:
         if first_row:
             first_row = False
             if row[0].strip() in _RANKING_HEADERS:
+                if len(row) >= 3 and row[2].strip() == _RANKING_OLD_TITLE_HEADER:
+                    raise RankingCsvError(
+                        f"{csv_path.name} 第 {line_no} 行仍是旧版表头（第三列是"
+                        f"「{_RANKING_OLD_TITLE_HEADER}」），请改成"
+                        f"「序号,机种名称,中文名,英文名,游戏卡带ID」五列。"
+                    )
                 continue
-        # 第 4 列（卡带 ID）允许为空：写成空列会被上面的裁尾删掉，所以 3 列也算合法。
-        if len(row) not in (3, _RANKING_COLUMNS):
+        # 第 5 列（卡带 ID）允许为空：写成空列会被上面的裁尾删掉，所以 4 列也算合法。
+        if len(row) not in (4, _RANKING_COLUMNS):
             raise RankingCsvError(
                 f"{csv_path.name} 第 {line_no} 行有 {len(row)} 列，"
-                f"应为 4 列（序号,机种名称,游戏名称,游戏卡带ID），"
-                f"卡带 ID 为空时可省掉第 4 列。"
+                f"应为 5 列（序号,机种名称,中文名,英文名,游戏卡带ID），"
+                f"卡带 ID 为空时可省掉第 5 列。"
             )
 
-        seq_text, console, title = (cell.strip() for cell in row[:3])
-        ids_text = row[3].strip() if len(row) > 3 else ""
+        seq_text, console, zh, en = (cell.strip() for cell in row[:4])
+        ids_text = row[4].strip() if len(row) > 4 else ""
         try:
             rank = int(seq_text)
         except ValueError as exc:
@@ -610,8 +622,10 @@ def _load_ranking_csv(csv_path: Path) -> RankingData:
             raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行的序号必须是正整数。")
         if not console:
             raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行缺少机种名称。")
-        if not title:
-            raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行缺少游戏名称。")
+        if not zh:
+            raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行缺少中文名。")
+        if not en:
+            raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行缺少英文名。")
 
         ids: list[str] = []
         for part in _RANKING_ID_SPLIT.split(ids_text):
@@ -638,7 +652,8 @@ def _load_ranking_csv(csv_path: Path) -> RankingData:
                 platform=key,
                 console=console,
                 rank=rank,
-                title=title,
+                zh=zh,
+                en=en,
                 cartridge_ids=tuple(ids),
             )
         )
@@ -657,14 +672,15 @@ def _load_ranking_csv(csv_path: Path) -> RankingData:
 def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, int]:
     """把榜单整份写进 `ranking` 表并更新 meta（调用方负责事务与建表）。"""
     conn.executemany(
-        "INSERT INTO ranking(platform, console, rank, title, cartridge_ids) "
-        "VALUES(?, ?, ?, ?, ?)",
+        "INSERT INTO ranking(platform, console, rank, zh, en, cartridge_ids) "
+        "VALUES(?, ?, ?, ?, ?, ?)",
         [
             (
                 row.platform,
                 row.console,
                 row.rank,
-                row.title,
+                row.zh,
+                row.en,
                 json.dumps(list(row.cartridge_ids), ensure_ascii=False),
             )
             for row in data.rows

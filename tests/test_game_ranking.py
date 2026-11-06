@@ -16,8 +16,8 @@ from backend import create_app
 from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, Settings
 from backend.games import search_index
 from backend.games.models import Game
-from backend.games.ranking_service import GameRankingService, _pick_default
-from backend.games.service import GameService
+from backend.games.ranking_service import GameRankingService, RankingItem, _pick_default
+from backend.games.service import GameLink, GameService
 from backend.games.search_index import (
     RANKING_SCHEMA_VERSION,
     SCHEMA_VERSION,
@@ -33,17 +33,17 @@ _SEARCH_ROWS = [
     ("任天堂GBA", "精灵宝可梦 火红", "Pokemon FireRed (USA)"),
 ]
 
-_RANKING_HEADER = ["序号", "机种名称", "游戏名称", "游戏卡带ID"]
+_RANKING_HEADER = ["序号", "机种名称", "中文名", "英文名", "游戏卡带ID"]
 # FC 排在最前是为了测「默认机种是 FC」——页面打开时不选也是它
 _RANKING_ROWS = [
-    ["1", "FC", "超级马里奥兄弟", "NES-SM"],
-    ["2", "FC", "银河战士", "NES-MT"],
-    ["1", "GBA", "精灵宝可梦 火红", "POKEMON FIRE RED"],
-    ["2", "GBA", "黄金太阳", "GSAE"],
-    ["3", "GBA", "双版本示例", "ID1;ID2"],
-    ["4", "GBA", "查不到编号的游戏", ""],
-    ["1", "GBC", "塞尔达传说 不可思议的果实", "ZELDA"],
-    ["2", "GBC", "分隔符示例", "A1/ A2"],
+    ["1", "FC", "超级马里奥兄弟", "Super Mario Bros.", "NES-SM"],
+    ["2", "FC", "银河战士", "Metroid", "NES-MT"],
+    ["1", "GBA", "精灵宝可梦 火红", "Pokemon FireRed", "POKEMON FIRE RED"],
+    ["2", "GBA", "黄金太阳", "Golden Sun", "GSAE"],
+    ["3", "GBA", "双版本示例", "Double Version Example", "ID1;ID2"],
+    ["4", "GBA", "查不到编号的游戏", "No ID Game", ""],
+    ["1", "GBC", "塞尔达传说 不可思议的果实", "Zelda - Oracle", "ZELDA"],
+    ["2", "GBC", "分隔符示例", "Separator Example", "A1/ A2"],
 ]
 # 归一后的机种：FC→nes、GBA→gba、GBC→gb（同一个机种，所以序号各自独立）
 _RANKING_PLATFORMS = 3
@@ -95,7 +95,7 @@ def _meta(path, key):
 def _ranking_rows(path):
     with sqlite3.connect(path) as conn:
         return conn.execute(
-            "SELECT console, rank, title, cartridge_ids FROM ranking ORDER BY console, rank"
+            "SELECT console, rank, zh, en, cartridge_ids FROM ranking ORDER BY console, rank"
         ).fetchall()
 
 
@@ -111,10 +111,10 @@ def test_parse_ranking_csv_handles_real_format(tmp_path):
         path,
         [
             _RANKING_HEADER,
-            ["1", "GBA", "含,逗号的名字", "ID1"],
+            ["1", "GBA", "含,逗号的名字", "Comma, Name", "ID1"],
             [],
-            ["2", "GBA", "普通游戏", "ID2,ID3"],
-            ["1", "gbc", "小写机种", "ID4", ""],
+            ["2", "GBA", "普通游戏", "Normal Game", "ID2,ID3"],
+            ["1", "gbc", "小写机种", "Lowercase Console", "ID4", ""],
         ],
     )
 
@@ -122,7 +122,8 @@ def test_parse_ranking_csv_handles_real_format(tmp_path):
 
     assert data.source == "ranking.csv"
     assert data.fingerprint == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert [row.title for row in data.rows] == ["含,逗号的名字", "普通游戏", "小写机种"]
+    assert [row.zh for row in data.rows] == ["含,逗号的名字", "普通游戏", "小写机种"]
+    assert [row.en for row in data.rows] == ["Comma, Name", "Normal Game", "Lowercase Console"]
     assert data.rows[1].cartridge_ids == ("ID2", "ID3")
     # 机种经词表归一：`GBA` 与 `gbc` 分别落到机种键 `gba` 与 `gb`（`gbc` 是 `gb` 的别名），
     # 原文照旧留在行上（rows[*].console）供溯源
@@ -132,35 +133,61 @@ def test_parse_ranking_csv_handles_real_format(tmp_path):
 
 def test_parse_ranking_csv_without_header(tmp_path):
     path = tmp_path / "ranking.csv"
-    _write_csv(path, [["1", "GBA", "游戏", "ID1"]])
+    _write_csv(path, [["1", "GBA", "游戏", "Game", "ID1"]])
 
     data = search_index._load_ranking_csv(path)
 
     assert len(data.rows) == 1
     assert data.rows[0].rank == 1
+    assert data.rows[0].zh == "游戏"
+    assert data.rows[0].en == "Game"
 
 
 def test_parse_ranking_csv_allows_empty_cartridge_ids(tmp_path):
-    """查不到编号的游戏：第 4 列留空或整列省掉都合法，落成空元组。"""
+    """查不到编号的游戏：第 5 列留空或整列省掉都合法，落成空元组。"""
     path = tmp_path / "ranking.csv"
-    _write_csv(path, [["1", "C64", "留空", ""], ["2", "C64", "省掉第 4 列"]])
+    _write_csv(
+        path,
+        [
+            ["1", "C64", "留空", "Empty ID", ""],
+            ["2", "C64", "省掉第 5 列", "Omit Column"],
+        ],
+    )
 
     data = search_index._load_ranking_csv(path)
 
     assert [row.cartridge_ids for row in data.rows] == [(), ()]
 
 
+def test_parse_ranking_csv_rejects_old_header(tmp_path):
+    """旧版四列表头要被明确拒绝，不能把「游戏名称」当成中文名静默解析。"""
+    path = tmp_path / "ranking.csv"
+    _write_csv(
+        path,
+        [["序号", "机种名称", "游戏名称", "游戏卡带ID"], ["1", "GBA", "游戏", "ID1"]],
+    )
+
+    with pytest.raises(RankingCsvError) as excinfo:
+        search_index._load_ranking_csv(path)
+
+    assert "旧版表头" in str(excinfo.value)
+
+
 @pytest.mark.parametrize(
     "rows",
     [
-        [["1", "GBA"]],  # 列数不对（少于 3 列）
-        [["1", "GBA", "游戏", "ID", "多余的一列"]],  # 列数不对（多于 4 列）
-        [["x", "GBA", "游戏", "ID"]],  # 序号不是整数
-        [["0", "GBA", "游戏", "ID"]],  # 序号不是正整数
-        [["1", "GBA", "", "ID"]],  # 缺游戏名
-        [["1", "", "游戏", "ID"]],  # 缺机种
-        [["1", "GBA", "游戏", "A,B,C"]],  # 超过 2 个卡带 ID
-        [["1", "GBA", "游戏", "ID"], ["1", "gba", "另一个", "ID2"]],  # 同机种序号重复
+        [["1", "GBA", "游戏"]],  # 列数不对（少于 4 列）
+        [["1", "GBA", "游戏", "Game", "ID", "多余的一列"]],  # 列数不对（多于 5 列）
+        [["x", "GBA", "游戏", "Game", "ID"]],  # 序号不是整数
+        [["0", "GBA", "游戏", "Game", "ID"]],  # 序号不是正整数
+        [["1", "GBA", "", "Game", "ID"]],  # 缺中文名
+        [["1", "GBA", "游戏", "", "ID"]],  # 缺英文名
+        [["1", "", "游戏", "Game", "ID"]],  # 缺机种
+        [["1", "GBA", "游戏", "Game", "A,B,C"]],  # 超过 2 个卡带 ID
+        [
+            ["1", "GBA", "游戏", "Game", "ID"],
+            ["1", "gba", "另一个", "Another", "ID2"],
+        ],  # 同机种序号重复
     ],
 )
 def test_parse_ranking_csv_rejects_bad_rows(tmp_path, rows):
@@ -218,10 +245,11 @@ def test_build_index_writes_ranking(csv_dir, ranking_csv, index_path):
     assert rows[0][0] == "FC"
     assert rows[2][0] == "GBA"
     assert rows[2][2] == "精灵宝可梦 火红"
-    assert rows[4][3] == '["ID1", "ID2"]'
+    assert rows[2][3] == "Pokemon FireRed"
+    assert rows[4][4] == '["ID1", "ID2"]'
     # 没编号的行落成空数组，前端显示「—」
     assert rows[5][2] == "查不到编号的游戏"
-    assert rows[5][3] == "[]"
+    assert rows[5][4] == "[]"
 
 
 def test_build_index_without_ranking_leaves_empty_table(csv_dir, index_path):
@@ -239,7 +267,7 @@ def test_build_index_strict_ranking_keeps_old_index(csv_dir, ranking_csv, index_
     before = _digest(index_path)
 
     bad = tmp_path / "bad-ranking.csv"
-    _write_csv(bad, [["1", "GBA", "游戏", "A,B,C"]])
+    _write_csv(bad, [["1", "GBA", "游戏", "Game", "A,B,C"]])
     with pytest.raises(RankingCsvError):
         build_index(csv_dir, index_path, ranking_csv=bad, strict_ranking=True)
 
@@ -249,7 +277,7 @@ def test_build_index_strict_ranking_keeps_old_index(csv_dir, ranking_csv, index_
 
 def test_build_index_tolerates_bad_ranking_when_not_strict(csv_dir, index_path, tmp_path):
     bad = tmp_path / "bad-ranking.csv"
-    _write_csv(bad, [["1", "GBA", "游戏", "A,B,C"]])
+    _write_csv(bad, [["1", "GBA", "游戏", "Game", "A,B,C"]])
 
     stats = build_index(csv_dir, index_path, ranking_csv=bad, strict_ranking=False)
 
@@ -299,12 +327,12 @@ def test_ensure_ranking_loaded_reloads_when_content_changes(csv_dir, ranking_csv
     ensure_ranking_loaded(index_path, ranking_csv)
     stat = ranking_csv.stat()
 
-    _write_csv(ranking_csv, [_RANKING_HEADER, ["1", "GBA", "换了一个名字", "ID9"]])
+    _write_csv(ranking_csv, [_RANKING_HEADER, ["1", "GBA", "换了一个中文名", "New Name", "ID9"]])
     os.utime(ranking_csv, (stat.st_atime, stat.st_mtime))
 
     ensure_ranking_loaded(index_path, ranking_csv)
 
-    assert _ranking_rows(index_path) == [("GBA", 1, "换了一个名字", '["ID9"]')]
+    assert _ranking_rows(index_path) == [("GBA", 1, "换了一个中文名", "New Name", '["ID9"]')]
 
 
 def test_ensure_ranking_loaded_keeps_existing_when_csv_missing(csv_dir, ranking_csv, index_path):
@@ -429,13 +457,33 @@ def test_ranking_consoles_and_default(ranked, logged_in):
     assert data["default_console"] == "nes"
 
 
-def test_ranking_defaults_to_fc(ranked, logged_in):
-    """页面打开时不选机种就是 FC。"""
+def test_ranking_without_console_returns_all_consoles(ranked, logged_in):
+    """不传 console 就是跨机种榜单；默认 FC 是前端从 /consoles 的 default_console 自己选的。"""
     page = _get(logged_in, RANKING_URL)
 
-    assert page["console"] == "nes"
-    assert [item["rank"] for item in page["items"]] == [1, 2]
-    assert page["items"][0]["title"] == "超级马里奥兄弟"
+    assert page["console"] is None
+    # 排序：词表顺序 nes → gb → gba，同机种内按序号
+    assert [item["zh"] for item in page["items"]] == [
+        "超级马里奥兄弟",
+        "银河战士",
+        "塞尔达传说 不可思议的果实",
+        "分隔符示例",
+        "精灵宝可梦 火红",
+        "黄金太阳",
+        "双版本示例",
+        "查不到编号的游戏",
+    ]
+    assert [item["platform"] for item in page["items"]] == [
+        "nes",
+        "nes",
+        "gb",
+        "gb",
+        "gba",
+        "gba",
+        "gba",
+        "gba",
+    ]
+    assert page["items"][0]["en"] == "Super Mario Bros."
     assert page["items"][0]["cartridge_ids"] == ["NES-SM"]
 
 
@@ -443,7 +491,9 @@ def test_ranking_gba_page(ranked, logged_in):
     page = _get(logged_in, RANKING_URL, console="gba")
 
     assert [item["rank"] for item in page["items"]] == [1, 2, 3, 4]
-    assert page["items"][0]["title"] == "精灵宝可梦 火红"
+    assert page["items"][0]["platform"] == "gba"
+    assert page["items"][0]["zh"] == "精灵宝可梦 火红"
+    assert page["items"][0]["en"] == "Pokemon FireRed"
     assert page["items"][0]["cartridge_ids"] == ["POKEMON FIRE RED"]
     assert page["items"][2]["cartridge_ids"] == ["ID1", "ID2"]
     # 没编号的行照常返回，只是 ID 列表为空
@@ -455,9 +505,13 @@ def test_ranking_specific_console_and_separators(ranked, logged_in):
     page = _get(logged_in, RANKING_URL, console="gb")
 
     assert page["console"] == "gb"
-    assert [item["title"] for item in page["items"]] == [
+    assert [item["zh"] for item in page["items"]] == [
         "塞尔达传说 不可思议的果实",
         "分隔符示例",
+    ]
+    assert [item["en"] for item in page["items"]] == [
+        "Zelda - Oracle",
+        "Separator Example",
     ]
     assert page["items"][1]["cartridge_ids"] == ["A1", "A2"]
 
@@ -581,14 +635,15 @@ def test_ranking_links_when_second_cartridge_id_matches(ranked, logged_in, app):
 
     page = _get(logged_in, RANKING_URL, console="gba")
 
-    assert page["items"][2]["title"] == "双版本示例"
+    assert page["items"][2]["zh"] == "双版本示例"
+    assert page["items"][2]["en"] == "Double Version Example"
     assert page["items"][2]["cartridge_ids"] == ["ID1", "ID2"]
     assert page["items"][2]["path"] == f"/games/play/{game_id}"
 
 
 def test_ranking_link_is_case_insensitive(ranked_with, logged_in, app):
     """比对前两边都归一（去首尾空白 + 转大写）：榜单写小写也能对上库存的大写。"""
-    ranked_with([["1", "FC", "小写编号", "nes-sm"]])
+    ranked_with([["1", "FC", "小写编号", "Lowercase ID", "nes-sm"]])
     game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
 
     page = _get(logged_in, RANKING_URL)
@@ -603,7 +658,7 @@ def test_ranking_link_ignores_ids_that_are_not_valid_cartridge_ids(
 
     关联绝不能复用 `validate_cartridge_id()`——它会抛校验错，把只读的榜单接口打挂。
     """
-    ranked_with([["1", "FC", "编号带空格的游戏", "Part No. 7004 0894"]])
+    ranked_with([["1", "FC", "编号带空格的游戏", "Spaced ID Game", "Part No. 7004 0894"]])
     _make_game(app, "同名字游戏", "PARTNO70040894")
 
     page = _get(logged_in, RANKING_URL)
@@ -666,6 +721,35 @@ def test_ranking_service_without_lookup_does_not_link(ranked, csv_dir, ranking_c
 
     assert [item.cartridge_ids for item in page.items] == [("NES-SM",), ("NES-MT",)]
     assert all(item.game_id is None and item.path is None for item in page.items)
+
+
+def test_cross_console_cartridge_lookup_is_chunked(tmp_path):
+    """跨机种有 6000+ 个卡带 ID，按 500 个一批查，避免 SQLite 宿主参数超限。"""
+    calls = []
+
+    def lookup(raw_ids):
+        calls.append(len(raw_ids))
+        return {
+            raw_id: GameLink(game_id=index, path=f"/games/play/{index}")
+            for index, raw_id in enumerate(raw_ids, start=1)
+        }
+
+    service = GameRankingService(tmp_path / "game.db", cartridge_lookup=lookup)
+    items = [
+        RankingItem(
+            rank=index + 1,
+            zh=f"游戏{index}",
+            en=f"Game {index}",
+            platform="nes",
+            cartridge_ids=(f"ID{index}",),
+        )
+        for index in range(600)
+    ]
+
+    linked = service._attach_links(items)
+
+    assert calls == [500, 100]
+    assert all(item.path for item in linked)
 
 
 def test_pick_default_console_prefers_fc_then_registry_order():

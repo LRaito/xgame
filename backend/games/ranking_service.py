@@ -33,7 +33,9 @@ CartridgeLookup = Callable[[Sequence[str]], Mapping[str, GameLink]]
 @dataclass(frozen=True)
 class RankingItem:
     rank: int
-    title: str
+    zh: str
+    en: str
+    platform: str
     cartridge_ids: tuple[str, ...]
     # 该行是否关联到平台库存里的游戏（关联在**请求期**做，见 GameRankingService._attach_links）。
     # 命中的是哪一个卡带ID 由关联规则决定，这里只留结果：游戏 id 与它的播放页路径。
@@ -64,6 +66,11 @@ class RankingConsoles:
     has_ranking: bool
     consoles: list[RankingConsole]
     default_console: str | None
+
+
+# 一次库存关联查询最多带多少个卡带 ID。单个机种最多 100 行 × 2 个 ID = 200；
+# 跨机种（全部机种）会有 6000+ 个，必须分批，避开 SQLite 的宿主参数上限（老版本是 999）。
+_CARTRIDGE_LOOKUP_CHUNK = 500
 
 
 class GameRankingService:
@@ -104,7 +111,11 @@ class GameRankingService:
         )
 
     def get(self, console: str | None = None) -> RankingPage:
-        """取某个机种的整份榜单（不分页）。机种为空时用默认机种。"""
+        """取榜单（不分页）。给了机种就只取该机种；为空时取全部机种（跨机种）。
+
+        `console` 为空**不再回落到默认机种**：榜单页默认选中 FC 是前端拿
+        `/consoles` 的 `default_console` 自己填的；用户把下拉清空时，这里返回整份榜单。
+        """
         if not self.is_indexed():
             return RankingPage(False, False, None, [])
         requested = (console or "").strip()
@@ -112,27 +123,37 @@ class GameRankingService:
             if not _ranking_ready(conn):
                 return RankingPage(True, False, None, [])
             try:
-                rows = conn.execute("SELECT DISTINCT platform FROM ranking").fetchall()
-                platforms = [row[0] for row in rows]
-                if not platforms:
-                    return RankingPage(True, True, None, [])
-                chosen = (
-                    _pick_default(platforms)
-                    if not requested
-                    else _match_platform(platforms, requested)
-                )
-                if chosen is None:
-                    # 机种不在榜单里：回显请求值 + 空列表，与检索页的过滤语义一致
-                    return RankingPage(True, True, requested, [])
-                items = conn.execute(
-                    "SELECT rank, title, cartridge_ids FROM ranking "
-                    "WHERE platform = ? ORDER BY rank",
-                    (chosen,),
-                ).fetchall()
+                if not requested:
+                    # 跨机种：platform 一起取出来，按词表顺序再按序号排（raw: 机种排最后）。
+                    rows = conn.execute(
+                        "SELECT platform, rank, zh, en, cartridge_ids FROM ranking"
+                    ).fetchall()
+                    rows.sort(
+                        key=lambda row: (platform_order(row[0]), row[0], int(row[1]))
+                    )
+                    items = [_to_item(row[1:], platform=row[0]) for row in rows]
+                    chosen = None
+                else:
+                    rows = conn.execute("SELECT DISTINCT platform FROM ranking").fetchall()
+                    platforms = [row[0] for row in rows]
+                    if not platforms:
+                        return RankingPage(True, True, None, [])
+                    chosen = _match_platform(platforms, requested)
+                    if chosen is None:
+                        # 机种不在榜单里：回显请求值 + 空列表，与检索页的过滤语义一致
+                        return RankingPage(True, True, requested, [])
+                    items = [
+                        _to_item(row, platform=chosen)
+                        for row in conn.execute(
+                            "SELECT rank, zh, en, cartridge_ids FROM ranking "
+                            "WHERE platform = ? ORDER BY rank",
+                            (chosen,),
+                        ).fetchall()
+                    ]
             except sqlite3.Error as exc:
                 raise _broken(exc) from exc
         # 关联放在 with 之外：先关掉只读库的连接，再去查平台库存的 app.db
-        page_items = self._attach_links([_to_item(row) for row in items])
+        page_items = self._attach_links(items)
         return RankingPage(True, True, chosen, page_items)
 
     def _attach_links(self, items: list[RankingItem]) -> list[RankingItem]:
@@ -143,13 +164,17 @@ class GameRankingService:
 
         规则：一行最多两个卡带ID，**任意一个**命中就算关联，命中多个时取**该行第一个命中的那个**
         （按 CSV 里的先后，结果确定）；比对是「去首尾空白 + 转大写」（`normalize_cartridge_id`），
-        只认有本体的游戏。整份榜单只查一次库存，不是逐行查。
+        只认有本体的游戏。按 `_CARTRIDGE_LOOKUP_CHUNK` 分批查库存，不是逐行查。
         """
         if self._cartridge_lookup is None or not items:
             return items
-        links = self._cartridge_lookup(
-            [cartridge_id for item in items for cartridge_id in item.cartridge_ids]
-        )
+        raw_ids = [cartridge_id for item in items for cartridge_id in item.cartridge_ids]
+        links: dict[str, GameLink] = {}
+        for start in range(0, len(raw_ids), _CARTRIDGE_LOOKUP_CHUNK):
+            links.update(
+                self._cartridge_lookup(raw_ids[start : start + _CARTRIDGE_LOOKUP_CHUNK])
+                or {}
+            )
         if not links:
             return items
         linked: list[RankingItem] = []
@@ -233,15 +258,21 @@ def _to_console(platform: str, raw_console: str) -> RankingConsole:
     )
 
 
-def _to_item(row: tuple) -> RankingItem:
-    rank, title, ids_text = row
+def _to_item(row: tuple, platform: str) -> RankingItem:
+    rank, zh, en, ids_text = row
     try:
         ids = json.loads(ids_text)
     except (TypeError, ValueError) as exc:
         raise _broken(exc) from exc
     if not isinstance(ids, list):
         raise _broken(ValueError(f"cartridge_ids 不是数组：{ids_text!r}"))
-    return RankingItem(rank=int(rank), title=title, cartridge_ids=tuple(str(item) for item in ids))
+    return RankingItem(
+        rank=int(rank),
+        zh=str(zh),
+        en=str(en),
+        platform=platform,
+        cartridge_ids=tuple(str(item) for item in ids),
+    )
 
 
 def _broken(exc: Exception) -> IndexUnavailableError:

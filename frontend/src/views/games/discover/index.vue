@@ -85,7 +85,8 @@
                 <app-type-select
                     v-model="rankingConsole"
                     class="game-discover__console"
-                    placeholder="游戏类型"
+                    placeholder="全部类型"
+                    clearable
                     :disabled="!rankingConsoles.length"
                     :options="rankingTypeOptions"
                     @change="loadRanking"
@@ -97,7 +98,7 @@
                 <el-input
                     v-model="rankingKeyword"
                     class="game-discover__keyword"
-                    placeholder="搜索游戏名称"
+                    placeholder="搜索中文名或英文名"
                     clearable
                 />
 
@@ -120,19 +121,37 @@
             </div>
 
             <div v-loading="rankingLoading" class="game-discover__body">
-                <table v-if="rankingVisibleItems.length" class="game-discover__table">
+                <table
+                    v-if="rankingVisibleItems.length"
+                    class="game-discover__table"
+                    :class="{ 'game-discover__table--all': !rankingConsole }"
+                >
                     <thead>
                         <tr>
                             <th class="game-discover__col-rank">排名</th>
-                            <th>游戏名称</th>
+                            <!-- 清空机种后是跨机种榜单，必须显示类型，否则序号会在不同机器之间重来 -->
+                            <th
+                                v-if="!rankingConsole"
+                                class="game-discover__col-ranking-console"
+                            >
+                                游戏类型
+                            </th>
+                            <th class="game-discover__col-zh">中文名</th>
+                            <th>英文名</th>
                             <th class="game-discover__col-ids">卡带ID</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="item in rankingPagedItems" :key="item.rank">
+                        <tr
+                            v-for="item in rankingPagedItems"
+                            :key="`${item.platform}-${item.rank}`"
+                        >
                             <td class="game-discover__rank">{{ item.rank }}</td>
+                            <td v-if="!rankingConsole" class="game-discover__nowrap">
+                                {{ rankingPlatformLabel(item.platform) }}
+                            </td>
                             <td>
-                                <!-- 卡带 ID 与平台库存对上的行：游戏名是**真链接**（router-link 渲染成
+                                <!-- 卡带 ID 与平台库存对上的行：中英文名是**真链接**（router-link 渲染成
                                      原生 <a href>），单击进播放页，Ctrl+点击 / 中键由浏览器自己开新标签页。
                                      没对上的行就是纯文本 -->
                                 <router-link
@@ -140,9 +159,19 @@
                                     class="game-discover__link"
                                     :to="item.path"
                                 >
-                                    {{ item.title }}
+                                    {{ item.zh }}
                                 </router-link>
-                                <template v-else>{{ item.title }}</template>
+                                <template v-else>{{ item.zh }}</template>
+                            </td>
+                            <td>
+                                <router-link
+                                    v-if="item.path"
+                                    class="game-discover__link"
+                                    :to="item.path"
+                                >
+                                    {{ item.en }}
+                                </router-link>
+                                <template v-else>{{ item.en }}</template>
                             </td>
                             <td>
                                 <span v-if="!item.cartridge_ids.length" class="game-discover__none">
@@ -343,14 +372,23 @@ const rankingConsoles = ref([]);
 const rankingTypeOptions = computed(() =>
     rankingConsoles.value.map((item) => ({ value: item.platform, label: item.label }))
 );
+// 跨机种榜单的「游戏类型」列：机种键 → 统一显示名（与下拉共用一份清单）
+const rankingConsoleLabels = computed(() =>
+    Object.fromEntries(
+        rankingConsoles.value.map((item) => [item.platform, item.label])
+    )
+);
+function rankingPlatformLabel(platform) {
+    return rankingConsoleLabels.value[platform] || platform || "";
+}
 const rankingConsole = ref("");
-// 当前机种的**整份**榜单（一个机种一次全取回来，前端分页的数据源）
+// 当前取回的榜单：选了机种就是该机种，清空后是**全部机种**（跨机种）
 const rankingItems = ref([]);
 const rankingPage = ref(1);
 // 「已入库」按钮按下时只展示命中库存的行（纯前端过滤，不再打接口）
 const rankingInLibraryOnly = ref(false);
 // 榜单搜索词。与检索区的 keyword **故意分成两个**：那边是服务端 FTS（搜中英文两列、分词、剥尾部
-// 标签、支持 `mario*` 前缀），这边只是对游戏名称做不区分大小写的裸子串匹配，语义不同、别合并
+// 标签、支持 `mario*` 前缀），这边只是对中文名/英文名做不区分大小写的裸子串匹配，语义不同、别合并
 const rankingKeyword = ref("");
 const rankingNeedle = computed(() => rankingKeyword.value.trim().toLowerCase());
 // 这份榜单里卡带 ID 命中平台库存的行数（后端下发的 path 非空即命中）。
@@ -359,14 +397,18 @@ const rankingNeedle = computed(() => rankingKeyword.value.trim().toLowerCase());
 const rankingLinkedCount = computed(
     () => rankingItems.value.filter((item) => item.path).length
 );
-// 只按搜索词过一遍（名称的裸子串、不区分大小写）。单独拆出来是为了空态能分清
+// 只按搜索词过一遍（中文名/英文名的裸子串、不区分大小写）。单独拆出来是为了空态能分清
 // 「是搜索没搜到」还是「搜到了但都没入库」——见 rankingEmptyDescription
 const rankingKeywordMatches = computed(() => {
     const needle = rankingNeedle.value;
     if (!needle) {
         return rankingItems.value;
     }
-    return rankingItems.value.filter((item) => item.title.toLowerCase().includes(needle));
+    return rankingItems.value.filter(
+        (item) =>
+            item.zh.toLowerCase().includes(needle) ||
+            item.en.toLowerCase().includes(needle)
+    );
 });
 // 搜索与「只看已入库」是 **AND**（先按词筛、再按库存筛），真正参与分页的就是它；
 // 而按钮上的比例仍按整份 rankingItems 算（分母是这份榜单的总行数，不随过滤变）
@@ -413,12 +455,14 @@ const rankingEmptyDescription = computed(() => {
         if (rankingInLibraryOnly.value && rankingKeywordMatches.value.length) {
             return `匹配「${rawKeyword}」的游戏都还没入库。`;
         }
-        return `没有匹配到名称含「${rawKeyword}」的游戏。`;
+        return `没有匹配到中英文名含「${rawKeyword}」的游戏。`;
     }
     if (rankingInLibraryOnly.value && rankingItems.value.length) {
-        return "这个类型下还没有已入库的游戏。";
+        return rankingConsole.value
+            ? "这个类型下还没有已入库的游戏。"
+            : "全机种下还没有已入库的游戏。";
     }
-    return "该游戏类型暂无榜单数据。";
+    return rankingConsole.value ? "该游戏类型暂无榜单数据。" : "全部类型暂无榜单数据。";
 });
 
 function toggleInLibraryOnly() {
@@ -454,21 +498,22 @@ async function loadRankingConsoles() {
     } finally {
         rankingLoading.value = false;
     }
-    if (rankingConsole.value) {
+    // 默认机种由后端的 default_console 决定（FC）；清单加载失败就不再打榜单接口
+    if (!rankingError.value) {
         await loadRanking();
     }
 }
 
 async function loadRanking() {
-    if (!rankingConsole.value) {
-        return;
-    }
     const seq = ++rankingSeq;
     rankingLoading.value = true;
-    // 换了一个机种就回到第 1 页（换了份数据，旧页码未必还存在）
+    // 换机种 / 清空机种都回到第 1 页（换了份数据，旧页码未必还存在）
     rankingPage.value = 1;
     try {
-        const data = await getGameRankingAPI({ console: rankingConsole.value });
+        // 清空下拉时不再传 console：后端返回全部机种（跨机种榜单）
+        const data = await getGameRankingAPI({
+            console: rankingConsole.value || undefined,
+        });
         if (seq !== rankingSeq) {
             return;
         }
@@ -615,8 +660,22 @@ onMounted(async () => {
     width: 88px;
 }
 
+/* 跨机种榜单才出现的「游戏类型」列；比检索区窄，给中英文名留空间 */
+.game-discover__col-ranking-console {
+    width: 150px;
+}
+
 .game-discover__col-ids {
     width: 30%;
+}
+
+/* 跨机种榜单多一列「游戏类型」，压缩中文名/卡带 ID，给英文名留空间 */
+.game-discover__table--all .game-discover__col-zh {
+    width: 26%;
+}
+
+.game-discover__table--all .game-discover__col-ids {
+    width: 26%;
 }
 
 .game-discover__nowrap {

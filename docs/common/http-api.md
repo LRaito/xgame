@@ -145,7 +145,7 @@
 |---|---|---|---|
 | GET | `/api/games/search` | 需登录 | `q` / `console_id` / `page` / `page_size`，服务端分页 |
 | GET | `/api/games/search/consoles` | 需登录 | 机种下拉 `{id, name, platform_id}`，同名已合并 |
-| GET | `/api/games/search/ranking` | 需登录 | `?console=` 机种键，整份榜单不分页 |
+| GET | `/api/games/search/ranking` | 需登录 | `?console=` 机种键，省略则全部机种；item 含 `zh` / `en` / `platform` |
 | GET | `/api/games/search/ranking/consoles` | 需登录 | 榜单机种 `{platform, label, playable}` 与默认机种 |
 
 ## 边界与错误

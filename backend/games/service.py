@@ -644,8 +644,8 @@ class GameService:
         只认**有本体**的游戏（`game_path != ''`），与 `list_center` / `list_recent` 同口径：
         没有本体的条目点进去只会 404，不该给链接。
 
-        不分块：榜单一个机种最多 100 行、每行最多 2 个卡带ID（见 `search_index._RANKING_ID_SPLIT`），
-        也就是最多 200 个宿主参数，离 SQLite 的 999 还差一个数量级。
+        不分块：调用方（榜单 service）会把每批压到 `_CARTRIDGE_LOOKUP_CHUNK`（500）以内，
+        低于 SQLite 老版本的 999 宿主参数上限；本方法自身不再分批。
         """
         # 归一后的 ID -> 原样入参（可能多个入参归一到同一个 ID，都要能查到）
         wanted: dict[str, list[str]] = {}
