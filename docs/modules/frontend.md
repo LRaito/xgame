@@ -76,10 +76,11 @@
 - 首页即游戏中心，没有单独的导航中心页。
 - 侧栏菜单项与顺序由子路由声明顺序 + `meta.title` 生成。
 - `buildMenuFromRoutes()` 过滤掉没有 `title` 或带 `hiddenInMenu` 的路由。
-- 菜单当前顺序：游戏中心、游戏管理、游戏发现、按键管理。
+- 菜单当前顺序：游戏中心、游戏管理、游戏发现、按键管理、机型简史。
 - `/games/manage` 是游戏管理页。
 - `/games/discover` 是游戏发现页，详见 `./game-discover.md`。
 - `/shortcuts` 是纯前端静态的按键管理页。
+- `/platforms` 是机型简史页，`/platforms/:id` 是机型详情页，见 `./platform-chronicle.md`。
 - `/games/search` 重定向到 `/games/discover`，并保留 query。
 - `/games/flash|play|h5/:gameId` 三个播放页都 `hiddenInMenu`。
 - 新增页面 = 加一条带 `meta` 的子路由。

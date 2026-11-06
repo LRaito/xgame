@@ -18,6 +18,8 @@
 - 作为机种名、显示名、别名、扩展名、后缀候选与 BIOS 规格的唯一权威。
 - 把外部名录与榜单里的自由文本解析回机种。
 - 向 `/api/games/status` 提供前端所需的类型元数据。
+- 「机型简史」的介绍文案是前端静态内容，只做展示，不参与词表与可玩判定，
+  见 [`../modules/platform-chronicle.md`](../modules/platform-chronicle.md)。
 
 ## 关键接口
 

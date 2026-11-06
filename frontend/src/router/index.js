@@ -42,6 +42,18 @@ const routes = [
                 meta: { title: "按键管理" },
             },
             {
+                path: "platforms",
+                name: "platforms",
+                component: () => import("@/views/platforms/index.vue"),
+                meta: { title: "机型简史" },
+            },
+            {
+                path: "platforms/:id",
+                name: "platform-detail",
+                component: () => import("@/views/platforms/detail.vue"),
+                meta: { title: "机型介绍", hiddenInMenu: true },
+            },
+            {
                 // 旧路径（游戏检索）重定向到游戏发现，保留 ?tab=ranking 之类的查询参数。
                 // 不设 meta.title，否则会被 buildMenuFromRoutes() 收进侧栏。
                 path: "games/search",

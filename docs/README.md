@@ -35,6 +35,7 @@
 | [`modules/guide-and-h5.md`](modules/guide-and-h5.md) | H5 与攻略包的校验、解包、读取 |
 | [`modules/game-discover.md`](modules/game-discover.md) | 检索索引、FTS、SQL、榜单、库存关联 |
 | [`modules/frontend.md`](modules/frontend.md) | 路由、api 层、组件、界面交互 |
+| [`modules/platform-chronicle.md`](modules/platform-chronicle.md) | 机型简史：36 个类型的介绍页、图片与来源 |
 | [`modules/delivery-docker.md`](modules/delivery-docker.md) | 镜像、compose、bind、备份、哨兵 |
 | [`modules/delivery-windows.md`](modules/delivery-windows.md) | Windows 包构建、启动器、编码、升级 |
 
