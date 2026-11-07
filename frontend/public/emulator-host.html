@@ -679,12 +679,15 @@
                 },
 
                 /**
-                 * 切显示比例模式（FC 用）：父页面「窗口」选择器里点另一列时调用，mode 是父页面的
-                 * 模式名（pp / wide），这里翻译成 fceumm 的内核选项：
-                 *   pp   → fceumm_aspect = PP、上下过扫描各裁 8 行（帧缓冲 256×224，显示 8:7）；
-                 *   wide → fceumm_aspect = 4:3、不裁过扫描（帧缓冲 256×240，显示 4:3，铺满电视屏）。
+                 * 切显示比例模式（FC / SFC 用）：父页面「窗口」选择器里点另一列时调用，mode 是
+                 * 父页面的模式名（pp / wide），这里翻译成对应内核的选项：
+                 *   FC（fceumm）：
+                 *     pp   → fceumm_aspect = PP、上下过扫描各裁 8 行（帧缓冲 256×224，显示 8:7）；
+                 *     wide → fceumm_aspect = 4:3、不裁过扫描（帧缓冲 256×240，显示 4:3，铺满电视屏）。
+                 *   SFC（snes9x）：pp → snes9x_aspect = "uncorrected"（8:7）；
+                 *     wide → snes9x_aspect = "4:3"（帧缓冲始终 256×224，只横向拉宽）。
                  * 引擎只在启动时读一次设置文件，所以运行中改只能这样直接改内核变量（与引擎设置
-                 * 菜单里改选项走的是同一条路）；fceumm 会立刻按新几何重新摆放画面，父页面每秒读
+                 * 菜单里改选项走的是同一条路）；内核会立刻按新几何重新摆放画面，父页面每秒读
                  * 一次 videoInfo 跟着重算舞台。
                  */
                 async setDisplayMode(mode) {
@@ -700,9 +703,16 @@
                     }
                     const toWide = mode === "wide";
                     try {
-                        inst.gameManager.setVariable("fceumm_aspect", toWide ? "4:3" : "PP");
-                        inst.gameManager.setVariable("fceumm_overscan_v_top", toWide ? "0" : "8");
-                        inst.gameManager.setVariable("fceumm_overscan_v_bottom", toWide ? "0" : "8");
+                        if (core === "snes") {
+                            inst.gameManager.setVariable(
+                                "snes9x_aspect",
+                                toWide ? "4:3" : "uncorrected",
+                            );
+                        } else {
+                            inst.gameManager.setVariable("fceumm_aspect", toWide ? "4:3" : "PP");
+                            inst.gameManager.setVariable("fceumm_overscan_v_top", toWide ? "0" : "8");
+                            inst.gameManager.setVariable("fceumm_overscan_v_bottom", toWide ? "0" : "8");
+                        }
                     } catch {
                         return { ok: false, message: "切换显示比例失败。" };
                     }
@@ -952,12 +962,17 @@
                 //     按 PP（Pixel Perfect，1:1 方像素）摆放的比例就是 8:7 = 256×224；
                 //   wide（4:3，真机 CRT 观感）：**不裁过扫描**→ 帧缓冲 256×240，按 4:3 摆放正好
                 //     铺满 4:3 的电视屏幕（224 行按内核的 4:3 摆放会算成 ≈1.43，屏里会留黑边）。
-                // 两套各对应一张电视机壳素材的屏幕洞（见 emulator-player.vue 的 SHELLS），
-                // 模式由父页面经 ?ratio= 传进来，运行中切换走 __ejsRpc.setDisplayMode。
+                // SFC（系统名 snes → snes9x 内核）只切显示比例，帧缓冲始终 256×224：
+                //   pp → snes9x_aspect = "uncorrected"（8:7）；wide → "4:3"。
+                // 两套各对应一张电视机壳素材的屏幕洞（见 emulator-player.vue 的 SHELLS，
+                // SFC 复用 FC 的两套电视壳），模式由父页面经 ?ratio= 传进来，
+                // 运行中切换走 __ejsRpc.setDisplayMode。
                 if (core === "nes") {
                     window.EJS_defaultOptions.fceumm_aspect = wide ? "4:3" : "PP";
                     window.EJS_defaultOptions.fceumm_overscan_v_top = wide ? "0" : "8";
                     window.EJS_defaultOptions.fceumm_overscan_v_bottom = wide ? "0" : "8";
+                } else if (core === "snes") {
+                    window.EJS_defaultOptions.snes9x_aspect = wide ? "4:3" : "uncorrected";
                 }
                 // BIOS：有就交给引擎解压到虚拟文件系统；与机种无关，没有 BIOS 的机种不会传
                 if (biosUrl) {

@@ -8,8 +8,12 @@
                 tone="dark"
                 aria-label="开始游戏"
             >
-                <span class="start-gate__press">PRESS START</span>
-                <span class="start-gate__zh">投币开始</span>
+                <!-- Element Plus 会把按钮插槽再包一层 span，纵向排列必须放在
+                     我们自己的包裹层上，否则两行文字会被摆成一行 -->
+                <span class="start-gate__stack">
+                    <span class="start-gate__press">PRESS START</span>
+                    <span class="start-gate__zh">投币开始</span>
+                </span>
             </app-button>
             <span class="start-gate__coin" aria-hidden="true">INSERT COIN</span>
         </div>
@@ -84,11 +88,19 @@ defineEmits(["start"]);
 }
 
 /* 按钮只承载 PRESS START 与中文提示，投币字样留在外面；
-   边框、背景与游标交给 AppButton 的 text 形态 */
+   边框、背景与游标交给 AppButton 的 text 形态。 */
 .start-gate__start {
-    flex-direction: column;
-    gap: clamp(8px, 1vw, 12px);
     color: inherit;
+}
+
+/* 按钮内部两行的纵向排列。**不能写在 `.start-gate__start` 上**：
+   Element Plus 的 el-button 会把默认插槽再包进一层 `<span>`，
+   按钮本身只有一个 flex 子元素，flex-direction/gap 都落不到这两行文字上。 */
+.start-gate__stack {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: clamp(8px, 1vw, 12px);
 }
 
 .app-button.start-gate__start:hover {

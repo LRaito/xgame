@@ -5,8 +5,9 @@
  * （见 components/games/CoverBeautifyDialog.vue）。**一个游戏类型可以有好几种样式**，
  * 查表函数 `beautifyStylesFor(gameType)` 返回这个类型可用的那一组（顺序 = 弹框里
  * 那排方框单选的顺序，第一个是默认选中的）；返回空数组 = 这个类型
- * 不支持美化，按钮整条不显示。**每个类型都出那排单选**——只有一种样式的 `flash` / `gba`
- * 也把 `DISK` / `GBA` 摆出来（那一项不可选），所以 `label` 是用户唯一能看到的样式名。
+ * 不支持美化，按钮整条不显示。**每个类型都出那排单选**——只有一种样式的 `flash` / `gba` /
+ * `nds` / `sfc` 也把 `DISK` / `GBA` / `NDS` / `SFC` 摆出来（那一项不可选），所以 `label`
+ * 是用户唯一能看到的样式名。
  *
  * **样式 id 就是「封面类型」**（`games.cover_type` 存的值）：美化封面时选中的那个
  * 样式会连同封面文件写进游戏行，游戏中心在游戏类型分组内按它分子网格、详情弹框展示它、
@@ -30,6 +31,9 @@
  *   fc-cart.png    700 × 460  洞口 (56,  54) 592 × 290   圆角 10  （洞口 592:290 ≈ 2.04:1）
  *   nes-cart.png   700 × 779  洞口 (283,  0) 323 × 527   圆角 10  （洞口 323:527 ≈ 0.61:1）
  *                                                         ↑ 洞口上边就是画布顶边，见下
+ *   sfc-cart.png   532 × 344  洞口 (105, 0) 325 × 161   上两角直角 / 下两角 r=12
+ *                                                         ↑ 洞口上边就是画布顶边（vimm 素材
+ *                                                           只在顶部左右两角透明），325:161 ≈ 2.02:1
  *
  * 底图文件名一律 `<样式 id>-cart.png`（见下面的 CART_STYLES），加样式就照这个来。
  *
@@ -62,6 +66,12 @@
  * 裁切仍然是四角 r=10**，裁掉的上两角露出的是底图填好的机身色。重跑底图填色时记得这点
  * （`clear_scene.py --radius 0,0,10,10`）。
  *
+ * **SFC（`snes`）与 NES 同属「洞口上边就是画布顶边」**：源图是 vimm 素材，顶部
+ * **左右两角**（`x 0..86` / `449..532`，`y 0..18`）本来就是透明的，标签黑底则顶到
+ * 画布第 0 行，**顶部中间一点不裁**（见 `tools/vimm-sfc-crop.py`）。与 NES 不同的是
+ * 它的**上两角是直角**，只有下两角是实测 r=12 的圆角，所以 `radius` 按角写成
+ * `{ tl: 0, tr: 0, br: 12, bl: 12 }`；底图填色同样只做下两角圆角。
+ *
  * 底图本身带透明的地方通常是卡带轮廓之外（缺口、四角）；NDS 底图的贴纸窗也是透明的，
  * 合成时由 `holeFill` 在封面下面补一层贴纸底色。
  *
@@ -82,6 +92,7 @@ import gbaCartUrl from "@/assets/carts/gba-cart.png";
 import ndsCartUrl from "@/assets/carts/nds-cart.png";
 import fcCartUrl from "@/assets/carts/fc-cart.png";
 import nesCartUrl from "@/assets/carts/nes-cart.png";
+import sfcCartUrl from "@/assets/carts/sfc-cart.png";
 
 /**
  * Flash 光盘的几何（程序化绘制，没有底图）。
@@ -182,6 +193,15 @@ export const CART_STYLES = {
         hole: { x: 283, y: 0, width: 323, height: 527 },
         radius: 10,
     },
+    sfc: {
+        label: "SFC",
+        url: sfcCartUrl,
+        image: { width: 532, height: 344 },
+        // 洞口上边就是画布顶边：vimm 素材只在顶部左右两角透明，标签黑底顶到第 0 行，
+        // 顶部中间不裁。上两角是直角，下两角按实拍素材量得 r=12（见文件头）。
+        hole: { x: 105, y: 0, width: 325, height: 161 },
+        radius: { tl: 0, tr: 0, br: 12, bl: 12 },
+    },
 };
 
 /** 游戏类型 → 可用的美化样式 id 列表，**顺序就是弹框里单选的顺序**。不在这张表里的类型不显示按钮。 */
@@ -191,6 +211,7 @@ const STYLE_BY_GAME_TYPE = {
     gba: ["gba"],
     nds: ["nds"],
     nes: ["fc", "nes"],
+    snes: ["sfc"],
 };
 
 /**
@@ -243,6 +264,12 @@ const STYLE_META = {
         output: { ...CART_STYLES.nes.image },
         hint: "建议 323 : 527（约 0.61:1）的竖版图，至少 323×527。比例不符会拉伸填满贴纸窗。",
     },
+    sfc: {
+        id: "sfc",
+        label: CART_STYLES.sfc.label,
+        output: { ...CART_STYLES.sfc.image },
+        hint: "建议 325 : 161（约 2.02:1）的横版图，至少 325×161。比例不符会拉伸填满整块标签窗。",
+    },
 };
 
 /**
@@ -259,7 +286,7 @@ export function coverTypesFor(gameType) {
     return STYLE_BY_GAME_TYPE[gameType] || [];
 }
 
-/** 封面类型 id → 展示名（DISK / GB / GBC / GBA / FC / NES）；空值或未知 id 返回空串。 */
+/** 封面类型 id → 展示名（DISK / GB / GBC / GBA / NDS / FC / NES / SFC）；空值或未知 id 返回空串。 */
 export function coverTypeLabel(value) {
     return STYLE_META[value]?.label || "";
 }

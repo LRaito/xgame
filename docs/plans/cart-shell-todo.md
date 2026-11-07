@@ -23,7 +23,7 @@
 | 机种 | cart | shell |
 |---|---|---|
 | 任天堂 FC（`nes`） | √ | √ |
-| 任天堂 SFC（`snes`） | X | X |
+| 任天堂 SFC（`snes`） | √ | √ |
 | 任天堂 N64（`n64`） | X | X |
 | 任天堂 GB/GBC（`gb`） | √ | √ |
 | 任天堂 GBA（`gba`） | √ | √ |
@@ -59,8 +59,8 @@
 
 ## 现状汇总
 
-- 34 个机种中，`cart` 完成 4 个，共 6 种卡带样式（FC / NES / GB / GBC / GBA / NDS）。
-- `shell` 完成 4 个，共 6 张素材（FC 像素完美 + 4:3、GB/GBC、GBA、NDS 上下 + 左右）。
+- 34 个机种中，`cart` 完成 5 个，共 7 种卡带样式（FC / NES / GB / GBC / GBA / NDS / SFC）。
+- `shell` 完成 5 个，共 6 张素材（FC / SFC 共用像素完美 + 4:3 两套电视壳、GB/GBC、GBA、NDS 上下 + 左右）。
 - 其余机种两列均为 `X`。
 
 ## 相关文档

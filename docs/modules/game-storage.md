@@ -112,8 +112,9 @@
 
 - `games.cover_type` 记录封面被「美化」成哪种外观，值就是封面样式 id。
 - 可空：空表示没有封面类型，不是「始终有值」。
-- `flash` → `flash`；`gb` → `gb` / `gbc`；`gba` → `gba`；`nds` → `nds`；`nes` → `fc` / `nes`。
-- `h5` / `snes` / `sega*` 返回空元组，永远没有封面类型。
+- `flash` → `flash`；`gb` → `gb` / `gbc`；`gba` → `gba`；`nds` → `nds`；
+  `nes` → `fc` / `nes`；`snes` → `sfc`。
+- `h5` / `sega*` 等未登记类型返回空元组，永远没有封面类型。
 - 校验入口 `validate_cover_type()`：先判空，空值合法并返回 `None`。
 - 不支持美化的类型收到非空值、或值不在集合内，都是中文 400。
 - 新建（手动上传 / 网络上传 / 搬运）一律留空，`create()` 不接受该字段。

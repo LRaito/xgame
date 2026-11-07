@@ -60,7 +60,7 @@
                 :active-mode="ndsScreenMode"
                 @pick-mode="onPickNdsWindowMode"
             />
-            <!-- 有洞对齐图的平台（GBA、FC、GBC、NDS）：把机壳图盖在画面上，洞正好露出游戏画面 -->
+            <!-- 有洞对齐图的平台（GBA、FC、SFC、GBC、NDS）：把机壳图盖在画面上，洞正好露出游戏画面 -->
             <app-button
                 v-if="supportsShell"
                 class="emulator-player__action"
@@ -227,11 +227,28 @@ const ENGINE_LOADER = "/emulatorjs/data/loader.js";
 //     melonds_screen_gap（256×1437/840 − 384 ≈ 53.94，取 54），最大误差约 0.06px。
 //     原素材每块屏幕左右各有 8px 被补成了机身色（洞从 856 宽收到 840），洞才变成 4:3。
 //     素材已换成真实机壳，换图时同步改这里与 EMU_NATIVE.nds；
-//   FC 的电视机壳有两套，正好对应窗口选择器里的两列显示比例（见 WIDE_MODE）：
+//   FC / SFC 的电视机壳有两套，正好对应窗口选择器里的两列显示比例（见 WIDE_MODE）：
 //   `pp`（像素完美 8:7）那套是原素材把**屏幕那段纵向拉长 7/6 倍**（原素材洞 1084×813 = 4:3，
 //   拉长后 1084×948.5 = 8:7）得到的，下面 121 行的控制条（扬声器 / 按键）保持等比不变，
 //   最后裁掉四周透明留白（只顶部有 10 行是空的）；`wide`（4:3）那套就是原素材本身
 //   （4:3 的洞），只裁掉顶部 9 行留白。切比例时机壳跟着换成对应的那套，洞才与画面一致。
+//   FC 与 SFC 原生帧缓冲都是 256×224（8:7），所以 SFC 直接复用这两套电视机壳。
+const FC_SHELLS = {
+    // 像素完美（8:7）：素材是把原图屏幕那段纵向拉长 7/6 得到的
+    pp: {
+        url: nesShellUrl,
+        image: { width: 1326, height: 1237 },
+        // 带小数：这两个值来自原素材的洞坐标 × 7/6（纵向拉伸倍率）再减去裁掉的那 10 行
+        holes: [{ x: 121, y: 146.3333, width: 1084, height: 948.5 }],
+    },
+    // 4:3：用**未拉伸的原素材**，洞本来就是 4:3，只裁掉了顶部 9 行透明留白
+    wide: {
+        url: nesShell43Url,
+        image: { width: 1326, height: 1077 },
+        holes: [{ x: 121, y: 125, width: 1084, height: 813 }],
+    },
+};
+
 const SHELLS = {
     gba: {
         pp: {
@@ -301,21 +318,9 @@ const SHELLS = {
             },
         },
     },
-    nes: {
-        // 像素完美（8:7）：素材是把原图屏幕那段纵向拉长 7/6 得到的
-        pp: {
-            url: nesShellUrl,
-            image: { width: 1326, height: 1237 },
-            // 带小数：这两个值来自原素材的洞坐标 × 7/6（纵向拉伸倍率）再减去裁掉的那 10 行
-            holes: [{ x: 121, y: 146.3333, width: 1084, height: 948.5 }],
-        },
-        // 4:3：用**未拉伸的原素材**，洞本来就是 4:3，只裁掉了顶部 9 行透明留白
-        wide: {
-            url: nesShell43Url,
-            image: { width: 1326, height: 1077 },
-            holes: [{ x: 121, y: 125, width: 1084, height: 813 }],
-        },
-    },
+    nes: FC_SHELLS,
+    // SFC 与 FC 同为 256×224（8:7），机壳逻辑完全一致，直接复用同一套电视壳
+    snes: FC_SHELLS,
 };
 
 /**
@@ -339,11 +344,11 @@ const NDS_SCREEN_STORAGE_KEY = "games.emu.nds.screen";
 const NDS_WINDOW_STORAGE_KEY = "games.emu.nds.window";
 
 // 显示比例模式（窗口选择器里那一列）：pp = 像素完美（1:1 方像素，画面比例 = 帧缓冲比例）；
-// wide = 4:3（真机 CRT 观感，把画面横向拉宽填满 4:3）。只有 FC 两种都提供
-// （内核选项 fceumm_aspect 可切，两套比例各有一张机壳素材，见 WIDE_MODE / SHELLS）。
+// wide = 4:3（真机 CRT 观感，把画面横向拉宽填满 4:3）。只有 FC / SFC 两种都提供
+// （FC 用 fceumm_aspect、SFC 用 snes9x_aspect，两套比例各有一张机壳素材，见 WIDE_MODE / SHELLS）。
 const ASPECT_PP = "pp";
 const ASPECT_WIDE = "wide";
-// 「4:3」那一列只有 FC 有，它同时改两件事（见 emulator-host.html 的 setDisplayMode）：
+// FC 的「4:3」那一列同时改两件事（见 emulator-host.html 的 setDisplayMode）：
 //   1) 内核显示比例 fceumm_aspect = 4:3；
 //   2) **关掉上下过扫描裁切**，帧缓冲变成完整的 256×240。
 // 必须用完整 240 行：224 行按内核的 4:3 摆放算出来是 ≈1.43（内核按完整帧归一化），
@@ -351,6 +356,9 @@ const ASPECT_WIDE = "wide";
 // 也正是 nes-shell-43.png（原素材，屏幕洞本来就 4:3）对应的画面。
 const WIDE_MODE = {
     nes: { aspect: 4 / 3, native: { width: 256, height: 240 } },
+    // SFC（snes9x）只切显示比例，不动帧缓冲：4:3 模式仍是 256×224 行，只是横向拉宽。
+    // pp 对应内核选项 snes9x_aspect = "uncorrected"（8:7），wide 对应 "4:3"。
+    snes: { aspect: 4 / 3, native: { width: 256, height: 224 } },
 };
 
 // 窗口取值是 `<倍率>|<显示比例>`（如 "2|pp" / "1.5|wide" / "fit|pp"）。
@@ -1599,7 +1607,7 @@ async function launchEngine() {
             core: meta.value.core,
             name: item.name || "",
             v: item.updated_at || "",
-            // 显示比例：宿主页据此设内核选项（只有 FC 认这个参数），与标题栏窗口选择器里选的那列一致
+            // 显示比例：宿主页据此设内核选项（只有 FC / SFC 认这个参数），与标题栏窗口选择器里选的那列一致
             ratio: aspectMode.value,
         });
         // ROM 文件名：宿主页拼成 /api/games/{id}/play/<文件名>，EmulatorJS 用末段当 ROM

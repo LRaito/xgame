@@ -2066,18 +2066,34 @@ def test_update_cover_type(logged_in_games):
     assert cleared.json()["data"]["cover_type"] is None
 
 
+def test_cover_type_accepts_snes_cart(logged_in_games):
+    """SFC 卡带只有一种样式 sfc；别的类型的样式一律不认。"""
+    snes = _create_game(logged_in_games, "CT SFC", "a.sfc", b"sfc-body").json()["data"]
+    updated = logged_in_games.put(
+        f"/api/games/manage/{snes['id']}", json={"cover_type": "sfc"}
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["cover_type"] == "sfc"
+
+    rejected = logged_in_games.put(
+        f"/api/games/manage/{snes['id']}", json={"cover_type": "fc"}
+    )
+    assert rejected.status_code == 400
+    assert "封面类型" in rejected.json()["message"]
+
+
 def test_cover_type_rejects_for_unsupported_type(logged_in_games):
-    """不支持美化封面的类型（snes）永远没有封面类型：设值 400、空值照收。"""
-    snes = _create_game(logged_in_games, "CT SNES", "a.sfc", b"sfc-body").json()["data"]
+    """不支持美化封面的类型（n64）永远没有封面类型：设值 400、空值照收。"""
+    n64 = _create_game(logged_in_games, "CT N64", "a.z64", b"n64-body").json()["data"]
     for value in ("gb", "fc", "xx"):
         rejected = logged_in_games.put(
-            f"/api/games/manage/{snes['id']}", json={"cover_type": value}
+            f"/api/games/manage/{n64['id']}", json={"cover_type": value}
         )
         assert rejected.status_code == 400, value
         assert "封面类型" in rejected.json()["message"]
     # 空值合法：编辑弹框对这类游戏根本不显示那一行，表单照样会把空串发上来
     blank = logged_in_games.put(
-        f"/api/games/manage/{snes['id']}", json={"cover_type": ""}
+        f"/api/games/manage/{n64['id']}", json={"cover_type": ""}
     )
     assert blank.status_code == 200
     assert blank.json()["data"]["cover_type"] is None
