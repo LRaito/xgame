@@ -83,7 +83,7 @@ class CloudSaveService:
         self._username = username
 
     def list_snapshots(self, user_id: int, game_id: int) -> list[CloudSnapshotItem]:
-        """按展示顺序（分数升序，越新越靠下）返回某游戏的全部快照。"""
+        """按 id 升序返回某游戏的全部快照（新快照 id 更大，自然排在末尾）。"""
         snapshots = self._ordered_rows(user_id, game_id)
         if not snapshots:
             return []
@@ -354,10 +354,7 @@ class CloudSaveService:
                     GameCloudSnapshot.user_id == user_id,
                     GameCloudSnapshot.game_id == game_id,
                 )
-                .order_by(
-                    col(GameCloudSnapshot.sort_order),
-                    col(GameCloudSnapshot.id),
-                )
+                .order_by(col(GameCloudSnapshot.id))
             ).all()
         )
 

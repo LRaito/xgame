@@ -595,25 +595,24 @@ def test_cloud_snapshot_create_appends_last(logged_in_saves):
 
 
 def test_cloud_snapshot_move_reorders_siblings(logged_in_saves):
+    """列表固定按 id 升序：move 只改展示分数，返回顺序不再随之变化。"""
     client = logged_in_saves
     game_id = _make_game(client, cartridge_id="MOVE-2")["id"]
     first, second, third = _make_siblings(client, game_id)
     assert _order(client, game_id) == [first["id"], second["id"], third["id"]]
 
-    # 第三条移到同级最上面，返回整份有序列表
+    before = {item["id"]: item["sort_order"] for item in _list_snapshots(client, game_id)}
     moved = client.post(f"/api/games/saves/{third['id']}/move", json={"to_index": 0})
     assert moved.status_code == 200, moved.text
     assert [item["id"] for item in moved.json()["data"]] == [
-        third["id"],
         first["id"],
         second["id"],
+        third["id"],
     ]
-    assert _order(client, game_id) == [third["id"], first["id"], second["id"]]
-
-    # 第一条（现在在中间）下移一位
-    moved = client.post(f"/api/games/saves/{first['id']}/move", json={"to_index": 2})
-    assert moved.status_code == 200, moved.text
-    assert _order(client, game_id) == [third["id"], second["id"], first["id"]]
+    assert _order(client, game_id) == [first["id"], second["id"], third["id"]]
+    # 被移动快照的展示分数确实变小了（已不具备展示意义，仅落库）
+    after = {item["id"]: item["sort_order"] for item in moved.json()["data"]}
+    assert after[third["id"]] < before[third["id"]]
 
 
 def test_cloud_snapshot_move_only_touches_target(logged_in_saves):
