@@ -85,7 +85,12 @@
                 </div>
             </aside>
 
-            <div class="games-main">
+            <!-- 内容区自己滚（独立滚动区）：滚到边界不影响侧栏，反之亦然 -->
+            <div
+                ref="mainRef"
+                class="games-main"
+                @scroll.passive="onMainScroll"
+            >
                 <!-- 统计块：进度 + 关键词联动（类型下拉不参与），块内纯数字无单位 -->
                 <div class="games-stats">
                     <div class="games-stat" :class="{ 'games-stat--dim': !statsData.total }">
@@ -155,7 +160,9 @@
 
                 <!-- 一个类型一个区块：数量为 0 的类型整块不渲染（默认态也一样）；
                      不传 aspect = 卡片高度自适应：封面按正方形限制框缩放，卡片高就是封面高，
-                     同一类型的封面形状一致，整行仍然齐平 -->
+                     同一类型的封面形状一致，整行仍然齐平。
+                     区块内按封面类型分组（词表顺序）：换类型的那张卡强制从新的一行开始，
+                     保证一行里都是同一种封面类型（见 sectionCardStyle） -->
                 <section
                     v-for="sec in visibleSections"
                     :id="`grp-${sec.type}`"
@@ -165,9 +172,10 @@
                     <h2 class="games-gh">{{ gameTypeLabel(sec.type) }}</h2>
                     <div class="games-grid">
                         <game-card
-                            v-for="game in sec.games"
+                            v-for="(game, index) in sec.games"
                             :key="game.id"
                             :game="game"
+                            :style="sectionCardStyle(sec, index)"
                             @contextmenu="openMenu($event, game)"
                         />
                     </div>
@@ -255,6 +263,7 @@ import {
     setGameProgressAPI,
 } from "@/api/games";
 import { CARD_ASPECT_RAIL } from "@/constants/gameCardAspect";
+import { coverTypesFor } from "@/constants/coverStyles";
 import {
     GAME_PROGRESS_LIST,
     PROGRESS_COMPLETED,
@@ -374,7 +383,17 @@ const filteredRecent = computed(() =>
     )
 );
 
-// 页面区块：一个类型一个区块；数量为 0 的类型整块隐藏，类型下拉选中时只留该类型
+/** 封面类型在一个类型区块内的排序位次：按 coverTypesFor 的词表顺序，
+    没有封面类型（空）或词表外的 id 一律排最后。 */
+function coverTypeRank(gameType, coverType) {
+    const order = coverTypesFor(gameType);
+    const index = order.indexOf(coverType || "");
+    return index < 0 ? order.length : index;
+}
+
+// 页面区块：一个类型一个区块；数量为 0 的类型整块隐藏，类型下拉选中时只留该类型。
+// 区块内按封面类型分组排序（词表顺序，空值最后），同一封面类型内保持原顺序——
+// 数组 sort 是稳定的，同级不会被打乱。
 const visibleSections = computed(() => {
     const sections = [];
     for (const type of typeOrder.value) {
@@ -387,10 +406,28 @@ const visibleSections = computed(() => {
         if (!matched.length) {
             continue;
         }
+        matched.sort(
+            (a, b) =>
+                coverTypeRank(type, a.cover_type) - coverTypeRank(type, b.cover_type)
+        );
         sections.push({ type, games: matched });
     }
     return sections;
 });
+
+/** 卡片在网格里的额外样式：换封面类型的那张卡强制 grid-column-start: 1，
+    网格自动布局会把它推到新的一行开头——这样一行内只会出现同一种封面类型。 */
+function sectionCardStyle(section, index) {
+    if (index === 0) {
+        return null;
+    }
+    const prev = section.games[index - 1];
+    const current = section.games[index];
+    if ((prev.cover_type || "") !== (current.cover_type || "")) {
+        return { gridColumnStart: 1 };
+    }
+    return null;
+}
 
 // 全空兜底：最近游玩与所有类型区块都不可见时才出现
 const pageEmpty = computed(
@@ -413,6 +450,7 @@ const emptyDescription = computed(() => {
 
 /* —— 类型侧栏：藏滚动条 + 上下翻页箭头（模式与 SaveTreeView 的存档侧栏一致） —— */
 const sideNavRef = ref(null);
+const mainRef = ref(null);
 const sideCanUp = ref(false);
 const sideCanDown = ref(false);
 
@@ -452,11 +490,13 @@ function jumpTo(id) {
 }
 
 function backToTop() {
-    window.scrollTo({ top: 0 });
+    mainRef.value?.scrollTo({ top: 0 });
 }
 
-function onWindowScrollTop() {
-    showTop.value = window.scrollY > 240;
+/** 主面板自己的滚动：控制「回到顶部」按钮与右键菜单关闭，与侧栏滚动互不牵连 */
+function onMainScroll() {
+    showTop.value = (mainRef.value?.scrollTop || 0) > 240;
+    closeMenu();
 }
 
 // 列表条数变化（首次加载、增删、按类型过滤改高度）后重测箭头可见性
@@ -602,8 +642,7 @@ onMounted(async () => {
     document.addEventListener("contextmenu", onDocumentContextMenu, true);
     document.addEventListener("click", onDocumentClick);
     document.addEventListener("keydown", onDocumentKeydown);
-    window.addEventListener("scroll", closeMenu, true);
-    window.addEventListener("scroll", onWindowScrollTop, { passive: true });
+
     loading.value = true;
     try {
         // SW 只用于封面/本体的缓存加速；初始化失败也不应挡住列表展示（见 gameAssetCache）
@@ -626,8 +665,7 @@ onBeforeUnmount(() => {
     document.removeEventListener("contextmenu", onDocumentContextMenu, true);
     document.removeEventListener("click", onDocumentClick);
     document.removeEventListener("keydown", onDocumentKeydown);
-    window.removeEventListener("scroll", closeMenu, true);
-    window.removeEventListener("scroll", onWindowScrollTop);
+
 });
 </script>
 
@@ -637,32 +675,38 @@ onBeforeUnmount(() => {
     width: 100%;
 }
 
-/* 页骨架：左侧类型导航色块 + 右侧内容。
-   外层 .content 有 28px 内边距，这里用负外边距把侧栏（左、上）顶到边界线上，
-   右侧留给 .content 的原生内边距 */
+/* 页骨架：左侧类型导航色块 + 右侧内容。**两个纵向滚动区完全独立**——
+   侧栏列表自己滚、右侧内容自己滚，任何一边滚到边界都不会牵连另一边。
+   外层 .content 有 28px 内边距：负外边距把壳顶到内容区四边（含底部），
+   壳高恰好一屏（100vh），页面本身（文档）不再产生滚动条，滚动都发生在壳里 */
 .games-shell {
     display: grid;
     grid-template-columns: 152px minmax(0, 1fr);
-    min-height: 480px;
-    margin: -28px 0 0 -28px;
+    height: 100vh;
+    margin: -28px 0 -28px -28px;
 }
 
 .games-main {
     min-width: 0;
+    height: 100%;
+    /* 内容区自己的滚动条：与侧栏滚动彻底隔离 */
+    overflow-y: auto;
+    overscroll-behavior: contain;
     /* 下移与侧栏首项（最近游玩）的起始线对齐：侧栏容器内上边距为 14px */
     padding: 14px 0 28px 20px;
 }
 
-/* —— 类型侧栏：浅灰大色块，右缘一条分隔线，无圆角无边框 —— */
+/* —— 类型侧栏：蓝灰大色块（与常驻侧栏同家族、比它浅两档），右缘一条分隔线，无圆角无边框 ——
+   壳已经是固定一屏高，侧栏不再用 sticky，直接占满壳高；
+   relative 是给上下翻页箭头的绝对定位当基准（少了它箭头会钉到视口上） */
 .games-side {
-    position: sticky;
-    top: 0;
-    align-self: start;
-    height: 100vh;
+    position: relative;
+    height: 100%;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    background: #f1f1f3;
-    border-right: 1px solid #e2e5e9;
+    background: #e4ebf5;
+    border-right: 1px solid #d3dcea;
     padding: 14px 8px 0;
 }
 
@@ -697,23 +741,23 @@ onBeforeUnmount(() => {
     text-decoration: none;
 }
 
-/* 悬浮与点选：浅灰化，并抵消容器横向内边距、左右都贴到色块边界 */
+/* 悬浮与点选：蓝灰化，并抵消容器横向内边距、左右都贴到色块边界 */
 .games-side__link:hover {
     margin: 0 -8px;
     padding: 7px 18px;
     border-radius: 0;
-    background: rgba(0, 0, 0, 0.05);
+    background: rgba(15, 40, 90, 0.06);
 }
 
 .games-side__link--active {
     margin: 0 -8px;
     padding: 7px 18px;
     border-radius: 0;
-    background: rgba(0, 0, 0, 0.05);
+    background: rgba(15, 40, 90, 0.09);
 }
 
 .games-side__link--active:hover {
-    background: rgba(0, 0, 0, 0.07);
+    background: rgba(15, 40, 90, 0.1);
 }
 
 /* 名称不换行，超长省略号 */
@@ -730,13 +774,14 @@ onBeforeUnmount(() => {
     flex: none;
     font-size: 11px;
     line-height: 16px;
-    color: #8a8a8f;
+    color: #8b97ad;
     font-variant-numeric: tabular-nums;
     text-align: right;
 }
 
-/* 翻页箭头：覆盖在列表两端的渐变遮罩里，不占行高；
-   只在对应方向还能滚时出现（见 script 的 updateSidePaging） */
+/* 翻页箭头：浮在列表两端，不占行高；
+   只在对应方向还能滚时出现（见 script 的 updateSidePaging）。
+   不加渐变遮罩——遮罩会变成一条横贯列表的虚影条 */
 .games-side__page {
     position: absolute;
     left: 8px;
@@ -749,15 +794,13 @@ onBeforeUnmount(() => {
 
 .games-side__page--up {
     top: 0;
-    background: linear-gradient(#f1f1f3 55%, transparent);
 }
 
 .games-side__page--down {
     bottom: 0;
-    background: linear-gradient(transparent, #f1f1f3 45%);
 }
 
-/* —— 统计块：玻璃墨样式（半透明 + 模糊），块宽总价与搜索栏等宽 —— */
+/* —— 统计块：蓝雾面玻璃样式（半透明 + 模糊，与类型侧栏同族底色），块宽与搜索栏等宽 —— */
 .games-stats {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
@@ -768,13 +811,13 @@ onBeforeUnmount(() => {
 }
 
 .games-stat {
-    background: rgba(250, 250, 251, 0.55);
+    background: rgba(232, 240, 250, 0.6);
     backdrop-filter: blur(6px);
-    border: 1px solid #dcdfe6;
+    border: 1px solid #d3deee;
     /* 圆角与搜索栏控件一致 */
     border-radius: 4px;
     padding: 12px 14px;
-    box-shadow: 0 4px 14px rgba(40, 50, 70, 0.1);
+    box-shadow: 0 3px 12px rgba(30, 60, 120, 0.09);
 }
 
 .games-stat__v {
@@ -782,7 +825,7 @@ onBeforeUnmount(() => {
     font-weight: 700;
     font-size: 20px;
     line-height: 1.2;
-    color: #232a35;
+    color: #22314a;
     font-variant-numeric: tabular-nums;
 }
 
@@ -790,12 +833,12 @@ onBeforeUnmount(() => {
     margin-top: 2px;
     font-size: 11.5px;
     letter-spacing: 2px;
-    color: #8a93a3;
+    color: #8593ab;
 }
 
 /* 零值置灰，标注「这里没数据」而不是误导成 0 成绩 */
 .games-stat--dim .games-stat__v {
-    color: #b6c1cb;
+    color: #bcc8da;
 }
 
 /* 顶部筛选工具栏：与游戏管理页一致的类型下拉 + 搜索框 */
@@ -836,9 +879,10 @@ onBeforeUnmount(() => {
 /* 游戏类型分隔标题：4px 品牌色竖条 + 标题，不带数量；
    「最近游玩」与各类型用同一份样式 */
 .games-gh {
-    /* 类型标题即分隔粗线：色带左右拉满——左侧顶到类型侧栏、右侧到滚动条；
-       抵消 .games-main 的左内边距与外层 .content 的右内边距 */
-    margin: 24px -28px 14px -20px;
+    /* 类型标题即分隔粗线：色带左缘拉到类型侧栏（抵消 .games-main 的左内边距），
+       右缘到本列自己的滚动条为止（右侧不再用负外边距——内容区是独立滚动容器，
+       负边距会撑出横向滚动条） */
+    margin: 24px 0 14px -20px;
     display: flex;
     align-items: center;
     font-size: 16px;
@@ -892,16 +936,15 @@ onBeforeUnmount(() => {
 @media (max-width: 900px) {
     .games-shell {
         grid-template-columns: 1fr;
-        margin: -28px -28px 0;
+        grid-template-rows: auto minmax(0, 1fr);
+        margin: -28px -28px -28px;
     }
 
     .games-side {
-        position: static;
         height: auto;
         max-height: 220px;
         border-right: 0;
-        border-bottom: 1px solid #e2e5e9;
-        align-self: stretch;
+        border-bottom: 1px solid #d3dcea;
         flex-direction: column;
     }
 
