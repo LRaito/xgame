@@ -1606,7 +1606,7 @@ def test_local_unique_candidate_auto_and_rejects_wrong_selection(logged_in_games
         logged_in_games, "错选", "other.tap", game_type="c128", cartridge_id="TAP-2"
     )
     assert bad.status_code == 400
-    assert "Commodore 64" in bad.json()["message"]
+    assert "康懋达 64" in bad.json()["message"]
 
 
 def test_local_d71_is_c128_and_d64_wrong_type_rejected(logged_in_games):
@@ -1723,7 +1723,7 @@ def test_change_game_type_rejects_unique_extension(logged_in_games, storage_root
     before = _files(storage_root)
     response = _change_type(logged_in_games, created["id"], "c128")
     assert response.status_code == 400
-    assert "Commodore 64" in response.json()["message"]
+    assert "康懋达 64" in response.json()["message"]
     assert _files(storage_root) == before
 
 
@@ -1816,7 +1816,7 @@ def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
     """`/status` 下发类型元数据与后缀候选，前端不再自己维护映射。"""
     status = logged_in_games.get("/api/games/status").json()["data"]
     types = {item["id"]: item for item in status["types"]}
-    assert types["c64"]["label"] == "Commodore 64"
+    assert types["c64"]["label"] == "康懋达 64"
     assert types["c64"]["extensions"] == [".crt", ".d64", ".prg", ".tap"]
     assert types["c64"]["default_extension"] == ".d64"
     assert types["atari5200"]["extensions"] == [".a52"]

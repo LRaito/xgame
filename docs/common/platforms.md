@@ -65,7 +65,7 @@
 | `gb` | 任天堂 GB/GBC | `.gb` `.gbc` | `.gb` | `gambatte` |
 | `gba` | 任天堂 GBA | `.gba` | `.gba` | `mgba` |
 | `nds` | 任天堂 NDS | `.nds` | `.nds` | `melonds` / `desmume` / `desmume2015` |
-| `vb` | 任天堂 Virtual Boy | `.vb` | `.vb` | `beetle_vb` |
+| `vb` | 任天堂 VB | `.vb` | `.vb` | `beetle_vb` |
 | `segaMD` | 世嘉 MD | `.md` `.gen` | `.md` | `genesis_plus_gx` / `picodrive` |
 | `segaGG` | 世嘉 GG | `.gg` | `.gg` | `genesis_plus_gx` |
 | `segaMS` | 世嘉 SMS | `.sms` | `.sms` | `smsplus` / `genesis_plus_gx` / `picodrive` |
@@ -85,11 +85,11 @@
 | `lynx` | 雅达利 Lynx | `.lnx` | `.lnx` | `handy` |
 | `coleco` | ColecoVision | `.col` | `.col` | `gearcoleco` |
 | `3do` | 松下 3DO | `.iso` `.chd` | `.iso` | `opera` |
-| `c64` | Commodore 64 | `.d64` `.tap` `.crt` `.prg` | `.d64` | `vice_x64sc` |
-| `c128` | Commodore 128 | `.d64` `.d71` `.prg` | `.d64` | `vice_x128` |
-| `pet` | Commodore PET | `.prg` `.d64` | `.prg` | `vice_xpet` |
-| `plus4` | Commodore Plus/4 | `.prg` `.d64` | `.prg` | `vice_xplus4` |
-| `vic20` | Commodore VIC-20 | `.prg` `.d64` | `.prg` | `vice_xvic` |
+| `c64` | 康懋达 64 | `.d64` `.tap` `.crt` `.prg` | `.d64` | `vice_x64sc` |
+| `c128` | 康懋达 128 | `.d64` `.d71` `.prg` | `.d64` | `vice_x128` |
+| `pet` | 康懋达 PET | `.prg` `.d64` | `.prg` | `vice_xpet` |
+| `plus4` | 康懋达 Plus/4 | `.prg` `.d64` | `.prg` | `vice_xplus4` |
+| `vic20` | 康懋达 VIC-20 | `.prg` `.d64` | `.prg` | `vice_xvic` |
 | `amiga` | Amiga | `.adf` `.hdf`（多盘另见下） | `.adf` | `puae` |
 | `dos` | DOS | `.jsdos` `.zip` | `.jsdos` | `dosbox_pure`（线程） |
 | `arcade` | 街机 | `.zip`（romset，保留集合名） | `.zip` | `fbneo` |

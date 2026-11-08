@@ -391,7 +391,7 @@ _LABEL_COMPANY_PREFIXES = (
     "雅达利",
     "松下",
     "SNK",
-    "Commodore",
+    "康懋达",
 )
 
 

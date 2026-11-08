@@ -28,7 +28,7 @@
 | 任天堂 GB/GBC（`gb`） | √ | √ |
 | 任天堂 GBA（`gba`） | √ | √ |
 | 任天堂 NDS（`nds`） | √ | √ |
-| 任天堂 Virtual Boy（`vb`） | X | X |
+| 任天堂 VB（`vb`） | X | X |
 | 世嘉 MD（`segaMD`） | X | X |
 | 世嘉 GG（`segaGG`） | X | X |
 | 世嘉 SMS（`segaMS`） | X | X |
@@ -48,11 +48,11 @@
 | 雅达利 Lynx（`lynx`） | X | X |
 | ColecoVision（`coleco`） | X | X |
 | 松下 3DO（`3do`） | X | X |
-| Commodore 64（`c64`） | X | X |
-| Commodore 128（`c128`） | X | X |
-| Commodore PET（`pet`） | X | X |
-| Commodore Plus/4（`plus4`） | X | X |
-| Commodore VIC-20（`vic20`） | X | X |
+| 康懋达 64（`c64`） | X | X |
+| 康懋达 128（`c128`） | X | X |
+| 康懋达 PET（`pet`） | X | X |
+| 康懋达 Plus/4（`plus4`） | X | X |
+| 康懋达 VIC-20（`vic20`） | X | X |
 | Amiga（`amiga`） | X | X |
 | DOS（`dos`） | X | X |
 | 街机（`arcade`） | X | X |

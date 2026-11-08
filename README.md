@@ -270,7 +270,7 @@ Flash 播放页的标题栏按钮是「画质」「窗口」「存档管理」�
 | `.jsdos` | DOS（jsdos 压缩包；唯一候选，自动判定） |
 | `.nes` / `.sfc` `.smc` | FC / SNES |
 | `.gb` `.gbc` / `.gba` / `.nds` | GB / GBA / NDS |
-| `.vb` | 任天堂 Virtual Boy |
+| `.vb` | 任天堂 VB |
 | `.md` `.gen` / `.gg` / `.sms` | MD / GG / SMS |
 | `.32x` | 世嘉 32X |
 | `.z64` `.n64` `.v64` | 任天堂 N64 |
@@ -285,7 +285,7 @@ Flash 播放页的标题栏按钮是「画质」「窗口」「存档管理」�
 | `.j64` `.jag` | 雅达利 Jaguar |
 | `.lnx` | 雅达利 Lynx |
 | `.col` | ColecoVision |
-| `.d64` `.d71` `.tap` `.crt` `.prg` | Commodore 64 / 128 / PET / Plus/4 / VIC-20 |
+| `.d64` `.d71` `.tap` `.crt` `.prg` | 康懋达 64 / 128 / PET / Plus/4 / VIC-20 |
 | `.adf` `.hdf` | Amiga |
 | `.cue` + `.bin`、`.m3u` | 世嘉 CD / Amiga 的多文件本体（一次选一整组） |
 

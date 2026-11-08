@@ -647,7 +647,7 @@ onMounted(async () => {
     border-bottom: none;
 }
 
-/* 够放下最长的游戏类型名「任天堂 Virtual Boy」（约 140px 文字 + 左右各 16px 内边距） */
+/* 够放下最长的游戏类型名「康懋达 VIC-20」（约 140px 文字 + 左右各 16px 内边距） */
 .game-discover__col-console {
     width: 220px;
 }
