@@ -31,7 +31,12 @@
                 />
             </div>
 
-            <div v-loading="searchLoading" class="game-discover__body">
+            <div
+                ref="searchWrapEl"
+                v-loading="searchLoading"
+                class="game-discover__body"
+                :style="{ height: searchWrapHeight }"
+            >
                 <table v-if="searchItems.length" class="game-discover__table">
                     <thead>
                         <tr>
@@ -44,39 +49,43 @@
                         <tr v-for="item in searchItems" :key="item.id">
                             <td class="game-discover__nowrap">{{ item.console }}</td>
                             <td>
-                                <template
-                                    v-for="(seg, index) in highlight(item.zh)"
-                                    :key="index"
-                                >
-                                    <mark v-if="seg.hit">{{ seg.text }}</mark>
-                                    <template v-else>{{ seg.text }}</template>
-                                </template>
+                                <app-truncatable-name>
+                                    <template
+                                        v-for="(seg, index) in highlight(item.zh)"
+                                        :key="index"
+                                    >
+                                        <mark v-if="seg.hit">{{ seg.text }}</mark>
+                                        <template v-else>{{ seg.text }}</template>
+                                    </template>
+                                </app-truncatable-name>
                             </td>
                             <td>
-                                <template
-                                    v-for="(seg, index) in highlight(item.en)"
-                                    :key="index"
-                                >
-                                    <mark v-if="seg.hit">{{ seg.text }}</mark>
-                                    <template v-else>{{ seg.text }}</template>
-                                </template>
+                                <app-truncatable-name>
+                                    <template
+                                        v-for="(seg, index) in highlight(item.en)"
+                                        :key="index"
+                                    >
+                                        <mark v-if="seg.hit">{{ seg.text }}</mark>
+                                        <template v-else>{{ seg.text }}</template>
+                                    </template>
+                                </app-truncatable-name>
                             </td>
                         </tr>
                     </tbody>
                 </table>
                 <app-empty v-else :description="searchEmptyDescription" />
-
-                <!-- 翻页放在表格下面；只有一页时不出现（AppPagination 自己判）。
-                     切到榜单标签时把键盘翻页关掉：分页条的左右键监听挂在 window 上，
-                     隐藏着也会抢键（keyboard 就是为这种同页多列表/隐藏列表留的开关）。 -->
-                <app-pagination
-                    v-model:page="page"
-                    :total="total"
-                    :page-size="pageSize"
-                    :keyboard="activeTab === 'search'"
-                    @change="loadSearch"
-                />
             </div>
+
+            <!-- 翻页放在表格下面；只有一页时不出现（AppPagination 自己判）。
+                 切到榜单标签时把键盘翻页关掉：分页条的左右键监听挂在 window 上，
+                 隐藏着也会抢键（keyboard 就是为这种同页多列表/隐藏列表留的开关）。 -->
+            <app-pagination
+                v-model:page="page"
+                :total="total"
+                :page-size="pageSize"
+                :keyboard="activeTab === 'search'"
+                @change="loadSearch"
+            />
         </section>
 
         <!-- 游戏榜单 -->
@@ -120,7 +129,12 @@
                 </app-button>
             </div>
 
-            <div v-loading="rankingLoading" class="game-discover__body">
+            <div
+                ref="rankingWrapEl"
+                v-loading="rankingLoading"
+                class="game-discover__body"
+                :style="{ height: rankingWrapHeight }"
+            >
                 <table
                     v-if="rankingVisibleItems.length"
                     class="game-discover__table"
@@ -152,26 +166,31 @@
                             </td>
                             <td>
                                 <!-- 卡带 ID 与平台库存对上的行：中英文名是**真链接**（router-link 渲染成
-                                     原生 <a href>），单击进播放页，Ctrl+点击 / 中键由浏览器自己开新标签页。
+                                     原生 <a href>），没截断时单击进播放页，Ctrl+点击 / 中键由浏览器自己开新标签页；
+                                     截断时单击优先展开全名（AppTruncatableName 在捕获阶段拦掉默认跳转）。
                                      没对上的行就是纯文本 -->
-                                <router-link
-                                    v-if="item.path"
-                                    class="game-discover__link"
-                                    :to="item.path"
-                                >
-                                    {{ item.zh }}
-                                </router-link>
-                                <template v-else>{{ item.zh }}</template>
+                                <app-truncatable-name>
+                                    <router-link
+                                        v-if="item.path"
+                                        class="game-discover__link"
+                                        :to="item.path"
+                                    >
+                                        {{ item.zh }}
+                                    </router-link>
+                                    <template v-else>{{ item.zh }}</template>
+                                </app-truncatable-name>
                             </td>
                             <td>
-                                <router-link
-                                    v-if="item.path"
-                                    class="game-discover__link"
-                                    :to="item.path"
-                                >
-                                    {{ item.en }}
-                                </router-link>
-                                <template v-else>{{ item.en }}</template>
+                                <app-truncatable-name>
+                                    <router-link
+                                        v-if="item.path"
+                                        class="game-discover__link"
+                                        :to="item.path"
+                                    >
+                                        {{ item.en }}
+                                    </router-link>
+                                    <template v-else>{{ item.en }}</template>
+                                </app-truncatable-name>
                             </td>
                             <td>
                                 <span v-if="!item.cartridge_ids.length" class="game-discover__none">
@@ -190,23 +209,23 @@
                     </tbody>
                 </table>
                 <app-empty v-else :description="rankingEmptyDescription" />
-
-                <!-- 与检索区同款的分页条：榜单也是一页 10 条。**分页在前端做**——一份榜单
-                     （一个机种）一次全取回来，翻页只是换页码、不再打接口。
-                     键盘翻页同样只在榜单标签亮着时开着（同页两个分页条，监听都挂在 window 上） -->
-                <app-pagination
-                    v-model:page="rankingPage"
-                    :total="rankingVisibleTotal"
-                    :page-size="RANKING_PAGE_SIZE"
-                    :keyboard="activeTab === 'ranking'"
-                />
             </div>
+
+            <!-- 与检索区同款的分页条：每页行数同样由视口高度自适应。**分页在前端做**——
+                 一份榜单（一个机种）一次全取回来，翻页只是换页码、不再打接口。
+                 键盘翻页同样只在榜单标签亮着时开着（同页两个分页条，监听都挂在 window 上） -->
+            <app-pagination
+                v-model:page="rankingPage"
+                :total="rankingVisibleTotal"
+                :page-size="rankingPageSize"
+                :keyboard="activeTab === 'ranking'"
+            />
         </section>
     </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
     getGameRankingAPI,
@@ -214,14 +233,22 @@ import {
     listSearchConsolesAPI,
     searchGamesAPI,
 } from "@/api/games";
+import { useAdaptiveRows } from "@/utils/adaptiveRows";
 
 const TABS = [
     { label: "游戏检索", value: "search" },
     { label: "游戏榜单", value: "ranking" },
 ];
-const PAGE_SIZE = 10;
-// 榜单每页条数，与检索区一致
-const RANKING_PAGE_SIZE = 10;
+// 行高固定、行数自适应（见 utils/adaptiveRows.js）：行高 40px 与游戏管理一致，
+// 后端两条接口的 page_size 上限都是 100。行之外的表格固定开销 = 表头 44 + 顶框/底线/行间线
+// 合计 12；底部开销 = 分页条（上边距 20 + 高 32）+ 内容区下边距 28 = 80。
+// 行高在样式里写死（行盒 20 + 上下各 10 内边距），全屏与非全屏行高完全一致，
+// 只有行数不同；排不满整行的余量留在最后一行和分页条之间。
+const ROW_HEIGHT = 40;
+const TABLE_EXTRA = 56;
+const PAGE_SIZE_MAX = 100;
+// 量到之前的占位行数（与旧版每页条数一致，高度别闪跳）
+const INITIAL_ROWS = 10;
 // 防抖时长：与游戏管理页的关键词筛选一致
 const KEYWORD_DEBOUNCE = 300;
 
@@ -260,7 +287,6 @@ const searchTypeOptions = computed(() => [
 const searchItems = ref([]);
 const total = ref(0);
 const page = ref(1);
-const pageSize = ref(PAGE_SIZE);
 const searchLoading = ref(false);
 const searchIndexed = ref(true);
 const searchError = ref(false);
@@ -278,6 +304,28 @@ const searchEmptyDescription = computed(() => {
     }
     return "没有匹配的游戏。";
 });
+
+// 列表容器永远按「一页满行」定高：最后一页数据不满时高度也不缩，分页条位置固定不动；
+// 行高全屏/非全屏一致，排不满整行的余量落在表格下方
+const searchWrapHeight = computed(
+    () => `${TABLE_EXTRA + pageSize.value * ROW_HEIGHT}px`
+);
+const rankingWrapHeight = computed(
+    () => `${TABLE_EXTRA + rankingPageSize.value * ROW_HEIGHT}px`
+);
+
+// 检索区每页行数自适应。窗口尺寸变化导致行数变了就重新取当前页（页码交给请求自身收敛）
+const searchWrapEl = ref(null);
+const { rows: pageSize, measure: measureSearchRows } = useAdaptiveRows(
+    {
+        rowHeight: ROW_HEIGHT,
+        extraHeight: TABLE_EXTRA,
+        reservePx: 80,
+        maxRows: PAGE_SIZE_MAX,
+        initialRows: INITIAL_ROWS,
+    },
+    () => loadSearch()
+);
 
 /**
  * 命中片段高亮：把查询词里每个空白分隔的词按不区分大小写切成片段，
@@ -336,7 +384,7 @@ async function loadSearch() {
         searchItems.value = data.items || [];
         total.value = data.total || 0;
         page.value = data.page || 1;
-        pageSize.value = data.page_size || PAGE_SIZE;
+        // page_size 由本页自适应计算，后端不会改小（上限同是 100），别拿响应覆盖回来
         searchError.value = false;
     } catch {
         if (seq !== searchSeq) {
@@ -384,8 +432,7 @@ function rankingPlatformLabel(platform) {
 const rankingConsole = ref("");
 // 当前取回的榜单：选了机种就是该机种，清空后是**全部机种**（跨机种）
 const rankingItems = ref([]);
-const rankingPage = ref(1);
-// 「已入库」按钮按下时只展示命中库存的行（纯前端过滤，不再打接口）
+const rankingPage = ref(1);// 「已入库」按钮按下时只展示命中库存的行（纯前端过滤，不再打接口）
 const rankingInLibraryOnly = ref(false);
 // 榜单搜索词。与检索区的 keyword **故意分成两个**：那边是服务端 FTS（搜中英文两列、分词、剥尾部
 // 标签、支持 `mario*` 前缀），这边只是对中文名/英文名做不区分大小写的裸子串匹配，语义不同、别合并
@@ -419,11 +466,35 @@ const rankingVisibleItems = computed(() =>
 );
 const rankingVisibleTotal = computed(() => rankingVisibleItems.value.length);
 const rankingTotal = computed(() => rankingItems.value.length);
+// 每页行数自适应（与检索区同一套行高与开销；榜单在前端分页，直接随行数重切即可）
+const rankingWrapEl = ref(null);
+const { rows: rankingPageSize, measure: measureRankingRows } = useAdaptiveRows(
+    {
+        rowHeight: ROW_HEIGHT,
+        extraHeight: TABLE_EXTRA,
+        reservePx: 80,
+        maxRows: PAGE_SIZE_MAX,
+        initialRows: INITIAL_ROWS,
+    },
+    onRankingRowsChange
+);
+
+// 行数变了页码可能越界：收敛到最后一页。榜单整份在前端有，不必重新请求
+function onRankingRowsChange() {
+    const pages = Math.max(
+        1,
+        Math.ceil(rankingVisibleTotal.value / rankingPageSize.value)
+    );
+    if (rankingPage.value > pages) {
+        rankingPage.value = pages;
+    }
+}
+
 // 当前这一页真正渲染的行
 const rankingPagedItems = computed(() =>
     rankingVisibleItems.value.slice(
-        (rankingPage.value - 1) * RANKING_PAGE_SIZE,
-        rankingPage.value * RANKING_PAGE_SIZE
+        (rankingPage.value - 1) * rankingPageSize.value,
+        rankingPage.value * rankingPageSize.value
     )
 );
 const rankingLoading = ref(false);
@@ -534,10 +605,16 @@ async function loadRanking() {
     }
 }
 
-// 直接访问 ?tab=ranking 或前进/后退回到榜单时，同样要按需加载
+// 直接访问 ?tab=ranking 或前进/后退回到榜单时，同样要按需加载；
+// 两个区块都重测一遍行数——v-show 藏着的那个会被 offsetParent 守卫跳过，
+// 可见的那个按当前视口重算（浏览器全屏/非全屏切换后，再切标签必须跟上新行数）
 watch(
     activeTab,
     (value) => {
+        nextTick(() => {
+            measureSearchRows(searchWrapEl.value);
+            measureRankingRows(rankingWrapEl.value);
+        });
         if (value === "ranking") {
             loadRankingConsoles();
         }
@@ -553,11 +630,28 @@ onMounted(async () => {
     } catch {
         searchConsoles.value = [];
     }
+    // 先量视口算出每页行数，首屏请求才知道带多大 page_size
+    measureSearchRows(searchWrapEl.value);
     await loadSearch();
 });
 </script>
 
 <style scoped>
+/* 页面纵向铺满：内容区上下各 28px 内边距，页面根按 100vh−56 占满后再不滚动；
+   可见的那一列（检索/榜单二选一）填满剩余高度，把行数自适应的空间吃满 */
+.game-discover {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 56px);
+}
+
+.game-discover__panel {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
 /* 页头标签共用 AppSegmented 的尺寸与选中态，这里只留与下方工具条的间距 */
 .game-discover__tabs {
     margin-bottom: 20px;
@@ -608,11 +702,15 @@ onMounted(async () => {
     text-decoration-color: currentColor;
 }
 
+/* 列表高度由「实际显示的行数 × 固定行高」决定（模板 :style 绑定；min-height 兜空态）：
+   行数按视口高度自适应（utils/adaptiveRows.js），行高全屏/非全屏一致 */
 .game-discover__body {
     min-height: 200px;
 }
 
-/* 固定布局 + 百分比列宽：再长的名字也只在自己格子里省略，表格不会被撑宽 */
+/* 固定布局 + 百分比列宽：再长的名字也只在自己格子里省略，表格不会被撑宽。
+   注意别在这里加 overflow: hidden——展开的名称浮层要能盖到表格外面去，
+   四角圆角和游戏管理那张表一样靠表头/末行自己收 */
 .game-discover__table {
     width: 100%;
     table-layout: fixed;
@@ -620,15 +718,33 @@ onMounted(async () => {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    overflow: hidden;
 }
 
-/* **行高 44px（行盒 20px + 上下各 12px 内边距），榜单那张表按这个数对齐**。
+
+/* 没有 overflow 兜底，四角靠表头/末行的圆角自己收（表头有底色，方角会顶出表格圆角） */
+.game-discover__table thead th:first-child {
+    border-top-left-radius: 11px;
+}
+
+.game-discover__table thead th:last-child {
+    border-top-right-radius: 11px;
+}
+
+.game-discover__table tbody tr:last-child td:first-child {
+    border-bottom-left-radius: 11px;
+}
+
+.game-discover__table tbody tr:last-child td:last-child {
+    border-bottom-right-radius: 11px;
+}
+
+/* **行高固定 40px（行盒 20px + 上下各 10px 内边距），与游戏管理一致；
+   全屏与非全屏行高相同，只有行数不同**。
+   表头仍是 12px 内边距（行高 44px），算在 TABLE_EXTRA 里。
    line-height 显式写死，两张表才不会因为字体默认值不同而差几个像素；
    榜单那边唯一的变量是卡带 ID 药丸，它的高度压在 20px（见 CopyButton 的 pill 样式） */
-.game-discover__table th,
 .game-discover__table td {
-    padding: 12px 16px;
+    padding: 10px 16px;
     font-size: 14px;
     line-height: 20px;
     text-align: left;
@@ -637,6 +753,11 @@ onMounted(async () => {
 }
 
 .game-discover__table th {
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
     background: #f8fafc;
     color: var(--text-muted);
     font-weight: 500;
