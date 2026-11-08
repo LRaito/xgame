@@ -143,7 +143,8 @@ async function onLogout() {
     gap: 2px;
     flex: 1;
     min-height: 0;
-    padding: 12px 8px;
+    /* 上内边距归零：第一项从品牌区底边起排（贴上），且不同页面间不再差出 12px */
+    padding: 0 8px 12px;
     overflow-y: auto;
     overscroll-behavior: contain;
 }
@@ -162,16 +163,22 @@ async function onLogout() {
 }
 
 .nav-link:hover {
+    margin: 0 -8px;
+    padding: 10px 8px;
+    border-radius: 0;
     background: var(--app-sider-hover-bg);
     color: var(--app-sider-fg-hover);
 }
 
-/* 激活态：白底胶囊 + 主色字，靠阴影从浅灰底上浮起来 */
+/* 激活态：与 hover 同款的全宽浅灰色带（直贴侧栏左右边界），加粗标题作区分；
+   背景与 hover 用同一个变量，两态不再差出一种样式 */
 .nav-link.active {
-    background: var(--app-sider-active-bg);
-    color: var(--app-sider-fg-active);
+    margin: 0 -8px;
+    padding: 10px 8px;
+    border-radius: 0;
+    background: var(--app-sider-hover-bg);
+    color: var(--app-sider-fg-hover);
     font-weight: 600;
-    box-shadow: var(--shadow-sm);
 }
 
 .sider-footer {

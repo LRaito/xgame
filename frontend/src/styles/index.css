@@ -84,7 +84,7 @@
     --app-sider-fg-hover: #0f172a;
     --app-sider-fg-active: #0088d5;
     --app-sider-active-bg: #ffffff;
-    --app-sider-width: 120px;
+    --app-sider-width: 84px;
 
     /* 三档尺寸：sm 行内 / md 工具栏与弹框 / lg 播放器 */
     --app-control-h-sm: 28px;
