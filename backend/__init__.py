@@ -4,7 +4,6 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from sqlmodel import Session
-from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth.router import router as auth_router
 from backend.backup import backup_database, start_backup_loop
@@ -24,6 +23,7 @@ from backend.games.upload_router import router as game_upload_router
 from backend.games.uploads import BodyUploadService
 from backend.http import json_err
 from backend.mount_guard import require_mounted
+from backend.session_middleware import ModifiedOnlySessionMiddleware
 from backend.request_limit import RequestBodyLimitMiddleware
 from backend.storage.local import LocalStorage
 from backend.tools.router import router as tools_router
@@ -72,8 +72,11 @@ def create_app(test_config: dict | None = None) -> FastAPI:
         logger.warning("清理过期上传会话失败：%s", exc)
 
     app.add_middleware(CSRFMiddleware, settings=settings)
+    # 会话中间件换成 ModifiedOnlySessionMiddleware：与 Starlette 原版同参数、同 cookie 格式，
+    # 只有一个差别——会话内容没变的响应不再重发 session cookie（backend/session_middleware.py 的
+    # docstring 讲了为什么：每个响应都重发会让登录瞬间被同批旧会话响应的 Set-Cookie 反咬掉）。
     app.add_middleware(
-        SessionMiddleware,
+        ModifiedOnlySessionMiddleware,
         secret_key=SECRET_KEY,
         https_only=settings.SESSION_COOKIE_SECURE and not settings.TESTING,
         same_site=settings.SESSION_COOKIE_SAMESITE,

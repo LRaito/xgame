@@ -61,12 +61,20 @@
 
 ### 会话与 CSRF
 
-- 登录态用 Starlette SessionMiddleware 的 session cookie。
+- 登录态用自研 `ModifiedOnlySessionMiddleware`（`backend/session_middleware.py`）的 session cookie，
+  参数与 cookie 格式都沿用 Starlette 原版 `SessionMiddleware`。
+- 关键差别：**会话内容没变的响应不再重发 Set-Cookie**。原版每个响应都重发，
+  会话变化的瞬间（注册/登录/登出、首次生成 CSRF）会被同批在途旧会话请求的
+  响应把新 cookie 反咬回旧值，登录后立刻掉线。
 - Cookie 是 HttpOnly、`SameSite=Lax`；Docker 走 HTTPS 时 `Secure` 为真。
 - Windows 包走 http 时由启动器把 `Secure` 改成假，否则登录静默失效。
 - 签名密钥是 `backend/config.py` 里写死的 `SECRET_KEY`，不从环境变量读。
 - 换 `SECRET_KEY` 会让所有已登录会话立即失效。
-- session 里只存 `user_id`，不存 token；axios 固定 `withCredentials: true`。
+- 时效仍为 14 天，从「最后一次会话变化」起算：过期由中间件在收到 cookie 时校验
+  签名时间戳，过期即视为未登录并清除 cookie。
+- 日常续期由 `GET /api/csrf` 完成：前端每次整页加载都会调它，它会往 session 写一个
+  内部时间戳（`csrf_token` 本身不变），使会话内容变化、cookie 顺带滑续。
+- session 里只存 `user_id` 与 CSRF/token 内部键，不存 token；axios 固定 `withCredentials: true`。
 - CSRF：先 `GET /api/csrf` 拿 token，之后写操作带 `X-CSRFToken`。
 - token 存在 session 里，服务端用 `secrets.compare_digest` 比对；安全方法不校验。
 - 白名单是 `/health`、`/api/csrf`、`/api/register`、`/api/login`；写操作缺 token 返回 400。
@@ -78,7 +86,8 @@
 - `clearSession()` 按约定 key 清单同时清 sessionStorage 与 localStorage。
 - 401 拦截器单飞处理：清本地缓存并跳 `/login?redirect=…`。
 - 路由守卫白名单只有 `/login`：sessionStorage 有缓存用户名时直接放行；
-  没有缓存才 `fetchMe()`，失败则带 `redirect` 去登录页，401 再由拦截器兜底。
+  没有缓存才 `fetchMe()`，**只有明确拿到 401** 才带 `redirect` 去登录页——网络抖动、
+  服务重启等临时故障不踹人，由 request.js 的 401 拦截器兜底。
 
 ### 免登录例外与不做项
 
@@ -101,6 +110,8 @@
 - 注册成功即登录，密码只以哈希入库。
 - 非法用户名、非法密码、重名注册被拒；大小写不同的同名也被拒。
 - session cookie 的 `Secure` 标志跟随配置；连续 3 次失败短锁、6 次日锁。
+- 会话未变化的响应不重发 cookie；「登录前旧会话」的迟到请求无法反咬登录；
+  `/api/csrf` 摸活滑续时效；登出响应显式清 cookie（见 `tests/test_session.py`）。
 - 成功登录清空失败计数；`/api/csrf` 可取 token，白名单免校验。
 
 ## 相关文档

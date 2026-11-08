@@ -1,4 +1,5 @@
 import secrets
+import time
 
 from fastapi import HTTPException, Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -10,6 +11,16 @@ from backend.http import json_err
 CSRF_SESSION_KEY = "csrf_token"
 CSRF_HEADER = "X-CSRFToken"
 CSRF_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def touch_session(session: dict) -> None:
+    """把会话标记成「发生过变化」，让 ModifiedOnlySessionMiddleware 重发 cookie。
+
+    原来的 SessionMiddleware 每个响应都重发 cookie，顺带把 Max-Age 滑续了；现在只有
+    内容变化才重发，所以日常续期由这里负责：`GET /api/csrf`（前端每次整页加载都会调）
+    打一记只有中间件关心的内部戳，cookie 顺带滑续，csrf_token 本身不变。
+    """
+    session["__ts"] = int(time.time())
 
 
 def generate_csrf_token(session: dict) -> str:
