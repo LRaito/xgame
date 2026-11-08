@@ -3,7 +3,6 @@
         <header class="chronicle-hero">
             <div class="chronicle-hero__main">
                 <p class="chronicle-hero__eyebrow">游戏平台档案 · {{ yearRange }}</p>
-                <h1 class="page-title">机型简史</h1>
                 <p class="page-lead">
                     从街机厅到掌机，再到浏览器——按年代梳理
                     {{ entries.length }} 个游戏平台的来路。

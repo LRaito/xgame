@@ -1,9 +1,5 @@
 <template>
     <div class="shortcuts-page">
-        <header class="page-header">
-            <h1 class="page-title">按键管理</h1>
-        </header>
-
         <div class="shortcuts-page__body">
             <!-- 本页大纲：滚动时高亮当前页面，点击平滑跳转 -->
             <nav class="shortcuts-toc" aria-label="本页大纲">
