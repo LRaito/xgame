@@ -13,6 +13,7 @@ import AppPagination from "@components/common/AppPagination.vue";
 import AppSegmented from "@components/common/AppSegmented.vue";
 import AppTypeSelect from "@components/common/AppTypeSelect.vue";
 import CopyButton from "@components/common/CopyButton.vue";
+import AppTruncatableName from "./components/common/AppTruncatableName.vue";
 import "./styles/index.css";
 import "./permission";
 import { ensureGameAssetSw } from "./utils/gameAssetCache";
@@ -30,6 +31,7 @@ app.component("AppPagination", AppPagination);
 app.component("AppSegmented", AppSegmented);
 app.component("AppTypeSelect", AppTypeSelect);
 app.component("CopyButton", CopyButton);
+app.component("AppTruncatableName", AppTruncatableName);
 
 ensureCsrf().catch(() => {});
 ensureGameAssetSw().catch(() => {});

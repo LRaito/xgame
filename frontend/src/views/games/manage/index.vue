@@ -1,104 +1,110 @@
 <template>
     <div class="game-manage">
-        <div class="game-manage__toolbar">
-            <app-type-select
-                v-model="filterType"
-                placeholder="游戏类型"
-                clearable
-                class="game-manage__filter-type"
-                :options="typeFilterOptions"
-                @change="applyFilter"
-            />
-            <el-input
-                v-model="filterKeyword"
-                placeholder="搜索名称或描述"
-                clearable
-                class="game-manage__filter-keyword"
-                @input="onKeywordInput"
-                @clear="applyFilter"
-            />
-            <div class="game-manage__actions">
-                <app-button variant="secondary" @click="openImport">搬运游戏</app-button>
-                <app-button variant="secondary" @click="openCreate">添加游戏</app-button>
-            </div>
-        </div>
-
-        <div v-loading="loading" class="game-manage__table-wrap">
-            <table v-if="items.length" class="game-manage__table">
-                <!-- 列宽走百分比（见样式里的 table-layout: fixed）：内容再长也只在格子里省略，
-                     表格永远不超出内容区，页面不会出现水平滚动条 -->
-                <thead>
-                    <tr>
-                        <th class="game-manage__col-cover">封面</th>
-                        <th class="game-manage__col-name">名称</th>
-                        <th class="game-manage__col-type">类型</th>
-                        <th class="game-manage__col-size">大小</th>
-                        <th class="game-manage__col-time">更新时间</th>
-                        <th class="game-manage__col-actions">操作</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <tr v-for="item in items" :key="item.id">
-                        <td>
-                            <div class="game-manage__cover">
-                                <img
-                                    v-if="item.cover_path"
-                                    :src="gameCoverUrl(item)"
-                                    :alt="item.name"
-                                />
-                                <span v-else class="game-manage__cover-fallback">⚡</span>
-                            </div>
-                        </td>
-                        <td class="game-manage__desc-cell">
-                            <div class="game-manage__name">{{ item.name }}</div>
-                            <!-- 没有描述就整行不渲染（不留「—」，行高由封面撑着，不会变） -->
-                            <template v-if="item.description">
-                                <!-- 收起时单行省略；单击展开的那层绝对定位盖住下面的行 -->
-                                <div
-                                    class="game-manage__desc"
-                                    @click="toggleDesc($event, item.id)"
-                                >
-                                    {{ item.description }}
-                                </div>
-                                <div
-                                    v-if="expandedDescId === item.id"
-                                    class="game-manage__desc-panel"
-                                    @click="collapseDesc"
-                                >
-                                    {{ item.description }}
-                                </div>
-                            </template>
-                        </td>
-                        <!-- 这三列都只占一行、放不下就省略 -->
-                        <td class="game-manage__nowrap">{{ typeLabel(item.game_type) }}</td>
-                        <td class="game-manage__nowrap">{{ formatSize(item.size) }}</td>
-                        <td class="game-manage__nowrap">{{ formatDateTime(item.updated_at) }}</td>
-                        <td>
-                            <div class="game-manage__row-actions">
-                                <app-button variant="secondary" size="sm" @click="openDetail(item.id)">
-                                    详情
-                                </app-button>
-                                <app-button variant="secondary" size="sm" @click="openEdit(item.id)">
-                                    编辑
-                                </app-button>
-                                <app-button variant="danger" size="sm" @click="onDelete(item)">
-                                    删除
-                                </app-button>
-                            </div>
-                        </td>
-                    </tr>
-                </tbody>
-            </table>
-            <app-empty v-else description="暂无游戏，点击「添加游戏」开始录入。" />
-        </div>
-
-        <!-- 翻页放在表格下面；只有一页时整块不渲染（AppPagination 自己判，左右键翻页也在它里面） -->
-        <app-pagination
-            v-model:page="page"
-            :total="total"
-            :page-size="PAGE_SIZE"
-            @change="reload"
+        <!-- 页头顶部标签：结构与游戏发现一致，同款 AppSegmented；现在只有一个标签，
+             以后新列表就从这里加。标签状态由 URL ?tab 驱动（同游戏发现） -->
+        <app-segmented
+            v-model="activeTab"
+            class="game-manage__tabs"
+            :options="TABS"
+            size="lg"
+            aria-label="游戏管理"
         />
+
+        <!-- 游戏管理 -->
+        <section class="game-manage__panel">
+            <div class="game-manage__toolbar">
+                <app-type-select
+                    v-model="filterType"
+                    placeholder="游戏类型"
+                    clearable
+                    class="game-manage__filter-type"
+                    :options="typeFilterOptions"
+                    @change="applyFilter"
+                />
+                <el-input
+                    v-model="filterKeyword"
+                    placeholder="搜索名称或描述"
+                    clearable
+                    class="game-manage__filter-keyword"
+                    @input="onKeywordInput"
+                    @clear="applyFilter"
+                />
+                <div class="game-manage__actions">
+                    <app-button variant="secondary" @click="openImport">搬运游戏</app-button>
+                    <app-button variant="secondary" @click="openCreate">添加游戏</app-button>
+                </div>
+            </div>
+
+            <div
+                ref="tableWrapEl"
+                v-loading="loading"
+                class="game-manage__table-wrap"
+                :style="{ height: tableWrapHeight }"
+            >
+                <table v-if="items.length" class="game-manage__table">
+                    <!-- 列宽走百分比/定宽（见样式里的 table-layout: fixed）：内容再长也只在
+                         格子里省略，表格永远不超出内容区，页面不会出现水平滚动条 -->
+                    <thead>
+                        <tr>
+                            <th class="game-manage__col-name">名称</th>
+                            <th class="game-manage__col-type">类型</th>
+                            <th class="game-manage__col-size">大小</th>
+                            <th class="game-manage__col-time">更新时间</th>
+                            <th class="game-manage__col-actions">操作</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="item in items" :key="item.id">
+                            <td>
+                                <app-truncatable-name>
+                                    {{ item.name }}
+                                    <!-- 名称被截断时展开层顺带给出描述：行高保持单行
+                                         （40px 系），描述不再占列表行 -->
+                                    <template #panel-extra>
+                                        <div class="game-manage__panel-desc">
+                                            {{ item.description }}
+                                        </div>
+                                    </template>
+                                </app-truncatable-name>
+                            </td>
+                            <td class="game-manage__nowrap">{{ typeLabel(item.game_type) }}</td>
+                            <td class="game-manage__nowrap">{{ formatSize(item.size) }}</td>
+                            <td class="game-manage__nowrap">{{ formatDateTime(item.updated_at) }}</td>
+                            <td>
+                                <div class="game-manage__row-actions">
+                                    <app-button
+                                        variant="secondary"
+                                        size="sm"
+                                        @click="openDetail(item.id)"
+                                    >
+                                        详情
+                                    </app-button>
+                                    <app-button
+                                        variant="secondary"
+                                        size="sm"
+                                        @click="openEdit(item.id)"
+                                    >
+                                        编辑
+                                    </app-button>
+                                    <app-button variant="danger" size="sm" @click="onDelete(item)">
+                                        删除
+                                    </app-button>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+                <app-empty v-else description="暂无游戏，点击「添加游戏」开始录入。" />
+            </div>
+
+            <!-- 翻页放在表格下面；只有一页时整块不渲染（AppPagination 自己判，左右键翻页也在它里面） -->
+            <app-pagination
+                v-model:page="page"
+                :total="total"
+                :page-size="pageSize"
+                @change="reload"
+            />
+        </section>
 
         <!-- 添加/编辑游戏：左右两栏——左边元数据、右边两个上传；整窗居中且一页放得下（不滚动）。
              新建要等全部填完才建条目，底部保留「取消 / 保存」；
@@ -596,16 +602,67 @@ import {
     gameTypeMeta,
 } from "@/constants/gameTypes";
 import { extensionOfFilename, useGameTypesStore } from "@/store/gameTypes";
-import { ensureGameAssetSw, gameCoverUrl } from "@/utils/gameAssetCache";
+import { gameCoverUrl } from "@/utils/gameAssetCache";
 import {
     uploadFileInChunks,
     uploadFilesInChunks,
     shouldUseChunkedUpload,
 } from "@/utils/chunkUpload";
 import { formatDateTimeSeconds as formatDateTime } from "@/utils/fileDisplay";
+import { useAdaptiveRows } from "@/utils/adaptiveRows";
+import { useRoute, useRouter } from "vue-router";
 
-// 每页 5 条，与后端 backend/games/service.py 的 MANAGE_PAGE_SIZE_DEFAULT 保持一致
-const PAGE_SIZE = 5;
+// 行高固定、行数自适应（见 utils/adaptiveRows.js）：行高 40px 与游戏发现一致，
+// 后端 backend/games/service.py 的 MANAGE_PAGE_SIZE_MAX = 100 是上限。
+// 行内容是 28px 的按钮 + 上下各 6px 内边距 = 40；表头 44 + 分隔线合计 12 算在
+// TABLE_EXTRA 里；底部开销 = 分页条（上边距 20 + 高 32）+ 内容区下边距 28 = 80。
+// 行高全屏/非全屏一致，只有行数不同；排不满整行的余量留在最后一行与分页条之间。
+const ROW_HEIGHT = 40;
+const TABLE_EXTRA = 56;
+const PAGE_SIZE_MAX = 100;
+
+// 顶部标签：现在只有「游戏管理」一个，值与 URL ?tab 对齐（与游戏发现同一套写法），
+// 以后加标签在这里追加即可
+const TABS = [{ label: "游戏管理", value: "manage" }];
+
+const route = useRoute();
+const router = useRouter();
+
+const activeTab = computed({
+    get: () =>
+        TABS.some((tab) => tab.value === route.query.tab)
+            ? route.query.tab
+            : TABS[0].value,
+    set: (value) => {
+        const query = { ...route.query };
+        if (value === TABS[0].value) {
+            delete query.tab;
+        } else {
+            query.tab = value;
+        }
+        router.replace({ path: "/games/manage", query });
+    },
+});
+
+const { rows: pageSize, measure: measureRows } = useAdaptiveRows(
+    {
+        rowHeight: ROW_HEIGHT,
+        extraHeight: TABLE_EXTRA,
+        reservePx: 80,
+        maxRows: PAGE_SIZE_MAX,
+        // 量到之前按旧条数占位，高度别闪跳
+        initialRows: 5,
+    },
+    () => reload()
+);
+
+// 列表容器永远按「一页满行」定高：最后一页数据不满时高度也不缩，分页条位置固定不动；
+// 行高全屏/非全屏一致，排不满整行的余量落在表格下方
+const tableWrapEl = ref(null);
+const tableWrapHeight = computed(
+    () => `${TABLE_EXTRA + pageSize.value * ROW_HEIGHT}px`
+);
+
 
 const loading = ref(false);
 const saving = ref(false);
@@ -936,28 +993,8 @@ function formatSize(bytes) {
 }
 
 
-// 列表里展开的那条描述（同时只展开一条）。列表重新加载后行会换掉，顺手收起来。
-const expandedDescId = ref(null);
-
-/** 单击描述：被省略（或已展开）才展开/收起；整段都看得见时不响应，免得白点一下。 */
-function toggleDesc(event, id) {
-    if (expandedDescId.value === id) {
-        collapseDesc();
-        return;
-    }
-    const el = event.currentTarget;
-    if (el.scrollWidth <= el.clientWidth + 1) {
-        return;
-    }
-    expandedDescId.value = id;
-}
-
-function collapseDesc() {
-    expandedDescId.value = null;
-}
-
 function listParams() {
-    const params = { page: page.value, page_size: PAGE_SIZE };
+    const params = { page: page.value, page_size: pageSize.value };
     if (filterType.value) {
         params.game_type = filterType.value;
     }
@@ -971,8 +1008,6 @@ function listParams() {
 async function reload() {
     const seq = ++requestSeq;
     loading.value = true;
-    // 换了一批行，之前展开的那条描述跟着收起来
-    expandedDescId.value = null;
     try {
         const data = await listManageGamesAPI(listParams());
         if (seq !== requestSeq) {
@@ -982,7 +1017,7 @@ async function reload() {
         // （服务端不收敛页码、只返回空 items + 真 total，与检索页同一口径，收敛放前端）
         const pageCount = Math.max(
             1,
-            Math.ceil((data.total || 0) / (data.page_size || PAGE_SIZE))
+            Math.ceil((data.total || 0) / (data.page_size || pageSize.value))
         );
         if (page.value > pageCount) {
             page.value = pageCount;
@@ -1947,9 +1982,10 @@ async function onDelete(item) {
 }
 
 onMounted(async () => {
+    // 先量视口算出每页行数，首屏请求才知道带多大 page_size
+    measureRows(tableWrapEl.value);
     loading.value = true;
     try {
-        await ensureGameAssetSw();
         // 类型与后缀来自 /status；失败时页面仍能列出游戏，只是下拉候选为空
         await gameTypesStore.ensureLoaded();
         await reload();
@@ -1967,6 +2003,26 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
+/* 页面纵向铺满：内容区上下各 28px 内边距，页面根按 100vh−56 占满后再不滚动；
+   面板（tab 栏 + 工具条 + 列表 + 分页）填满剩余高度，行数自适应的空间吃满 */
+.game-manage {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 56px);
+}
+
+.game-manage__panel {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
+/* 页头标签共用 AppSegmented 的尺寸与选中态，这里只留与下方工具条的间距 */
+.game-manage__tabs {
+    margin-bottom: 20px;
+}
+
 .game-manage__toolbar {
     display: flex;
     flex-wrap: wrap;
@@ -1988,21 +2044,24 @@ onBeforeUnmount(() => {
     margin-left: auto;
 }
 
+/* 列表高度直接占量出的可用高度（模板 :style 绑定 available，覆盖下面的 min-height）：
+   行数按视口高度自适应（utils/adaptiveRows.js），取整后不足一行的余量由表格行均摊消化 */
 .game-manage__table-wrap {
     min-height: 200px;
 }
 
-/* 固定布局 + 百分比列宽：列宽只跟表格宽度走，跟内容长短无关，
-   所以再长的名称/描述也只在自己格子里省略，表格永远不会被撑宽（页面不会出水平滚动条）。
-   注意别在这里加 overflow: hidden——展开的描述要能盖到表格外面去 */
+/* 固定布局 + 定宽/百分比列宽：列宽只跟表格宽度走，跟内容长短无关，
+   所以再长的名称也只在自己格子里省略，表格永远不会被撑宽（页面不会出水平滚动条）。
+   注意别在这里加 overflow: hidden——展开的名称浮层要能盖到表格外面去 */
 .game-manage__table {
     width: 100%;
     table-layout: fixed;
     border-collapse: collapse;
-    background: #fff;
-    border: 1px solid #e2e8f0;
-    border-radius: 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
 }
+
 
 /* 没有 overflow 兜底，四角靠表头/末行的圆角自己收（表头有底色，方角会顶出表格圆角） */
 .game-manage__table thead th:first-child {
@@ -2021,157 +2080,91 @@ onBeforeUnmount(() => {
     border-bottom-right-radius: 11px;
 }
 
-/* 百分比之和正好 100%：表格永远等于内容区宽度，不会撑出水平滚动条。
-   各列的百分比是按「最窄也要放得下」定的（如更新时间那串固定 19 个字） */
-/* 12% 是给 102px 封面 + 左右各 14px 内边距留的（约 130px），窗口更窄时封面会自己收窄 */
-.game-manage__col-cover {
-    width: 12%;
-}
-
-/* 操作列按三个按钮的实际需要给宽（按钮左对齐，正好从左铺到列尾，右边不留空），
-   省下的宽度都给名称列 */
-.game-manage__col-name {
-    width: 30%;
-}
-
+/* 名称列不给定宽：吃掉其余定宽列剩下的全部宽度（table-layout: fixed 语义）。
+   定宽列按内容最宽需要给（如更新时间那串 19 个字、三个操作按钮并排） */
 .game-manage__col-type {
-    width: 13%;
+    width: 180px;
 }
 
 .game-manage__col-size {
-    width: 8%;
+    width: 96px;
 }
 
 .game-manage__col-time {
-    width: 18%;
+    width: 180px;
 }
 
+/* 操作列：三个 sm 按钮（高 28、左右内边距各 10、短字约 26）= 每个约 46px，
+   加两个 8px 间距再算上单元格左右各 16 的内边距 ≈ 186，给 200 留余量——
+   少了按钮会顶出格子 */
 .game-manage__col-actions {
-    width: 19%;
+    width: 200px;
 }
 
-/* 窗口再窄，19% 就装不下那三个按钮了（会折成两行）：
-   这里把操作列加回来一点，名称列让出同样的数 */
-@media (max-width: 1240px) {
-    .game-manage__col-name {
-        width: 27%;
-    }
-
-    .game-manage__col-actions {
-        width: 22%;
-    }
-}
-
+/* 与游戏发现同款：行高固定 40px（28px 按钮 + 上下各 6px 内边距），
+   全屏与非全屏行高一致，只有行数不同。
+   line-height 显式写死，两张表不会因为字体默认值不同而差几个像素 */
 .game-manage__table th,
 .game-manage__table td {
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid var(--border);
     text-align: left;
     vertical-align: middle;
 }
 
-/* 数据行上下各 16px，行高 = 封面高 68 + 32 = 100px（约原来的 1.4 倍） */
 .game-manage__table td {
-    padding: 16px 14px;
+    padding: 6px 16px;
+    font-size: 14px;
+    line-height: 20px;
 }
 
-/* 表头没有封面撑着，上下留 12px 就够——别白占一屏的竖向预算 */
+/* 表头没有内容撑着，上下留 12px 就够——别白占一屏的竖向预算。
+   行高显式写死 20px，表格定高（见 __table-wrap）才能算准 */
 .game-manage__table th {
-    padding: 12px 14px;
+    padding: 12px 16px;
+    line-height: 20px;
 }
 
 /* 除名称列外都只占一行，超长（如 任天堂 GB/GBC）就地省略 */
 .game-manage__nowrap {
-    overflow: hidden;
+    color: var(--text-muted);
     white-space: nowrap;
+    overflow: hidden;
     text-overflow: ellipsis;
 }
 
 .game-manage__table th {
     background: #f8fafc;
     font-size: 13px;
-    color: #64748b;
+    color: var(--text-muted);
     font-weight: 600;
 }
 
-/* 封面缩略图：常规宽度下就是 102×68（行高因此是 100px）；单元格被挤窄时按 max-width
-   等比缩小，绝不撑破格子（img 是 object-fit: cover，收窄只会裁、不会把画面拉变形） */
-.game-manage__cover {
-    width: 102px;
-    max-width: 100%;
-    aspect-ratio: 3 / 2;
-    overflow: hidden;
-    background: #f8fafc;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-}
-
-.game-manage__cover img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-}
-
-.game-manage__cover-fallback {
-    font-size: 34px;
-}
-
-/* 名称列：整格是展开描述的定位基准 */
-.game-manage__desc-cell {
-    position: relative;
-}
-
-.game-manage__name {
-    font-weight: 600;
-    color: #0f172a;
-    overflow: hidden;
-    white-space: nowrap;
-    text-overflow: ellipsis;
-}
-
-/* 字号/行高/颜色要和展开那层完全一致，否则一切换文字会跳一下 */
-.game-manage__desc {
-    margin-top: 4px;
+/* 名称被截断时展开层里的描述段落：小一号的灰字，跟浮层自身的白底配 */
+.game-manage__panel-desc {
+    margin-top: 6px;
     font-size: 12px;
     line-height: 1.7;
     color: #64748b;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    cursor: pointer;
-}
-
-/* 展开的那一层：钉在收起那行的位置上往下铺，白底 + 投影盖住下面的行。
-   left/right 取单元格的内边距（14px），文字才和收起的描述对齐；
-   top 跟着单元格的上内边距走（16 + 名称一行约 21 + 描述 margin-top 4 ≈ 42） */
-.game-manage__desc-panel {
-    position: absolute;
-    top: 42px;
-    left: 14px;
-    right: 14px;
-    z-index: 3;
-    padding-bottom: 10px;
-    font-size: 12px;
-    line-height: 1.7;
-    color: #64748b;
-    word-break: break-all;
-    background: #fff;
-    border-radius: 0 0 8px 8px;
-    box-shadow: 0 10px 18px rgba(15, 23, 42, 0.12);
-    cursor: pointer;
+    white-space: normal;
 }
 
 /* 三个操作按钮左对齐（和「操作」表头对齐）；列宽按它们的实际宽度给，
-   所以删除右边也不会剩下大片空白 */
+   所以删除右边也不会剩下大片空白。
+   Element Plus 默认给相邻按钮加 12px 左边距，这里间距统一由 flex gap 管，
+   去掉它，否则三个按钮会把内容顶出格子右边 */
 .game-manage__row-actions {
     display: flex;
-    flex-wrap: wrap;
     gap: 8px;
+}
+
+.game-manage__row-actions :deep(.el-button + .el-button) {
+    margin-left: 0;
 }
 
 .game-manage__form {
     padding-top: 4px;
 }
+
 
 /* 添加/编辑弹窗：左栏放元数据、右栏放两个上传，两栏等宽 */
 .game-manage__form-cols {
