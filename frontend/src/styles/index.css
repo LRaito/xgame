@@ -50,7 +50,7 @@
     --app-surface-subtle: #eeeeee;
     --app-border: #dddddd;
 
-    /* 深色区域：播放器标题栏、存档管理、侧栏、更新横幅 */
+    /* 深色区域：播放器标题栏、存档管理、更新横幅 */
     --app-dark-surface: rgba(30, 41, 59, 0.8);
     --app-dark-surface-hover: rgba(51, 65, 85, 0.9);
     --app-dark-border: rgba(148, 163, 184, 0.3);
@@ -74,6 +74,17 @@
     --app-image-surface-hover: rgba(15, 23, 42, 0.78);
     --app-overlay-surface: rgba(255, 255, 255, 0.14);
     --app-overlay-surface-hover: rgba(255, 255, 255, 0.28);
+
+    /* ---------- 常驻侧栏（浅色系，比页面背景深一档，主色点缀激活态） ---------- */
+    --app-sider-bg: #dbe3ee;
+    --app-sider-head-bg: #ced9e7;
+    --app-sider-border: #c9d3e0;
+    --app-sider-hover-bg: #ccd6e3;
+    --app-sider-fg: #475569;
+    --app-sider-fg-hover: #0f172a;
+    --app-sider-fg-active: #0088d5;
+    --app-sider-active-bg: #ffffff;
+    --app-sider-width: 120px;
 
     /* 三档尺寸：sm 行内 / md 工具栏与弹框 / lg 播放器 */
     --app-control-h-sm: 28px;

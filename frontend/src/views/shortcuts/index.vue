@@ -251,7 +251,8 @@ onBeforeUnmount(() => {
     margin-left: -13px;
     padding: 5px 10px 5px 12px;
     border-left: 2px solid transparent;
-    font-size: 13px;
+    /* 大纲字号与正文标题（.shortcut-section__title 17px）同级，比 .page-title 24px 小一号 */
+    font-size: 17px;
     line-height: 1.5;
     color: var(--text-muted);
     text-decoration: none;
