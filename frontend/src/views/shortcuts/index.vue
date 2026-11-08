@@ -1,20 +1,6 @@
 <template>
     <div class="shortcuts-page">
         <div class="shortcuts-page__body">
-            <!-- 本页大纲：滚动时高亮当前页面，点击平滑跳转 -->
-            <nav class="shortcuts-toc" aria-label="本页大纲">
-                <a
-                    v-for="page in SHORTCUT_PAGES"
-                    :key="page.id"
-                    :href="`#${page.id}`"
-                    class="shortcuts-toc__link"
-                    :class="{ active: activeId === page.id }"
-                    @click.prevent="jumpTo(page.id)"
-                >
-                    {{ page.title }}
-                </a>
-            </nav>
-
             <!-- 正文：一个页面一张表，第一列按功能分组合并单元格 -->
             <article class="shortcuts-doc">
                 <section
@@ -68,8 +54,6 @@
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from "vue";
-
 // 快捷键的权威来源是各页面里的监听代码；这里只做展示，改键位时记得同步这张表
 // （模拟器：views/games/emulator-player.vue，Flash：views/games/flash-player.vue，
 //  存档管理：components/games/SaveManager.vue + SaveTreeView.vue，
@@ -173,98 +157,16 @@ function featureRowSpan(rows, index) {
     return span;
 }
 
-// ---------- 大纲：滚动高亮 + 平滑跳转 ----------
-// 页面随窗口滚动（布局没有内层滚动容器），所以监听 window 的 scroll。
-// 越过视口顶部 96px 的最后一个页面就是「当前所在」。
-const activeId = ref(SHORTCUT_PAGES[0].id);
-let scrollTicking = false;
-
-function updateActiveSection() {
-    const threshold = 96;
-    let current = SHORTCUT_PAGES[0].id;
-    for (const page of SHORTCUT_PAGES) {
-        const el = document.getElementById(page.id);
-        if (el && el.getBoundingClientRect().top <= threshold) {
-            current = page.id;
-        }
-    }
-    activeId.value = current;
-}
-
-function onWindowScroll() {
-    if (scrollTicking) {
-        return;
-    }
-    scrollTicking = true;
-    window.requestAnimationFrame(() => {
-        scrollTicking = false;
-        updateActiveSection();
-    });
-}
-
-function jumpTo(id) {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-onMounted(() => {
-    window.addEventListener("scroll", onWindowScroll, { passive: true });
-    updateActiveSection();
-});
-
-onBeforeUnmount(() => {
-    window.removeEventListener("scroll", onWindowScroll);
-});
 </script>
 
 <style scoped>
-/* 博客式单栏：整体限宽居中，左侧大纲 + 右侧连续正文 */
+/* 单栏限宽居中：正文连续排布成一列派生小表。
+   上边距抵消外层 .content 的 28px 内边距，让组表顶边与常驻侧栏 XGAME 品牌块的
+   顶边（视口顶）对齐；底部内边距维持原样。 */
 .shortcuts-page {
     width: 100%;
-    max-width: 1040px;
-    margin: 0 auto;
-}
-
-.shortcuts-page__body {
-    display: grid;
-    grid-template-columns: 188px minmax(0, 1fr);
-    gap: 56px;
-    align-items: start;
-}
-
-.shortcuts-toc {
-    position: sticky;
-    top: 24px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
-    padding: 2px 0 2px 12px;
-    border-left: 1px solid var(--border);
-}
-
-.shortcuts-toc__link {
-    position: relative;
-    margin-left: -13px;
-    padding: 5px 10px 5px 12px;
-    border-left: 2px solid transparent;
-    /* 大纲字号与正文标题（.shortcut-section__title 17px）同级，比 .page-title 24px 小一号 */
-    font-size: 17px;
-    line-height: 1.5;
-    color: var(--text-muted);
-    text-decoration: none;
-    border-radius: 0 6px 6px 0;
-    transition: color 0.15s ease, background 0.15s ease;
-}
-
-.shortcuts-toc__link:hover {
-    color: #0f172a;
-    background: #eef2f7;
-}
-
-.shortcuts-toc__link.active {
-    color: var(--brand-accent);
-    border-left-color: var(--brand-accent);
-    font-weight: 600;
+    max-width: 720px;
+    margin: -14px auto 0;
 }
 
 .shortcuts-doc {
@@ -273,37 +175,53 @@ onBeforeUnmount(() => {
 
 .shortcut-section {
     scroll-margin-top: 24px;
+    border: 1px solid #e6ecf3;
+    border-bottom: 0;
+    background: #fff;
 }
 
-/* 页面之间只留间距，不再画分隔线 */
-.shortcut-section + .shortcut-section {
-    margin-top: 34px;
+/* 紧凑组表：段落之间零间距贴合堆叠，共享一条分隔线（各自不带底边框） */
+.shortcut-section:first-child {
+    border-top: 1px solid #e6ecf3;
 }
 
+.shortcut-section:last-child {
+    border-bottom: 1px solid #e6ecf3;
+}
+
+/* 段落标题变成灰底分组头带，标题下压一条与行分隔线同色的细线 */
 .shortcut-section__title {
     margin: 0;
+    padding: 7px 14px;
     font-size: 17px;
     font-weight: 600;
     color: #0f172a;
     line-height: 1.4;
+    background: #eef2f8;
+    border-bottom: 1px solid #e6ecf3;
 }
 
-/* 快捷键表格：功能（合并单元格）| 按键 | 说明。全框线（每个单元格四周都有边），
-   固定布局保证三列对齐，单元格内容竖直居中、水平靠左。 */
+/* 快捷键表格：功能（合并单元格）| 按键 | 说明。外框由段落容器负责，
+   单元格只画行分隔线（横向细线），高度紧凑、单屏能放整套内容。 */
 .shortcut-table {
-    width: 570px;
+    width: 100%;
     max-width: 100%;
-    margin-top: 10px;
     border-collapse: collapse;
     table-layout: fixed;
 }
 
 .shortcut-table td {
     box-sizing: border-box;
-    padding: 9px 12px;
-    border: 1px solid #e6ebf2;
+    padding: 7px 14px;
+    border: 0;
+    border-bottom: 1px solid #f1f4f9;
     vertical-align: middle;
     text-align: left;
+}
+
+/* 组内最后一行不再压分隔线，底部交给段落容器自己 */
+.shortcut-table tr:last-child td {
+    border-bottom: 0;
 }
 
 .shortcut-table__feature {
@@ -366,36 +284,6 @@ onBeforeUnmount(() => {
 .shortcut-row__or {
     margin: 0 1px;
     font-weight: 400;
-}
-
-@media (max-width: 900px) {
-    .shortcuts-page__body {
-        grid-template-columns: 1fr;
-        gap: 22px;
-    }
-
-    /* 窄屏把大纲折成顶部的一排胶囊，不再吸顶 */
-    .shortcuts-toc {
-        position: static;
-        flex-direction: row;
-        flex-wrap: wrap;
-        gap: 6px;
-        padding: 0;
-        border-left: 0;
-    }
-
-    .shortcuts-toc__link {
-        margin-left: 0;
-        padding: 4px 11px;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        background: var(--surface);
-    }
-
-    .shortcuts-toc__link.active {
-        border-color: var(--app-color-selected-border);
-        background: var(--app-color-selected-bg);
-    }
 }
 
 /* 窄屏把表格拆成一列：功能 → 按键 → 说明（表格头隐藏） */
