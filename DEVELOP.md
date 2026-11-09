@@ -186,7 +186,7 @@ cd frontend && npm run lint
 「游戏发现」的数据源：
 
 - `backend/search/csv/` 下 37 个中英文名录 CSV（检索）。
-- `backend/search/ranking/ranking.csv`（榜单，四列）。
+- `backend/search/ranking/ranking.csv`（榜单，五列：`序号,机种名称,中文名,英文名,游戏卡带ID`）。
 
 它们构建成一个只读库 `<数据根>/db/game.db`：
 
