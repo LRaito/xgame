@@ -126,6 +126,7 @@ import { confirmAction, dangerConfirm } from "@/utils/confirm";
 import { appMessage } from "@/utils/overlay";
 import { formatBytes, formatDateTime } from "@/utils/fileDisplay";
 import { downloadLocalSave, isB64SOL } from "@/utils/ruffle";
+import { matchesShortcut } from "@/utils/shortcuts";
 import {
     buildKeyFromReference,
     buildKeyFromSwfOrigin,
@@ -527,25 +528,23 @@ function onKeydown(event) {
         emit("update:modelValue", false);
         return;
     }
-    // Shift + ↑/↓：在选中的节点上调整同级顺序；其余修饰键组合不算
-    const reorder =
-        event.shiftKey &&
-        (event.key === "ArrowUp" || event.key === "ArrowDown");
-    if (!reorder && event.key !== "Enter" && event.key !== "Delete") {
+    // 四个动作都从按键注册表读当前键位；Enter 也不再写死，避免和自定义键撞车。
+    let actionKey = "";
+    if (matchesShortcut(event, "saves.sync_local")) {
+        actionKey = "Enter";
+    } else if (matchesShortcut(event, "saves.delete")) {
+        actionKey = "Delete";
+    } else if (matchesShortcut(event, "saves.move_up")) {
+        actionKey = "ArrowUp";
+    } else if (matchesShortcut(event, "saves.move_down")) {
+        actionKey = "ArrowDown";
+    }
+    if (!actionKey) {
         return;
     }
-    if (reorder) {
-        if (event.ctrlKey || event.altKey || event.metaKey) {
-            return;
-        }
-    } else if (
-        event.repeat ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.metaKey ||
-        event.shiftKey
-    ) {
-        // Enter/Delete 不吃连发；排序（Shift + ↑/↓）允许按住连续挪位
+    const reorder = actionKey === "ArrowUp" || actionKey === "ArrowDown";
+    // 排序允许按住连续挪位；同步 / 删除不吃连发
+    if (!reorder && event.repeat) {
         return;
     }
     const target = event.target;
@@ -566,7 +565,7 @@ function onKeydown(event) {
     if (document.querySelector(".el-message-box, .el-overlay-message-box")) {
         return;
     }
-    if (cloudPanelRef.value?.handleSaveHotkey?.(event.key)) {
+    if (cloudPanelRef.value?.handleSaveHotkey?.(actionKey)) {
         event.preventDefault();
     }
 }

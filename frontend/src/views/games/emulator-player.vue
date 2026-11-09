@@ -196,6 +196,7 @@ import EmuWindowSelect from "@components/games/EmuWindowSelect.vue";
 import ScreenshotConfirmDialog from "@components/games/ScreenshotConfirmDialog.vue";
 import StartGate from "@components/games/StartGate.vue";
 import { hasUserGesture } from "@/utils/userActivation";
+import { matchesShortcut } from "@/utils/shortcuts";
 import { reportGamePlayed } from "@/utils/recentGames";
 import { startGamePlaytime, stopGamePlaytime } from "@/utils/gamePlaytime";
 // 机壳图用 import 取 URL（带内容哈希），几何见下面 SHELLS 表的说明
@@ -1048,10 +1049,10 @@ async function confirmScreenshot(description) {
     }
 }
 
-// 快捷键 Ctrl+Shift+S（F12 是浏览器开发者工具的保留键，拦不住）：
+// 默认快捷键 Ctrl+Shift+S，可在按键管理页改键：
 // 焦点可能停在宿主 iframe 里的引擎画布上，所以两边的 window 都要挂一份
 function onScreenshotHotkey(event) {
-    if (takeHotkey(event, "s", () => !shooting.value)) {
+    if (takeShortcut(event, "play.screenshot", () => !shooting.value)) {
         void onScreenshot();
     }
 }
@@ -1073,13 +1074,18 @@ function enterLoadSaveDisabled() {
 function onLoadLocalHotkey(event) {
     if (
         !enterLoadSaveDisabled() &&
-        takeHotkey(event, null, () => Boolean(getLocalEmuSave(currentGameId.value)))
+        takeShortcut(
+            event,
+            "play.load_local",
+            () => Boolean(getLocalEmuSave(currentGameId.value)),
+            { avoidInteractive: true }
+        )
     ) {
         void onLoadLocal();
         focusEngineIfNeeded();
         return;
     }
-    // 没有存档时 takeHotkey 会放行（焦点在按钮/链接/下拉上时也一样）。
+    // 没有存档（或该快捷键已关闭/改键）时 takeShortcut 会放行（焦点在按钮/链接/下拉上时也一样）。
     // 这里只补「选中模拟器」，不拦键，回车仍然照原来的路径走。
     if (
         !isBareEnter(event) ||
@@ -1142,29 +1148,22 @@ function focusEngineIfNeeded() {
 }
 
 /**
- * 快捷键 `·`（Backquote，数字 1 左边那个键）：立刻捕捉当前进度并同步至云端。
+ * 快捷键 `·`（Backquote，数字 1 左边那个键，可在按键管理页改键）：立刻捕捉当前进度并同步至云端。
  * 捕捉与上传由 onUploadCloud 顺次完成、成功提示也在里面，这里只认键与防重入。
  */
 function onSyncCloudHotkey(event) {
-    if (takeBareCode(event, "Backquote", () => !syncingCloud)) {
+    if (takeShortcut(event, "play.sync_cloud", () => !syncingCloud)) {
         void syncCloudNow();
     }
 }
 
 /**
- * 快捷键 Alt + `（Backquote，数字 1 左边那个键）：打开存档管理。
+ * 快捷键 Alt + `（Backquote，数字 1 左边那个键，可在按键管理页改键）：打开存档管理。
  * 与标题栏的「存档管理」按钮同一条路；游戏还没加载、弹框开着时不响应。
  * 注意和 `·` 区分：那个不带修饰键，这个必须按住 Alt。
  */
 function onSaveManagerHotkey(event) {
-    if (
-        event.code !== "Backquote" ||
-        !event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        event.repeat
-    ) {
+    if (!matchesShortcut(event, "play.save_manager") || event.repeat) {
         return;
     }
     const target = event.target;
@@ -1292,19 +1291,20 @@ async function switchNdsScreenMode(next) {
 }
 
 /**
- * 快捷键 - / =：NDS 屏幕布局循环（- 上一个、= 下一个：dual → top → side → dual）。
+ * 快捷键 - / =（可在按键管理页改键）：NDS 屏幕布局循环（上一个 / 下一个：dual → top → side → dual）。
  *
- * 认的是 **Backspace 左边那两个物理键**（event.code 的 Minus / Equal），不是主键盘
- * 字符、也不是小键盘（NumpadSubtract / NumpadAdd）：`+` 就是 Shift+=，按不按 Shift
- * 都算下一个。不带 Ctrl/Alt/Meta 才生效；焦点在输入框、引擎菜单/设置面板里时不抢。
+ * 默认认的是 **Backspace 左边那两个物理键**（event.code 的 Minus / Equal），不是主键盘
+ * 字符、也不是小键盘（NumpadSubtract / NumpadAdd）：`+` 就是 Shift+=，默认只认不按 Shift
+ * 的 =。焦点在输入框、引擎菜单/设置面板里时不抢。
  */
 function onNdsScreenHotkey(event) {
-    const isPrevious = event.code === "Minus";
-    const isNext = event.code === "Equal";
-    if (!isPrevious && !isNext) {
-        return;
+    let step = 0;
+    if (matchesShortcut(event, "play.nds_next")) {
+        step = 1;
+    } else if (matchesShortcut(event, "play.nds_prev")) {
+        step = -1;
     }
-    if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) {
+    if (!step || event.repeat) {
         return;
     }
     if (!isNds.value || switchingNdsMode.value) {
@@ -1319,7 +1319,6 @@ function onNdsScreenHotkey(event) {
     event.preventDefault();
     // 捕获阶段拦下：引擎自己也监听 keydown，这两个键不该同时进游戏
     event.stopPropagation();
-    const step = isNext ? 1 : -1;
     void switchNdsScreenMode(stepNdsScreenMode(ndsScreenMode.value, step));
 }
 
@@ -1342,20 +1341,16 @@ function hotkeyUsable(event, ready) {
 
 /**
  * 两侧 window 共用的快捷键入口：认出来并拦下返回 true（调用方再去做事），否则返回 false 放行。
- * key 为 "s" 时认 Ctrl+Shift+S，为 null 时认回车（不带任何修饰键）。ready 是这一下对当前
- * 状态有没有意义（正在截图 / 本地根本没有存档）。不接管的场景还有：焦点在输入框里（引擎设置
- * 面板、描述框，那是在打字）、引擎尚未就绪、或弹框正开着（弹框里的回车有自己的含义）。
+ * actionId 对应按键管理页的动作；ready 是这一下对当前状态有没有意义（正在截图 / 本地根本没有
+ * 存档）。不接管的场景还有：焦点在输入框里（引擎设置面板、描述框，那是在打字）、引擎尚未
+ * 就绪、或弹框正开着（弹框里的回车有自己的含义）。
  */
-function takeHotkey(event, key, ready) {
-    const matches = key
-        ? event.ctrlKey && event.shiftKey && String(event.key || "").toLowerCase() === key
-        : event.key === "Enter" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
-    if (!matches) {
+function takeShortcut(event, actionId, ready, options = {}) {
+    if (!matchesShortcut(event, actionId)) {
         return false;
     }
-    // 焦点停在标题栏按钮上时，回车是「按下这个按钮」，不跟它抢（点过按钮后焦点会留在那儿）
-    const tag = String(event.target?.tagName || "").toUpperCase();
-    if (!key && (tag === "BUTTON" || tag === "A" || tag === "SELECT")) {
+    // 焦点停在标题栏按钮/链接/下拉上时，回车或空格是「按下这个控件」，不跟它抢
+    if (options.avoidInteractive && isInteractiveTarget(event.target)) {
         return false;
     }
     if (!hotkeyUsable(event, ready)) {
@@ -1363,26 +1358,6 @@ function takeHotkey(event, key, ready) {
     }
     event.preventDefault();
     // 捕获阶段拦下：引擎自己也监听 keydown（在它的容器上），不拦住的话这一下会同时进游戏
-    event.stopPropagation();
-    return true;
-}
-
-/**
- * 裸键按 event.code 匹配、且不带任何修饰键：给 `·`（Backquote）这种不该看布局字符的键用
- * （同一物理键在别的布局/输入法下 event.key 可能是 ` / ~ / ·）。守卫与 takeHotkey 相同。
- */
-function takeBareCode(event, code, ready) {
-    if (
-        event.code !== code ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        !hotkeyUsable(event, ready)
-    ) {
-        return false;
-    }
-    event.preventDefault();
     event.stopPropagation();
     return true;
 }

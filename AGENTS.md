@@ -100,7 +100,7 @@ frontend/                    # Vue 3 SPA
   src/permission.js          # 路由守卫（登录态）
   src/router/index.js        # 唯一路由表；菜单由 meta 驱动
   src/layout/                # 侧栏 + 内容区
-  src/store/                 # Pinia：app / auth / gameTypes
+  src/store/                 # Pinia：app / auth / gameTypes / shortcuts
   src/api/                   # 按业务域导出 xxxAPI
   src/utils/request.js       # axios 实例 + 拦截器
   src/views/                 # login / games / shortcuts
@@ -122,6 +122,7 @@ backend/
   request_limit.py           # 请求体上限
   entrypoint.sh              # api 容器入口
   auth/                      # 账号
+  shortcuts/                 # 用户快捷键配置
   games/                     # 游戏中心与管理
     paths.py                 # 磁盘路径规则
     save_*                   # 云端存档
@@ -179,9 +180,13 @@ certs/                       # 自签名证书
 ## 前端约定
 
 - 页面在 `views/`；api 在 `api/*`；唯一 axios 实例是 `utils/request.js`。
-- 按钮统一走 `AppButton`：`secondary` / `danger` 两种类型，`text` 是无框形态，size × tone。
-- 分段/标签统一走 `AppSegmented`；分页、空状态、复制等走 `components/common/`。
-- 样式 token 在 `styles/index.css`，页面里不手写原生 `<button>` 或按钮 CSS。
+- **通用组件统一。** 新功能先复用 `components/common/`，不另起一套视觉。
+- 按钮统一走 `AppButton`：只有 `secondary` / `danger` 两种类型；`text` / `pressed` 是形态，
+  size / tone 只取现有 token。普通行内操作不要用 `text` 代替标准按钮。
+- 分段/标签统一走 `AppSegmented`；下拉、分页、空状态、弹窗、复制等走 `components/common/`。
+- 样式 token 在 `styles/index.css`，页面里不手写原生 `<button>` 或按钮 CSS，不写死近似色。
+- 焦点策略见 [`docs/modules/frontend.md`](docs/modules/frontend.md)：按钮只变边框色，
+  其它控件用平台焦点 token，已有选中深色底的导航项不叠加焦点环，不留浏览器默认黑框。
 - 侧栏与播放页标题栏是浮层：常驻收起、鼠标靠近边缘滑出，不占位、不引起内容缩放。
 - 详细路由、组件与交互约定见 [`docs/modules/frontend.md`](docs/modules/frontend.md)。
 
@@ -224,6 +229,8 @@ python3 -m pytest  # 只跑后端
 4. 建 `frontend/src/api/<name>.js`、`views/<name>/` 与路由 `meta`。
 5. 工具专用组件放 `components/<name>/`；跨工具 UI 只改 `components/common/`。
 6. 补测试；除导航与注册表外，不要改其它工具。
+7. 前端先复用 `components/common/`；按钮、分段、弹窗不自造样式，视觉 token 与焦点规则见
+   [`docs/modules/frontend.md`](docs/modules/frontend.md)。
 
 若工具变重，保持同一套 service 接口，以便以后迁到微服务。
 

@@ -61,6 +61,7 @@ def init_db(engine: Engine) -> None:
     # 导入模型以注册 metadata
     from backend.auth import models as auth_models  # noqa: F401
     from backend.games import models as game_models  # noqa: F401
+    from backend.shortcuts import models as shortcut_models  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
     _ensure_columns(engine)

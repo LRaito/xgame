@@ -15,6 +15,7 @@ from backend.games.service import GameService
 from backend.games.settings_service import EmulatorSettingsService
 from backend.games.stats_service import GameStatsService
 from backend.games.uploads import BodyUploadService
+from backend.shortcuts.service import ShortcutService
 
 SESSION_USER_KEY = "user_id"
 
@@ -101,6 +102,13 @@ def get_game_stats_service(session: DbSession) -> GameStatsService:
 
 
 GameStatsServiceDep = Annotated[GameStatsService, Depends(get_game_stats_service)]
+
+
+def get_shortcut_service(session: DbSession) -> ShortcutService:
+    return ShortcutService(session)
+
+
+ShortcutServiceDep = Annotated[ShortcutService, Depends(get_shortcut_service)]
 
 
 def get_game_search_service(request: Request) -> GameSearchService:

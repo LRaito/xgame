@@ -67,6 +67,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useZIndex } from "element-plus";
 import { PLATFORM_IMAGES } from "@/constants/platformIntros/images";
+import { matchesShortcut } from "@/utils/shortcuts";
 
 const props = defineProps({
     /** 图片 key 列表，如 nes-console-1；缺失的 key 会被跳过。 */
@@ -122,11 +123,11 @@ function onKeydown(event) {
         event.preventDefault();
         event.stopPropagation();
         closePreview();
-    } else if (event.key === "ArrowLeft") {
+    } else if (matchesShortcut(event, "preview.prev")) {
         event.preventDefault();
         event.stopPropagation();
         stepPreview(-1);
-    } else if (event.key === "ArrowRight") {
+    } else if (matchesShortcut(event, "preview.next")) {
         event.preventDefault();
         event.stopPropagation();
         stepPreview(1);

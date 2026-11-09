@@ -53,6 +53,7 @@
 | 8 | `game_emulator_settings` | 同上 | 按账号与平台的模拟器设置 |
 | 9 | `game_recent_plays` | 同上 | 最近游玩 |
 | 10 | `game_user_stats` | 同上 | 游玩时长与进度 |
+| 11 | `user_shortcuts` | `backend/shortcuts/models.py` | 按账号保存的快捷键覆盖配置 |
 
 > `game_h5_files` 已删除：H5 改成「zip 存数据根、按需解到运行时根」，不再有清单表。
 > 老库里的空表由启动时的 `_drop_tables()` 清掉。
@@ -77,6 +78,23 @@
 | locked_until | DATETIME | NULL | 解锁时刻；NULL = 未锁定 |
 
 锁定阈值与行为见 [`auth.md`](modules/auth.md)。
+
+### shortcuts — 用户快捷键
+
+**`user_shortcuts`**
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | INTEGER | PK 自增 | |
+| user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 归属用户 |
+| action_id | VARCHAR(64) | NOT NULL | 前端动作 id，如 `play.sync_cloud` |
+| binding | VARCHAR(64) | NOT NULL, 默认 `''` | 键位；空串 = 用户关闭该快捷键 |
+| updated_at | DATETIME | NOT NULL | UTC |
+
+- 唯一约束：`(user_id, action_id)`，每个动作每个账号只有一行。
+- 没有这一行 = 使用前端默认键位；`binding=''` = 主动关闭。
+- 键位格式见 [`frontend.md`](modules/frontend.md) 的「快捷键」。
+- 动作清单与默认值只在前端 `frontend/src/constants/shortcuts.js` 维护。
 
 ### games — 游戏中心
 

@@ -760,6 +760,11 @@ onBeforeUnmount(() => {
     background: rgba(15, 40, 90, 0.1);
 }
 
+/* 选中项已经有深色底纹，不再额外画焦点环；否则浏览器默认的黑色外框会显得多余。 */
+.games-side__link:focus-visible {
+    outline: none;
+}
+
 /* 名称不换行，超长省略号 */
 .games-side__name {
     flex: 1;

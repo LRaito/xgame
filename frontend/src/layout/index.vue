@@ -39,6 +39,7 @@ import { DISPLAY_VERSION } from "@/constants/version";
 import { buildMenuFromRoutes } from "@/router";
 import { useAuthStore } from "@/store/auth";
 import { useGameTypesStore } from "@/store/gameTypes";
+import { useShortcutsStore } from "@/store/shortcuts";
 
 const route = useRoute();
 const router = useRouter();
@@ -49,6 +50,10 @@ const menus = buildMenuFromRoutes();
 // 类型注册表只拉一次：各页面直接读缓存；失败静默，页面各自有回退
 onMounted(() => {
     void gameTypes.ensureLoaded();
+    // 快捷键覆盖配置也只在整页加载时拉一次；失败时各页面继续用默认键位
+    void useShortcutsStore()
+        .ensureLoaded()
+        .catch(() => {});
 });
 
 // 播放页（模拟器 / Flash / H5，meta.playerRoute）要全屏沉浸，无侧栏；
@@ -179,6 +184,11 @@ async function onLogout() {
     background: var(--app-sider-hover-bg);
     color: var(--app-sider-fg-hover);
     font-weight: 600;
+}
+
+/* 选中项已经有深色底纹，不再额外画焦点环；否则浏览器默认的黑色外框会显得多余。 */
+.nav-link:focus-visible {
+    outline: none;
 }
 
 .sider-footer {

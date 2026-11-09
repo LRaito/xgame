@@ -45,6 +45,18 @@
 | GET | `/api/me` | 需登录 | 当前用户 `{username}` |
 | GET | `/api/tools` | 需登录 | 功能注册表；前端目前不消费 |
 
+### 用户快捷键
+
+| 方法 | 路径 | 登录 | 用途 / 关键字段 |
+|---|---|---|---|
+| GET | `/api/user-shortcuts` | 需登录 | 当前账号的覆盖列表 `{overrides: [{action_id, binding}]}` |
+| PUT | `/api/user-shortcuts/{action_id}` | 需登录 | body `{binding}`；空串 = 关闭该快捷键 |
+| DELETE | `/api/user-shortcuts/{action_id}` | 需登录 | 删除覆盖，恢复默认键位；幂等 |
+
+`binding` 用 `KeyboardEvent.code` 表示主键，修饰键按 `Ctrl` / `Alt` / `Shift` / `Meta` 顺序，
+例如 `Ctrl+Shift+KeyS`、`Alt+Backquote`、`Enter`。不支持的键、重复修饰键、
+浏览器保留组合（如 `Ctrl+KeyW`）返回 400。动作清单与默认值只在前端维护。
+
 ### 游戏中心、模拟器设置与统计
 
 | 方法 | 路径 | 登录 | 用途 / 关键字段 |

@@ -15,6 +15,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted } from "vue";
+import { matchesShortcut } from "@/utils/shortcuts";
 
 /**
  * 列表分页条（游戏管理 / 游戏发现共用）。
@@ -31,6 +32,9 @@ const props = defineProps({
     // 键盘翻页开关。同一时刻页面上只应有一个分页条（监听挂在 window 上），
     // 将来真要在同一页放两个，给其中一个传 false。
     keyboard: { type: Boolean, default: true },
+    // 按键管理页里的动作 id：游戏管理与游戏发现各有一套，互不影响。
+    previousShortcut: { type: String, default: "" },
+    nextShortcut: { type: String, default: "" },
 });
 
 const emit = defineEmits(["update:page", "change"]);
@@ -85,15 +89,24 @@ function isModalOpen() {
     return document.body.classList.contains("el-popup-parent--hidden");
 }
 
+/** 这次按键对应的翻页方向：1 下一页、-1 上一页、0 不匹配。 */
+function shortcutDirection(event) {
+    if (matchesShortcut(event, props.nextShortcut)) {
+        return 1;
+    }
+    if (matchesShortcut(event, props.previousShortcut)) {
+        return -1;
+    }
+    return 0;
+}
+
 function onKeydown(event) {
     if (!props.keyboard) {
         return;
     }
-    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
-        return;
-    }
-    // 带修饰键的一律放行：Ctrl/Shift+方向是选词，Alt+左右是浏览器前进/后退
-    if (event.ctrlKey || event.altKey || event.metaKey || event.shiftKey) {
+    // 绑定串已经包含完整的修饰键要求：用户把翻页改成别的键后，原来的方向键要放行。
+    const direction = shortcutDirection(event);
+    if (!direction) {
         return;
     }
     // 按住不放的连发不翻（服务端分页一次一页，连发会刷出一串请求）；输入法组字中的方向键也不碰
@@ -110,7 +123,7 @@ function onKeydown(event) {
 
     // 认下这一下就拦掉，横向滚动与焦点移动都别发生（到头也一样拦，行为一致）
     event.preventDefault();
-    goTo(props.page + (event.key === "ArrowRight" ? 1 : -1));
+    goTo(props.page + direction);
 }
 
 // 挂在 window 的**冒泡**阶段：这只是页面级便利，不跟模态那种要独占键盘的组件抢。

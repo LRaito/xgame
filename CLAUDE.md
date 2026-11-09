@@ -96,9 +96,12 @@ make index       # 重建游戏发现索引
 14. **Gunicorn 必须 `--workers 1`。** SQLite 单写者，多进程会冲突。
 15. **明确不做。** React、TypeScript、i18n、OAuth、对象存储、JWT、
     Redis/PostgreSQL/Celery；Windows 包不做自动升级。
+16. **通用组件统一。** 按钮、分段、下拉、分页、弹窗、空状态优先复用 `components/common/`；
+    页面不手写原生 `<button>` 或重复控件样式；颜色、尺寸、焦点只用 `styles/index.css` 的 token。
 
 细节链接：
 
+- 通用组件与视觉一致性 → [`frontend.md`](docs/modules/frontend.md)
 - 文件存储 / 卡带 ID / 封面类型 → [`game-storage.md`](docs/modules/game-storage.md)
 - 机种词表 → [`platforms.md`](docs/common/platforms.md)
 - 播放器 / 机壳 / NDS → [`game-center-playback.md`](docs/modules/game-center-playback.md)
@@ -114,7 +117,7 @@ make index       # 重建游戏发现索引
 
 ```
 frontend/        Vue 3 SPA
-backend/         FastAPI API（auth / games / tools / storage）
+backend/         FastAPI API（auth / shortcuts / games / tools / storage）
 docs/            architecture.md / data_dict.md / modules / common / plans
 packaging/       windows/
 tests/           pytest

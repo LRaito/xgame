@@ -25,6 +25,7 @@ from backend.http import json_err
 from backend.mount_guard import require_mounted
 from backend.session_middleware import ModifiedOnlySessionMiddleware
 from backend.request_limit import RequestBodyLimitMiddleware
+from backend.shortcuts.router import router as user_shortcuts_router
 from backend.storage.local import LocalStorage
 from backend.tools.router import router as tools_router
 
@@ -111,6 +112,7 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     app.include_router(game_gallery_router)
     app.include_router(game_settings_router)
     app.include_router(game_stats_router)
+    app.include_router(user_shortcuts_router)
 
     # 「解压即用」的 Windows 包专用，靠环境变量开关，Docker 路线默认关闭：
     # 静态站（没有 nginx 时由后端托管 dist）。它是 catch-all 路由，必须注册在所有 API 路由之后。

@@ -102,6 +102,8 @@
                 v-model:page="page"
                 :total="total"
                 :page-size="pageSize"
+                previous-shortcut="manage.page.prev"
+                next-shortcut="manage.page.next"
                 @change="reload"
             />
         </section>

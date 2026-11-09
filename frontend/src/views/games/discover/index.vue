@@ -84,6 +84,8 @@
                 :total="total"
                 :page-size="pageSize"
                 :keyboard="activeTab === 'search'"
+                previous-shortcut="discover.page.prev"
+                next-shortcut="discover.page.next"
                 @change="loadSearch"
             />
         </section>
@@ -219,6 +221,8 @@
                 :total="rankingVisibleTotal"
                 :page-size="rankingPageSize"
                 :keyboard="activeTab === 'ranking'"
+                previous-shortcut="discover.page.prev"
+                next-shortcut="discover.page.next"
             />
         </section>
     </div>

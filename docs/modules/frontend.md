@@ -79,7 +79,7 @@
 - 菜单当前顺序：游戏中心、游戏管理、游戏发现、按键管理、机型简史。
 - `/games/manage` 是游戏管理页。
 - `/games/discover` 是游戏发现页，详见 `./game-discover.md`。
-- `/shortcuts` 是纯前端静态的按键管理页。
+- `/shortcuts` 是按键管理页：默认键位与动作清单在前端，用户覆盖存 SQLite。
 - `/platforms` 是机型简史页，`/platforms/:id` 是机型详情页，见 `./platform-chronicle.md`。
 - `/games/search` 重定向到 `/games/discover`，并保留 query。
 - `/games/flash|play|h5/:gameId` 三个播放页都 `hiddenInMenu`。
@@ -96,8 +96,27 @@
 - 模拟器把 iframe 内的指针活动转进来，并给宿主 `<html>` 挂 `x-cursor-hidden`。
 - H5 是沙箱不透明源，画面内光标无法隐藏。
 
+**快捷键。**
+
+- 动作清单、默认键位与展示文案只在 `constants/shortcuts.js` 维护。
+- 一行一个动作；`scope` 相同（同一页面）的动作同时生效，不能撞键。
+- 键位用 `KeyboardEvent.code`（物理键），与键盘布局、输入法无关。
+- 修饰键固定按 `Ctrl` / `Alt` / `Shift` / `Meta` 顺序拼接。
+- 绑定串为 `""` = 用户关闭该快捷键；数据库没有这一行 = 使用默认键位。
+- 用户覆盖存 SQLite 的 `user_shortcuts`，接口是 `/api/user-shortcuts`。
+- 前端缓存是 `store/shortcuts.js`；登出时清空，换账号后重新拉取。
+- 各页面用 `utils/shortcuts.js` 的 `matchesShortcut()` 读当前键位。
+- 页面保留自己的焦点、弹框、引擎就绪等守卫，不把业务守卫塞进通用工具。
+- 设置时同页重复键、被浏览器占用的组合、不支持的键都弹中文提示。
+- 设置后立即写入后端；清除写空串；重置删除覆盖行。
+
 **通用组件。**
 
+- **一致性是硬约束。** 新功能先复用 `components/common/`，不另起一套视觉。
+- 页面不手写原生 `<button>` 或按钮 CSS；唯一例外是 `AppSegmented` 自身。
+- 需要新外观先扩 `AppButton` 的 `text` / `tone`，或扩对应的通用组件；不在页面写一次性样式。
+- 颜色、圆角、控件高度、焦点、禁用态只用 `styles/index.css` 的 token，不写死近似色。
+- 普通行内操作按钮用标准 `secondary`；`text` 只用于无框辅助操作（标题栏图标、「清空」等）。
 - `components/common/` 必有：`AppDialog`、`AppButton`、`AppSegmented`、`AppTypeSelect`。
 - 还有 `AppPagination`、`AppEmpty`、`CopyButton`、`AppUpdateBanner`。
 - 按钮统一走 `AppButton`。
@@ -109,12 +128,12 @@
 - 另有 `block` / `iconOnly` / `round`。
 - 播放器标题栏与存档管理用 `tone="dark"`，不再手写深色按钮 CSS。
 - 禁用态背景/边框 `#EEEEEE`、文字 `#AAAAAA`，不用透明度。
-- 焦点只变边框色，不加外环。
+- 焦点：按钮只变边框色，不加外环；其它可聚焦自定义控件用 `--app-focus-axis` +
+  `--app-color-primary` 画焦点，已有选中深色底的导航项不再叠加焦点环；
+  不要留浏览器默认黑色外框。
 - 分段/标签统一走 `AppSegmented`，tone / size 用同一套 token。
 - 游戏类型 / 机种下拉统一走 `AppTypeSelect`：可下拉、可输入过滤，
   按 label 或 value 做不区分大小写的子串匹配。
-- 页面里不再手写原生 `<button>` 或按钮 CSS，唯一例外是 `AppSegmented` 自身。
-- 需要新外观先扩 `AppButton` 的 `text` 或 `tone`。
 - `CopyButton` 的 20px 卡带 ID 药丸是可复制数据 chip，不是第三种按钮类型。
 - `AppDialog` 的 `footer-mode` 四值：default/confirm-only/custom/none。
 - 右上角关闭按钮始终存在：只读弹框用 `none`，不再放多余的「关闭」底栏按钮。
@@ -124,23 +143,24 @@
 - 翻页时先发 `update:page` 再发 `change`。
 - 父级的 `change` 要读自己的 page ref，顺序反了会拿旧页码去请求。
 - 只有一页时整块不渲染。
-- 左右方向键翻页在组件内部，挂在 window 冒泡阶段。
-- 带修饰键的按键放行：`Alt+←` 是后退，`Ctrl/Shift+←` 是选词。
+- 键盘翻页在组件内部，挂在 window 冒泡阶段；动作 id 由父页面传入（管理与发现各一套）。
+- 默认键位下带修饰键的按键放行：`Alt+←` 是后退，`Ctrl/Shift+←` 是选词。
 - 按住连发、输入法组字、焦点在输入框或下拉里都放行。
 - `body.el-popup-parent--hidden`（弹框/抽屉打开）时放行。
 - 空状态统一用 `AppEmpty`，覆盖加载失败与暂无内容。
 
 **按键管理页。**
 
-- `/shortcuts` 是纯前端静态页，没有接口。
-- 版式是博客式单栏文档。
-- 左侧大纲按页面滚动高亮，并支持平滑跳转。
-- 一个页面一张表，第一列「功能」按相同功能合并单元格。
-- 后两列是按键与说明。
-- 键帽样式，同一页内按键帽从短到长排列。
-- 相同功能的行保持相邻，便于合并单元格。
-- 数据写在 `views/shortcuts/index.vue`。
-- 改键位时同步更新那张表。
+- 版式是单栏文档，一个页面一张表。
+- 第一列「功能」按相同功能合并单元格。
+- 后面依次是按键、操作、说明；每行一个可独立设置的动作。
+- 操作列有「设置」「清除」「重置」三个按钮。
+- 设置：弹框里按下新组合键，校验通过后立即保存。
+- 清除：写入空串，关闭该快捷键，表格显示「已关闭」。
+- 重置：删除覆盖行，恢复默认键位。
+- 同页动作不能撞键；跨页面复用同一个键是允许的。
+- 不支持的键、浏览器保留组合、同页重复键都显示中文错误。
+- 页面从 store 读取当前键位，保存后即时刷新。
 
 **游戏管理页。**
 
