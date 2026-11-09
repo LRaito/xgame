@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""处理 vimm.net 的 SFC 卡带图（原地覆盖）。
+"""处理 vimm.net 的 SFC 卡带图。
 
-源图固定 532x358；用这批图的固定版式，不做任何检测：
+源图固定 532x358（PNG 或 JPG）；用这批图的固定版式，不做任何检测：
 
 1. 左上、右上两块矩形黑背景 -> 透明（只把 alpha 置 0，不填白色或任何底色）。
    中间封面顶到画面上边，一点不动。
    矩形边界取自银色卡带转折：左角 x 0..86、右角 x 449..532，y 都是 0..18。
 2. 底部白底「Vimm's Lair - vimm.net」网址栏 -> 裁掉 14 像素（y=344 起全白）。
 
-直接覆盖源文件，输出 532x344 的 RGBA PNG（所以要透明通道，只处理 .png）。
-尺寸不是 532x358 的图会被跳过（不处理、不覆盖，退出码 1）。
+输出统一是 532x344 的 RGBA PNG：
+- PNG 源图原地覆盖；
+- JPG 源图另写成同目录同名的 .png，源图保留。
+尺寸不是 532x358 的图会被跳过（不处理、不写出，退出码 1）。
 
 用法：
     python3 tools/vimm-sfc-crop.py <源图或目录>...
@@ -31,8 +33,8 @@ BOTTOM_END = 344  # 保留到这一行（不含），即裁掉底部 14 像素�
 LEFT_RECT = (0, 0, 86, 18)
 RIGHT_RECT = (449, 0, SRC_W, 18)
 
-# 原地覆盖需要透明通道，只处理 PNG。
-IMAGE_SUFFIXES = {".png"}
+# 输出需要透明通道，统一写 PNG；JPG 源图另存同名 .png。
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
 
 def collect_inputs(raw_paths: list[str]) -> list[Path]:
@@ -55,11 +57,18 @@ def collect_inputs(raw_paths: list[str]) -> list[Path]:
     return files
 
 
+def output_path(src: Path) -> Path:
+    """PNG 源图原地覆盖；其它格式落到同目录同名的 .png。"""
+    if src.suffix.lower() == ".png":
+        return src
+    return src.with_suffix(".png")
+
+
 def process(src: Path) -> bool:
-    """处理一张并覆盖源文件。尺寸不符返回 False，不动文件。"""
+    """处理一张并写出 PNG。尺寸不符返回 False，不动文件。"""
     try:
         if src.suffix.lower() not in IMAGE_SUFFIXES:
-            print(f"跳过 {src.name}：原地覆盖需要透明通道，只处理 .png")
+            print(f"跳过 {src.name}：只支持 PNG / JPG")
             return False
 
         with Image.open(src) as im:
@@ -75,9 +84,13 @@ def process(src: Path) -> bool:
                 alpha.paste(0, (x0, y0, x1, y1))
             out.putalpha(alpha)
 
-        # 源文件已关闭，再覆盖写回。
-        out.save(src, format="PNG")
-        print(f"已覆盖 {src} ({out.width}x{out.height})")
+        # 源文件已关闭，再写出；JPG 源图不删。
+        dst = output_path(src)
+        out.save(dst, format="PNG")
+        if dst == src:
+            print(f"已覆盖 {src} ({out.width}x{out.height})")
+        else:
+            print(f"已写出 {dst} ({out.width}x{out.height})，源图保留")
         return True
 
     except Exception as exc:  # 读不了/写不了都要报出来，不能让批处理静默漏图
@@ -87,7 +100,7 @@ def process(src: Path) -> bool:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="处理 vimm.net SFC 卡带图并覆盖原文件（源图固定 532x358、PNG）"
+        description="处理 vimm.net SFC 卡带图并输出 PNG（源图固定 532x358，支持 PNG / JPG）"
     )
     parser.add_argument("inputs", nargs="+", help="源图文件或目录（可多个）")
     args = parser.parse_args(argv)
@@ -98,9 +111,16 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     ok = True
+    written: set[Path] = set()
     for src in files:
+        # 同名的 jpg 先生成 png 时，别再把这个新 png 当源图处理一遍。
+        if src.resolve() in written:
+            print(f"跳过 {src}：本次已由同名源图生成")
+            continue
         if not process(src):
             ok = False
+        else:
+            written.add(output_path(src).resolve())
     return 0 if ok else 1
 
 
