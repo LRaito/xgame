@@ -162,11 +162,11 @@
 - 比对是 `normalize_cartridge_id()`：去首尾空白 + 转大写。
 - 绝不能复用会抛错的 `validate_cartridge_id()`。
 - 后者遇到 `Part No. 7004 0894` 这类原文会抛错，把只读接口打挂。
-- 只认 `game_path != ""` 的条目，与中心列表、最近游玩同口径。
+- 不区分有无本体：无本体条目同样关联（`has_body=false`），点击提示先上传、不跳转。
 - 不校验机种；卡带 ID 是「同一盘卡带」的全局身份。
 - 榜单的 `platform` 还有 `raw:3ds` 这类永远等不上 `game_type` 的值。
-- 命中行多 `game_id` 与 `path`；`path` 由 `service.play_path()` 按类型给。
-- `path` 与 `GameItem.path` 同一实现；没命中时两个字段都是 `null`。
+- 命中行多 `game_id`、`path` 与 `has_body`；`path` 由 `service.play_path()` 按类型给。
+- `path` 与 `GameItem.path` 同一实现；没命中时 `game_id` / `path` 都是 `null`。
 - `GameRankingService` 构造函数注入窄回调 `cartridge_lookup`。
 - 卡带 ID 按 500 个一批交给它，不是逐行查；单个机种（≤200 个）一批就够，跨机种会分多批。
 - 分批是为了避开 SQLite 老版本的 999 宿主参数上限（全机种有 6000+ 个 ID）。

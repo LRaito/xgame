@@ -108,8 +108,8 @@
 | cover_type | VARCHAR(20) | NULL | 封面样式 id；见 [`game-storage.md`](modules/game-storage.md) |
 | description | VARCHAR(200) | NOT NULL, 默认 `''` | 上限 200 字 |
 | game_type | VARCHAR(50) | NOT NULL, 索引 | `flash` / `h5` / 主机平台键 |
-| size | INTEGER | NOT NULL, 默认 0 | 本体字节数；多文件本体为 `body/` 下全部文件之和 |
-| crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | 当前本体 CRC32，8 位大写十六进制；多文件为清单聚合 CRC |
+| size | INTEGER | NOT NULL, 默认 0 | 本体字节数；0 = 未上传。多文件本体为 `body/` 下全部文件之和 |
+| crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | 当前本体 CRC32，8 位大写十六进制；空 = 未上传。多文件为清单聚合 CRC |
 | game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径；空 = 未上传。多文件本体指向 `body/` 下的入口；街机指向保留集合名的 `{romset}.zip` |
 | cover_path | VARCHAR(500) | NULL | 封面相对路径；NULL = 无封面 |
 | guide_kind | VARCHAR(10) | NOT NULL, 默认 `''` | `''` / `zip` / `pdf` |
@@ -122,7 +122,7 @@
 - `uq_games_game_type_name`：同类型下游戏名唯一。
 - `ix_games_name`：游戏名普通索引。
 - `ix_games_game_type`：游戏类型普通索引。
-- 中心列表按 `game_path != ''` 过滤。
+- 中心列表不按 `game_path` 过滤：无本体条目同样展示，点击时提示先上传本体。
 
 卡带 ID 改名、封面类型、命名规则见 [`game-storage.md`](modules/game-storage.md)。
 

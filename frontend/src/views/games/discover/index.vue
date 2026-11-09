@@ -170,27 +170,48 @@
                                 <!-- 卡带 ID 与平台库存对上的行：中英文名是**真链接**（router-link 渲染成
                                      原生 <a href>），没截断时单击进播放页，Ctrl+点击 / 中键由浏览器自己开新标签页；
                                      截断时单击优先展开全名（AppTruncatableName 在捕获阶段拦掉默认跳转）。
+                                     对上但还没上传本体的行保持链接样式，单击只弹提示、不进播放页；
                                      没对上的行就是纯文本 -->
                                 <app-truncatable-name>
                                     <router-link
-                                        v-if="item.path"
+                                        v-if="item.path && item.has_body"
                                         class="game-discover__link"
                                         :to="item.path"
                                     >
                                         {{ item.zh }}
                                     </router-link>
+                                    <span
+                                        v-else-if="item.path"
+                                        class="game-discover__link"
+                                        role="button"
+                                        tabindex="0"
+                                        @click="onMissingBodyLink"
+                                        @keydown.enter.prevent="onMissingBodyLink"
+                                    >
+                                        {{ item.zh }}
+                                    </span>
                                     <template v-else>{{ item.zh }}</template>
                                 </app-truncatable-name>
                             </td>
                             <td>
                                 <app-truncatable-name>
                                     <router-link
-                                        v-if="item.path"
+                                        v-if="item.path && item.has_body"
                                         class="game-discover__link"
                                         :to="item.path"
                                     >
                                         {{ item.en }}
                                     </router-link>
+                                    <span
+                                        v-else-if="item.path"
+                                        class="game-discover__link"
+                                        role="button"
+                                        tabindex="0"
+                                        @click="onMissingBodyLink"
+                                        @keydown.enter.prevent="onMissingBodyLink"
+                                    >
+                                        {{ item.en }}
+                                    </span>
                                     <template v-else>{{ item.en }}</template>
                                 </app-truncatable-name>
                             </td>
@@ -238,6 +259,7 @@ import {
     searchGamesAPI,
 } from "@/api/games";
 import { useAdaptiveRows } from "@/utils/adaptiveRows";
+import { noticeAction } from "@/utils/confirm";
 
 const TABS = [
     { label: "游戏检索", value: "search" },
@@ -448,6 +470,11 @@ const rankingNeedle = computed(() => rankingKeyword.value.trim().toLowerCase());
 const rankingLinkedCount = computed(
     () => rankingItems.value.filter((item) => item.path).length
 );
+
+/** 榜单关联到的游戏还没有本体：不进播放页，提示先上传。 */
+function onMissingBodyLink() {
+    noticeAction("请先上传游戏本体");
+}
 // 只按搜索词过一遍（中文名/英文名的裸子串、不区分大小写）。单独拆出来是为了空态能分清
 // 「是搜索没搜到」还是「搜到了但都没入库」——见 rankingEmptyDescription
 const rankingKeywordMatches = computed(() => {
@@ -700,6 +727,8 @@ onMounted(async () => {
     text-decoration-thickness: 1px;
     text-decoration-color: #bfdbfe;
     text-underline-offset: 2px;
+    /* 无本体的关联行用 span 渲染，同样要手型 */
+    cursor: pointer;
 }
 
 .game-discover__link:hover {

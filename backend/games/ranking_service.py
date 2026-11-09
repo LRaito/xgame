@@ -38,9 +38,11 @@ class RankingItem:
     platform: str
     cartridge_ids: tuple[str, ...]
     # 该行是否关联到平台库存里的游戏（关联在**请求期**做，见 GameRankingService._attach_links）。
-    # 命中的是哪一个卡带ID 由关联规则决定，这里只留结果：游戏 id 与它的播放页路径。
+    # 命中的是哪一个卡带ID 由关联规则决定，这里只留结果：游戏 id、播放页路径与是否有本体。
     game_id: int | None = None
     path: str | None = None
+    # 无本体的关联行仍显示为链接样式，但前端点击时提示先上传本体（不进播放页）
+    has_body: bool = False
 
 
 @dataclass(frozen=True)
@@ -163,8 +165,9 @@ class GameRankingService:
         联动（构建索引时也不能把库存信息写进 `ranking` 表），所以每次请求现查一次，增删游戏立刻生效。
 
         规则：一行最多两个卡带ID，**任意一个**命中就算关联，命中多个时取**该行第一个命中的那个**
-        （按 CSV 里的先后，结果确定）；比对是「去首尾空白 + 转大写」（`normalize_cartridge_id`），
-        只认有本体的游戏。按 `_CARTRIDGE_LOOKUP_CHUNK` 分批查库存，不是逐行查。
+        （按 CSV 里的先后，结果确定）；比对是「去首尾空白 + 转大写」（`normalize_cartridge_id`）。
+        **不区分有无本体**：无本体的游戏也关联，`has_body=False` 由前端决定是否拦下跳转。
+        按 `_CARTRIDGE_LOOKUP_CHUNK` 分批查库存，不是逐行查。
         """
         if self._cartridge_lookup is None or not items:
             return items
@@ -185,7 +188,14 @@ class GameRankingService:
             if link is None:
                 linked.append(item)
             else:
-                linked.append(replace(item, game_id=link.game_id, path=link.path))
+                linked.append(
+                    replace(
+                        item,
+                        game_id=link.game_id,
+                        path=link.path,
+                        has_body=link.has_body,
+                    )
+                )
         return linked
 
     @contextmanager

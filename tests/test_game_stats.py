@@ -21,7 +21,7 @@ def _make_game(app, name: str, *, game_path: str | None = None) -> int:
             name=name,
             cartridge_id=f"STAT{_seq:04d}",
             game_type="nes",
-            # 默认给个非空本体路径：中心列表与统计接口都只认「有本体」的游戏
+            # 默认给个非空本体路径；统计不按有无本体过滤，显式传空即可测无本体条目
             game_path=f"game/nes/STAT{_seq:04d}/game.nes" if game_path is None else game_path,
         )
         session.add(row)
@@ -51,6 +51,21 @@ def test_stats_requires_login(client):
     assert client.post(f"{STATS_URL}/playtime", json={"game_id": 1, "seconds": 10}).status_code == 401
     assert client.put(f"{STATS_URL}/1/playtime", json={"hours": 1}).status_code == 401
     assert client.put(f"{STATS_URL}/1/progress", json={"progress": "completed"}).status_code == 401
+
+
+def test_stats_work_for_game_without_body(logged_in, app):
+    """统计不按有无本体过滤：只登记信息、尚未补传本体的条目也能设进度与时长。"""
+    game_id = _make_game(app, "NoBody", game_path="")
+
+    progress = logged_in.put(
+        f"{STATS_URL}/{game_id}/progress", json={"progress": "completed"}
+    )
+    assert progress.status_code == 200, progress.text
+    assert progress.json()["data"]["progress"] == "completed"
+
+    playtime = logged_in.put(f"{STATS_URL}/{game_id}/playtime", json={"hours": 2})
+    assert playtime.status_code == 200, playtime.text
+    assert playtime.json()["data"]["play_seconds"] == 7200
 
 
 def test_playtime_accumulates(logged_in, app):

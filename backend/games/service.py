@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import re
@@ -10,7 +11,7 @@ from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
@@ -134,6 +135,13 @@ RECENT_LIMIT_MAX = 50
 # 上限防手改 query。检索那套在 search_service.py 里另有一组同款常量。
 MANAGE_PAGE_SIZE_DEFAULT = 5
 MANAGE_PAGE_SIZE_MAX = 100
+
+# 批量导入的 meta.csv 上限与查重分块：CSV 只是元数据，不该很大；
+# 分块是为了避开 SQLite 老版本的 999 个绑定变量上限。
+META_CSV_MAX_BYTES = 5 * 1024 * 1024
+IMPORT_CHECK_CHUNK = 500
+# 表头识别：第 2 列命中这些值就跳过首行（兼容中英文表头）
+_IMPORT_HEADER_IDS = {"id", "cartridge_id", "cartridge id", "卡带id", "卡带 id"}
 
 # 搬运的卡带ID 不用手填，由本体（Flash 的 .swf / H5 的 .zip）CRC32 自动生成
 _IMPORT_CARTRIDGE_PREFIX = "F-"
@@ -439,6 +447,90 @@ def validate_cover_type(game_type: str, raw: str | None) -> str | None:
     return value
 
 
+def import_cover_type(game_type: str, cartridge_id: str) -> str:
+    """批量导入时按机种自动决定的封面类型；暂只登记 FC（`nes`）。
+
+    规则：卡带 ID 以 `-USA` 结尾用 NES 样式，其余用 FC 样式。没有规则的类型返回空串，
+    创建时不写封面类型。
+    """
+    if game_type == "nes":
+        return "nes" if (cartridge_id or "").upper().endswith("-USA") else "fc"
+    return ""
+
+
+def _decode_import_csv(payload: bytes) -> str:
+    """meta.csv 解码：优先 UTF-8（兼容 BOM），失败再试 GB18030（中文 Windows 导出）。"""
+    try:
+        return payload.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            return payload.decode("gb18030")
+        except UnicodeDecodeError:
+            raise ValidationError(
+                "无法识别 meta.csv 的编码，请另存为 UTF-8。"
+            ) from None
+
+
+def _parse_import_rows(text: str, game_type: str) -> list[dict]:
+    """按位置解析 meta.csv：第 2 列卡带 ID、第 3 列名称、第 4 列封面文件名。
+
+    首个非空行若第 2 列是 `id` 一类表头则跳过；全空行忽略。行级错误写进 `error`，
+    不中断整批解析——前端按行统计失败。
+    """
+    rows: list[dict] = []
+    try:
+        reader = csv.reader(StringIO(text, newline=""))
+        header_checked = False
+        for cells in reader:
+            if not any(cell.strip() for cell in cells):
+                continue
+            if not header_checked:
+                header_checked = True
+                if len(cells) >= 2 and cells[1].strip().lower() in _IMPORT_HEADER_IDS:
+                    continue
+            row = {
+                "line": reader.line_num,
+                "cartridge_id": "",
+                "name": "",
+                "cover": "",
+                "cover_type": "",
+                "skip": "",
+                "error": "",
+            }
+            rows.append(row)
+            if len(cells) < 4:
+                row["error"] = "列数不足：至少需要 4 列（number,id,name,cart）。"
+                continue
+            raw_id = cells[1].strip()
+            raw_name = cells[2].strip()
+            cover = cells[3].strip()
+            row["cartridge_id"] = normalize_cartridge_id(raw_id)
+            row["name"] = raw_name
+            row["cover"] = cover
+            try:
+                cartridge_id = validate_cartridge_id(raw_id)
+                # 外部 CSV 先按搬运同一套规则做无害化：结尾点、非法字符不致整行失败
+                name = validate_game_name(sanitize_game_name(raw_name, fallback=""))
+                if not cover:
+                    raise ValidationError("封面文件名为空。")
+                if "/" in cover or "\\" in cover:
+                    raise ValidationError(
+                        "封面文件名不能包含路径，图片需与 meta.csv 在同一目录。"
+                    )
+                if normalize_extension(Path(cover).suffix) not in _COVER_EXTENSIONS:
+                    raise ValidationError("封面仅支持 jpg、png、gif、webp 图片。")
+            except ValidationError as exc:
+                row["error"] = str(exc)
+                continue
+            row["cartridge_id"] = cartridge_id
+            row["name"] = name
+            row["cover"] = cover
+            row["cover_type"] = import_cover_type(game_type, cartridge_id)
+    except csv.Error as exc:
+        raise ValidationError(f"meta.csv 解析失败：{exc}") from exc
+    return rows
+
+
 def validate_game_name(raw: str) -> str:
     """校验并返回游戏名（去首尾空白）。不合规抛 ValidationError，消息里说清原因。"""
     name = (raw or "").strip()
@@ -521,10 +613,11 @@ def play_path(game_type: str, game_id: int) -> str:
 
 @dataclass(frozen=True)
 class GameLink:
-    """一条「榜单行 → 平台库存游戏」的关联结果：游戏 id 与它的播放页路径。"""
+    """一条「榜单行 → 平台库存游戏」的关联结果：游戏 id、播放页路径与是否有本体。"""
 
     game_id: int
     path: str
+    has_body: bool = True
 
 
 @dataclass(frozen=True)
@@ -607,9 +700,9 @@ class GameService:
         return str(root) if root is not None else None
 
     def list_center(self) -> list[GameItem]:
+        """游戏中心列表：包含尚未上传本体的条目（前端据此弹「请先上传游戏本体」）。"""
         rows = self._session.exec(
             select(Game)
-            .where(Game.game_path != "")
             .order_by(*_game_order_clauses())
         ).all()
         return [self._to_item(row) for row in rows]
@@ -617,8 +710,7 @@ class GameService:
     def list_recent(self, user_id: int, *, limit: int = RECENT_LIMIT_DEFAULT) -> list[GameItem]:
         """当前用户最近玩过的游戏，按最近一次开玩时间倒序。
 
-        只返回仍可游玩的条目（game_path != ''），与中心列表口径一致：本体被清空或
-        游戏已删的记录不该出现在 rail 里。
+        不按有无本体过滤：最近游玩与统计一样，覆盖只登记信息、尚未补传本体的条目。
         """
         # 越界值在这里收敛而不是靠 Query(ge=, le=)：参数校验失败走 FastAPI 的 422，
         # 会绕开本仓库统一的 {ok, message} 错误信封（同 settings_router 的处理）。
@@ -626,7 +718,7 @@ class GameService:
         rows = self._session.exec(
             select(Game)
             .join(GameRecentPlay, GameRecentPlay.game_id == Game.id)
-            .where(GameRecentPlay.user_id == user_id, Game.game_path != "")
+            .where(GameRecentPlay.user_id == user_id)
             # 同一时刻记两条时用 id 兜底，保证顺序稳定（与 _game_order_clauses 同思路）
             .order_by(col(GameRecentPlay.played_at).desc(), col(GameRecentPlay.id).desc())
             .limit(limit)
@@ -641,8 +733,8 @@ class GameService:
         与落库时的大写形式对齐。**键是原样回传的入参字符串**——调用方 `links.get(原始ID)`
         就完事，不必知道这条归一规则；没命中的入参不出现在结果里。
 
-        只认**有本体**的游戏（`game_path != ''`），与 `list_center` / `list_recent` 同口径：
-        没有本体的条目点进去只会 404，不该给链接。
+        不区分有无本体：无本体条目同样返回关联（`has_body=False`），由前端决定
+        是进播放页还是提示先上传。
 
         不分块：调用方（榜单 service）会把每批压到 `_CARTRIDGE_LOOKUP_CHUNK`（500）以内，
         低于 SQLite 老版本的 999 宿主参数上限；本方法自身不再分批。
@@ -657,13 +749,17 @@ class GameService:
             return {}
         rows = self._session.exec(
             select(Game)
-            .where(col(Game.cartridge_id).in_(list(wanted)), Game.game_path != "")
+            .where(col(Game.cartridge_id).in_(list(wanted)))
             # 卡带ID 有唯一索引，正常只会有一行；老库若缺索引（create_all 不补索引）就按 id 取第一条
             .order_by(col(Game.id))
         ).all()
         links: dict[str, GameLink] = {}
         for row in rows:
-            link = GameLink(game_id=row.id, path=play_path(row.game_type, row.id))
+            link = GameLink(
+                game_id=row.id,
+                path=play_path(row.game_type, row.id),
+                has_body=bool(row.game_path),
+            )
             for raw in wanted.get(row.cartridge_id, ()):
                 links[raw] = link
         return links
@@ -671,7 +767,7 @@ class GameService:
     def mark_played(self, user_id: int, game_id: int) -> None:
         """记录一次开玩：没有则插入，已有则刷新 played_at（一个游戏只留一行）。"""
         row = self._session.get(Game, game_id)
-        if row is None or not row.game_path:
+        if row is None:
             raise NotFoundError("游戏不存在。")
         try:
             self._touch_play(user_id, game_id)
@@ -738,6 +834,71 @@ class GameService:
             items=[self._to_item(row) for row in rows],
         )
 
+    def prepare_import(self, game_type: str, payload: bytes) -> list[dict]:
+        """解析批量导入的 meta.csv，返回每行的规范化内容与状态。
+
+        只读：解析、行级校验与查重都在这里完成，真正创建仍由前端逐行走 `create()`。
+        `skip` 非空表示库中或本文件内已存在（`cartridge_id` / `name`）；
+        `error` 非空表示该行无法导入，文案直接中文展示。
+        """
+        game_type = validate_game_type(game_type)
+        if len(payload) > META_CSV_MAX_BYTES:
+            raise ValidationError("meta.csv 过大，最多 5 MB。")
+        rows = _parse_import_rows(_decode_import_csv(payload), game_type)
+        if not rows:
+            raise ValidationError("meta.csv 没有可导入的数据行。")
+
+        valid = [row for row in rows if not row["error"]]
+        existing_ids = self._existing_import_ids(
+            [row["cartridge_id"] for row in valid]
+        )
+        existing_names = self._existing_import_names(
+            game_type, [row["name"] for row in valid]
+        )
+        seen_ids: set[str] = set()
+        seen_names: set[str] = set()
+        for row in rows:
+            if row["error"]:
+                continue
+            cartridge_id = row["cartridge_id"]
+            name = row["name"]
+            if cartridge_id in existing_ids or cartridge_id in seen_ids:
+                row["skip"] = "cartridge_id"
+            elif name in existing_names or name in seen_names:
+                row["skip"] = "name"
+            seen_ids.add(cartridge_id)
+            seen_names.add(name)
+        return rows
+
+    def _existing_import_ids(self, values: list[str]) -> set[str]:
+        """库中已存在的卡带 ID（全局，分块查询）。"""
+        keys = sorted({value for value in values if value})
+        found: set[str] = set()
+        for start in range(0, len(keys), IMPORT_CHECK_CHUNK):
+            chunk = keys[start : start + IMPORT_CHECK_CHUNK]
+            found.update(
+                self._session.exec(
+                    select(Game.cartridge_id).where(col(Game.cartridge_id).in_(chunk))
+                ).all()
+            )
+        return found
+
+    def _existing_import_names(self, game_type: str, values: list[str]) -> set[str]:
+        """库中同机种已存在的名称（分块查询）。"""
+        keys = sorted({value for value in values if value})
+        found: set[str] = set()
+        for start in range(0, len(keys), IMPORT_CHECK_CHUNK):
+            chunk = keys[start : start + IMPORT_CHECK_CHUNK]
+            found.update(
+                self._session.exec(
+                    select(Game.name).where(
+                        Game.game_type == game_type,
+                        col(Game.name).in_(chunk),
+                    )
+                ).all()
+            )
+        return found
+
     def get(self, game_id: int) -> GameItem:
         row = self._session.get(Game, game_id)
         if row is None:
@@ -755,17 +916,20 @@ class GameService:
         body_url: str = "",
         body_game_type: str = "",
         cover_url: str = "",
+        cover_type: str = "",
         staged: StagedUpload | None = None,
         staged_files: list[StagedUpload] | None = None,
     ) -> GameItem:
         """新建游戏：本体与封面一次入库，任一步失败即整体回滚。
 
-        卡带ID 必填、创建后不可改（只能删掉重建）；本体/封面各自可以是本地文件
-        （`body`/`cover`）、网络直链（`*_url`）、已完成分片上传的单个暂存本体
-        （`staged`）或一组暂存文件（`staged_files`，多文件本体）。走直链时先下到
-        临时目录再走同一条上传管线，原始文件名不落盘。
+        卡带ID 必填、创建后不可改（只能删掉重建）；本体可选：不给本体时按
+        `body_game_type` 直接建条目（大小 / CRC / 本体路径留空），之后再通过编辑补传。
+        本体/封面各自可以是本地文件（`body`/`cover`）、网络直链（`*_url`）、已完成
+        分片上传的单个暂存本体（`staged`）或一组暂存文件（`staged_files`，多文件本体）。
+        走直链时先下到临时目录再走同一条上传管线，原始文件名不落盘。
 
-        **不接受封面类型**：新建一律留空，只有编辑弹框手动选或美化封面时才落值。
+        **封面类型默认留空**：只有批量导入会在创建时显式传 `cover_type`；手动上传与搬运
+        仍由编辑弹框或「美化封面」写入。传了封面类型却没有封面会直接拒绝。
 
         本体类型由「后缀候选集 + `body_game_type`」确定：后缀只有一个候选时可以不传；
         Commodore 这种多候选后缀必须由用户选。多文件本体以用户选的类型为准，
@@ -807,7 +971,8 @@ class GameService:
                 allow_unknown_extension=True,
             )
         else:
-            raise ValidationError("请选择本体文件或填写本体下载地址。")
+            # 无本体：类型只能由用户显式选择（没有后缀可供推断）
+            game_type = validate_game_type(body_game_type)
         if not (body_url or cover_url):
             return self._create(
                 name,
@@ -816,6 +981,7 @@ class GameService:
                 cover,
                 cartridge_id=cartridge_id,
                 game_type=game_type,
+                cover_type=cover_type,
                 staged=staged,
                 bundle=bundle,
             )
@@ -834,6 +1000,7 @@ class GameService:
                     cover,
                     cartridge_id=cartridge_id,
                     game_type=game_type,
+                    cover_type=cover_type,
                     staged=staged,
                     bundle=bundle,
                 )
@@ -907,15 +1074,20 @@ class GameService:
         *,
         cartridge_id: str,
         game_type: str,
+        cover_type: str = "",
         staged: StagedUpload | None = None,
         bundle: BodyBundle | None = None,
     ) -> GameItem:
-        """建条目并上传本体（可选封面）：类型已在 `create()` 里判定，封面类型留空。"""
-        if body is None and staged is None and bundle is None:
-            raise ValidationError("请选择本体文件或填写本体下载地址。")
+        """建条目并上传本体（可选封面）：类型已在 `create()` 里判定。
+
+        本体可以缺失（只登记信息、稍后补传），此时 `size` / `crc32` / `game_path`
+        保持模型默认的空值，条目照常进入列表与统计。封面类型只有在同时上传封面时才允许。
+        """
         name = validate_game_name(name)
         description = validate_description(description)
         self._ensure_name_free(game_type, name)
+        if cover_type and cover is None:
+            raise ValidationError("设置封面类型必须同时上传封面。")
         now = datetime.now(timezone.utc)
         row = Game(
             name=name,
@@ -933,10 +1105,12 @@ class GameService:
                 self._commit_staged_bundle(row, bundle)
             elif staged is not None:
                 self._commit_staged_asset(row, staged)
-            else:
+            elif body is not None:
                 self.upload_asset(row.id, kind="game", upload=body)
             if cover is not None:
-                self.upload_asset(row.id, kind="cover", upload=cover)
+                self.upload_asset(
+                    row.id, kind="cover", upload=cover, cover_type=cover_type
+                )
         except Exception:
             # 上传中途失败不留下半成品条目（已上传对象随 delete 一并清理）
             self.delete(row.id)

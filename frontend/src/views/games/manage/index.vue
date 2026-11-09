@@ -30,6 +30,7 @@
                     @clear="applyFilter"
                 />
                 <div class="game-manage__actions">
+                    <app-button variant="secondary" @click="openBatchImport">批量导入</app-button>
                     <app-button variant="secondary" @click="openImport">搬运游戏</app-button>
                     <app-button variant="secondary" @click="openCreate">添加游戏</app-button>
                 </div>
@@ -198,14 +199,17 @@
                                 @change="onMetaFieldChange"
                             />
                         </el-form-item>
-                        <el-form-item label="游戏类型">
-                            <!-- 创建：后缀唯一时只读；多候选（Commodore）时下拉，可输入过滤 -->
+                        <el-form-item
+                            label="游戏类型"
+                            :required="formMode === 'create' && !hasBodySource"
+                        >
+                            <!-- 创建：无本体时必须先选类型；有本体时后缀唯一则只读、多候选才下拉 -->
                             <app-type-select
-                                v-if="formMode === 'create' && bodyTypeCandidates.length > 1"
+                                v-if="formMode === 'create' && (bodyTypeCandidates.length > 1 || !hasBodySource)"
                                 v-model="form.gameType"
                                 placeholder="请选择游戏类型"
                                 class="game-manage__type-select"
-                                :options="bodyTypeOptions"
+                                :options="hasBodySource ? bodyTypeOptions : allTypeOptions"
                             />
                             <!-- 编辑：只有当前本体后缀有多个候选时才允许改类型 -->
                             <app-type-select
@@ -249,7 +253,7 @@
                         </el-form-item>
                     </div>
                     <div class="game-manage__form-col">
-                        <el-form-item label="游戏本体" :required="formMode === 'create'">
+                        <el-form-item label="游戏本体">
                             <!-- 两个来源做成同款按钮：原生文件选择器藏起来，由「本地上传」代点 -->
                             <div class="game-manage__source">
                                 <input
@@ -311,6 +315,9 @@
                             </p>
                             <p v-else-if="formMode === 'edit' && editingItem?.game_path" class="game-manage__file-hint muted">
                                 当前：{{ editingItem.game_path }}
+                            </p>
+                            <p v-if="formMode === 'create' && !hasBodySource" class="game-manage__file-hint muted">
+                                可稍后上传；未上传本体的游戏不会进入游玩页。
                             </p>
                         </el-form-item>
                         <el-form-item label="游戏封面">
@@ -568,6 +575,112 @@
                 </div>
             </div>
         </app-dialog>
+
+        <!-- 批量导入：目录根下的 meta.csv → 卡带ID / 名称 / 封面，逐条建无本体条目 -->
+        <app-dialog
+            v-model="batchImportVisible"
+            title="批量导入"
+            width="620px"
+            footer-mode="none"
+            :close-disabled="batchImporting"
+        >
+            <div class="game-batch">
+                <p class="game-batch__tip">
+                    选择游戏所在目录，读取目录根下的 meta.csv：第 2 列卡带 ID、第 3 列名称、第 4 列封面文件名。封面图片需与 meta.csv 在同一目录。
+                </p>
+
+                <div class="game-batch__field">
+                    <span class="game-batch__label">游戏类型</span>
+                    <app-type-select
+                        v-model="batchImportType"
+                        placeholder="请选择游戏类型"
+                        class="game-batch__type"
+                        :options="allTypeOptions"
+                        :disabled="batchImporting"
+                    />
+                </div>
+
+                <div class="game-batch__field">
+                    <span class="game-batch__label">游戏目录</span>
+                    <div class="game-batch__dir">
+                        <input
+                            ref="batchImportDirRef"
+                            class="game-manage__file-input"
+                            type="file"
+                            webkitdirectory
+                            directory
+                            multiple
+                            @change="onBatchDirChange"
+                        />
+                        <app-button
+                            variant="secondary"
+                            :disabled="batchImporting"
+                            @click="pickBatchDir"
+                        >
+                            选择目录
+                        </app-button>
+                        <span
+                            class="game-batch__dir-name"
+                            :class="{ 'is-empty': !batchImportDirName }"
+                        >
+                            {{ batchImportDirText }}
+                        </span>
+                    </div>
+                </div>
+
+                <p v-if="batchImportError" class="game-batch__error">
+                    {{ batchImportError }}
+                </p>
+
+                <el-progress
+                    v-if="(batchImporting && batchImportTotal) || batchImportFinished"
+                    class="game-batch__progress"
+                    :percentage="batchImportPercent"
+                    :show-text="false"
+                    :stroke-width="4"
+                />
+                <p v-if="batchImporting" class="game-batch__status">
+                    <template v-if="batchImportTotal">
+                        已处理 {{ batchImportDone }} / {{ batchImportTotal }}
+                    </template>
+                    <template v-else>正在读取 meta.csv…</template>
+                </p>
+
+                <div v-if="batchImportFinished" class="game-batch__stats">
+                    <span class="game-batch__stat game-batch__stat--ok">
+                        成功 {{ batchImportStats.success }}
+                    </span>
+                    <span class="game-batch__stat">失败 {{ batchImportStats.failed }}</span>
+                    <span class="game-batch__stat">跳过 {{ batchImportStats.skipped }}</span>
+                    <span v-if="batchImportStats.unprocessed" class="game-batch__stat">
+                        未处理 {{ batchImportStats.unprocessed }}
+                    </span>
+                </div>
+
+                <ul v-if="batchImportFailures.length" class="game-batch__failures">
+                    <li v-for="item in batchImportFailures" :key="`${item.line}-${item.reason}`">
+                        第 {{ item.line }} 行{{ item.name ? `「${item.name}」` : "" }}：{{ item.reason }}
+                    </li>
+                </ul>
+
+                <div class="game-batch__actions">
+                    <app-button
+                        variant="secondary"
+                        :disabled="batchImporting"
+                        @click="batchImportVisible = false"
+                    >
+                        关闭
+                    </app-button>
+                    <app-button
+                        :loading="batchImporting"
+                        :disabled="!batchImportCanStart"
+                        @click="startBatchImport"
+                    >
+                        开始导入
+                    </app-button>
+                </div>
+            </div>
+        </app-dialog>
     </div>
 </template>
 
@@ -588,6 +701,7 @@ import {
     getManageGameAPI,
     importGameAPI,
     listManageGamesAPI,
+    prepareManageImportAPI,
     renameCartridgeIdAPI,
     updateManageGameAPI,
     updateManageGameTypeAPI,
@@ -796,6 +910,40 @@ const importVisible = ref(false);
 const importUrl = ref("");
 const importing = ref(false);
 
+// 批量导入：选本地目录 → 上传 meta.csv 让后端解析/查重 → 逐行创建（无本体，只带封面）
+const BATCH_COVER_EXTENSIONS = new Set([".jpg", ".jpeg", ".png", ".gif", ".webp"]);
+const batchImportVisible = ref(false);
+const batchImportType = ref("");
+const batchImportDirRef = ref(null);
+const batchImportDirName = ref("");
+const batchImportMetaFile = ref(null);
+const batchImportCoverFiles = ref(new Map());
+const batchImportRootFileCount = ref(0);
+const batchImportError = ref("");
+const batchImporting = ref(false);
+const batchImportFinished = ref(false);
+const batchImportDone = ref(0);
+const batchImportTotal = ref(0);
+const batchImportStats = ref({ success: 0, failed: 0, skipped: 0, unprocessed: 0 });
+const batchImportFailures = ref([]);
+
+const batchImportPercent = computed(() =>
+    batchImportTotal.value
+        ? Math.min(100, Math.round((batchImportDone.value / batchImportTotal.value) * 100))
+        : 0,
+);
+const batchImportCanStart = computed(
+    () =>
+        !batchImporting.value &&
+        Boolean(batchImportMetaFile.value && batchImportType.value),
+);
+const batchImportDirText = computed(() => {
+    if (!batchImportDirName.value) {
+        return "尚未选择目录";
+    }
+    return `${batchImportDirName.value}（${batchImportRootFileCount.value} 个文件）`;
+});
+
 // 本体来源：本地文件优先，其次是网络直链。
 // 类型候选由后缀决定：唯一候选自动确定，多候选（Commodore 的 .d64 / .prg）由用户选。
 // 多文件本体按「所有文件后缀的交集」求候选（cue+bin → 世嘉 CD，adf → Amiga）。
@@ -815,6 +963,10 @@ const bodyTypeCandidates = computed(() => {
 });
 const bodyTypeOptions = computed(() =>
     bodyTypeCandidates.value.map((type) => ({ value: type, label: typeLabel(type) }))
+);
+// 无本体新建时没有后缀可推断，类型由用户从全部机种里选
+const allTypeOptions = computed(() =>
+    gameTypes.value.map((type) => ({ value: type, label: typeLabel(type) }))
 );
 const bodySourceType = computed(() => {
     if (form.gameFile) {
@@ -1283,6 +1435,187 @@ async function onImport() {
         if (!err.reported) ElMessage.error(err.message || "搬运失败");
     } finally {
         importing.value = false;
+    }
+}
+
+function resetBatchImportState() {
+    batchImportDirName.value = "";
+    batchImportMetaFile.value = null;
+    batchImportCoverFiles.value = new Map();
+    batchImportRootFileCount.value = 0;
+    batchImportError.value = "";
+    batchImportFinished.value = false;
+    batchImportDone.value = 0;
+    batchImportTotal.value = 0;
+    batchImportStats.value = { success: 0, failed: 0, skipped: 0, unprocessed: 0 };
+    batchImportFailures.value = [];
+}
+
+function openBatchImport() {
+    batchImportType.value = "";
+    resetBatchImportState();
+    batchImportVisible.value = true;
+}
+
+// 「选择目录」代点隐藏的 webkitdirectory 文件选择器；先清空 value 才能重选同一目录
+function pickBatchDir() {
+    if (batchImporting.value || !batchImportDirRef.value) {
+        return;
+    }
+    batchImportDirRef.value.value = "";
+    batchImportDirRef.value.click();
+}
+
+function onBatchDirChange(event) {
+    const files = Array.from(event.target.files || []);
+    event.target.value = "";
+    resetBatchImportState();
+    if (!files.length) {
+        return;
+    }
+    // 只认所选目录根下的文件：webkitRelativePath 形如「目录名/meta.csv」
+    const depthOf = (file) => (file.webkitRelativePath || file.name).split("/").length;
+    const rootFiles = files.filter((file) => depthOf(file) <= 2);
+    const meta = rootFiles.find((file) => file.name.toLowerCase() === "meta.csv");
+    if (!meta) {
+        const nested = files.some(
+            (file) => file.name.toLowerCase() === "meta.csv" && depthOf(file) > 2,
+        );
+        batchImportError.value = nested
+            ? "请选择直接包含 meta.csv 的目录，而不是它的上级目录。"
+            : "所选目录根下没有 meta.csv。";
+        return;
+    }
+    const covers = new Map();
+    for (const file of rootFiles) {
+        if (file === meta) {
+            continue;
+        }
+        const key = file.name.toLowerCase();
+        if (!covers.has(key)) {
+            covers.set(key, file);
+        }
+    }
+    batchImportDirName.value =
+        (meta.webkitRelativePath || "").split("/")[0] || "所选目录";
+    batchImportMetaFile.value = meta;
+    batchImportCoverFiles.value = covers;
+    batchImportRootFileCount.value = rootFiles.length;
+}
+
+function extensionOfCover(name) {
+    const value = String(name || "");
+    const index = value.lastIndexOf(".");
+    return index < 0 ? "" : value.slice(index).toLowerCase();
+}
+
+function recordBatchFailure(row, reason) {
+    batchImportStats.value.failed += 1;
+    batchImportFailures.value.push({
+        line: row.line,
+        name: row.name,
+        reason,
+    });
+}
+
+/** 预检之后库又变了（例如另一个标签页）：创建接口的重复错误按跳过处理。 */
+function isDuplicateCreateError(message) {
+    return /已经被占用|已经有叫/.test(String(message || ""));
+}
+
+/** 网络错误 / 401 / 5xx 时整批停下；单行 400 只算这一行失败。 */
+function isFatalImportError(err) {
+    return !err?.status || err.status === 401 || err.status >= 500;
+}
+
+async function importBatchRow(row) {
+    if (row.error) {
+        recordBatchFailure(row, row.error);
+        return;
+    }
+    if (row.skip) {
+        batchImportStats.value.skipped += 1;
+        return;
+    }
+    const cover = batchImportCoverFiles.value.get(
+        String(row.cover || "").toLowerCase(),
+    );
+    if (!cover) {
+        recordBatchFailure(row, `封面文件不存在：${row.cover || "（空）"}`);
+        return;
+    }
+    if (!BATCH_COVER_EXTENSIONS.has(extensionOfCover(cover.name))) {
+        recordBatchFailure(row, "封面仅支持 jpg、png、gif、webp 图片。");
+        return;
+    }
+    const data = new FormData();
+    data.append("name", row.name);
+    data.append("cartridge_id", row.cartridge_id);
+    data.append("description", "");
+    data.append("body_game_type", batchImportType.value);
+    data.append("cover", cover);
+    if (row.cover_type) {
+        data.append("cover_type", row.cover_type);
+    }
+    try {
+        await createManageGameAPI(data, { silent: true });
+        batchImportStats.value.success += 1;
+    } catch (err) {
+        if (isDuplicateCreateError(err?.message)) {
+            batchImportStats.value.skipped += 1;
+            return;
+        }
+        if (isFatalImportError(err)) {
+            throw err;
+        }
+        recordBatchFailure(row, err?.message || "创建失败");
+    }
+}
+
+async function startBatchImport() {
+    if (!batchImportCanStart.value) {
+        return;
+    }
+    batchImporting.value = true;
+    batchImportFinished.value = false;
+    batchImportError.value = "";
+    batchImportDone.value = 0;
+    batchImportTotal.value = 0;
+    batchImportStats.value = { success: 0, failed: 0, skipped: 0, unprocessed: 0 };
+    batchImportFailures.value = [];
+    try {
+        const payload = new FormData();
+        payload.append("game_type", batchImportType.value);
+        payload.append("meta", batchImportMetaFile.value);
+        const result = await prepareManageImportAPI(payload);
+        const rows = result?.rows || [];
+        batchImportTotal.value = rows.length;
+        if (!rows.length) {
+            batchImportError.value = "meta.csv 没有可导入的数据行。";
+            return;
+        }
+        for (const row of rows) {
+            try {
+                await importBatchRow(row);
+            } catch (err) {
+                recordBatchFailure(row, err?.message || "导入已停止。");
+                batchImportDone.value += 1;
+                batchImportStats.value.unprocessed =
+                    batchImportTotal.value - batchImportDone.value;
+                batchImportError.value =
+                    err?.message || "导入已停止，请检查网络后重试。";
+                break;
+            }
+            batchImportDone.value += 1;
+        }
+        batchImportFinished.value = true;
+    } catch (err) {
+        batchImportError.value = err?.message || "导入失败，请稍后重试。";
+    } finally {
+        batchImporting.value = false;
+        if (batchImportStats.value.success > 0) {
+            await reload();
+        }
     }
 }
 
@@ -1913,16 +2246,18 @@ async function onSave() {
         ElMessage.warning("请填写卡带 ID");
         return;
     }
-    if (!hasBodySource.value) {
-        ElMessage.warning("请选择游戏本体文件，或点「网络上传」填下载地址");
-        return;
-    }
-    if (!bodySourceType.value) {
-        ElMessage.warning("无法识别游戏本体格式，请更换文件或检查下载地址");
-        return;
-    }
-    if (bodyTypeCandidates.value.length > 1 && !form.gameType) {
-        ElMessage.warning("这些文件对应多个机种，请选择游戏类型");
+    if (hasBodySource.value) {
+        if (!bodySourceType.value) {
+            ElMessage.warning("无法识别游戏本体格式，请更换文件或检查下载地址");
+            return;
+        }
+        if (bodyTypeCandidates.value.length > 1 && !form.gameType) {
+            ElMessage.warning("这些文件对应多个机种，请选择游戏类型");
+            return;
+        }
+    } else if (!form.gameType) {
+        // 没有本体时类型是唯一必选项：条目要靠它归入机种区块
+        ElMessage.warning("请选择游戏类型");
         return;
     }
 
@@ -2287,6 +2622,105 @@ onBeforeUnmount(() => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+/* 批量导入弹窗 */
+.game-batch {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.game-batch__tip {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #64748b;
+}
+
+.game-batch__field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.game-batch__label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+}
+
+.game-batch__type {
+    width: 100%;
+}
+
+.game-batch__dir {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.game-batch__dir-name {
+    min-width: 0;
+    overflow: hidden;
+    font-size: 13px;
+    color: #334155;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.game-batch__dir-name.is-empty {
+    color: #94a3b8;
+}
+
+.game-batch__error {
+    margin: 0;
+    font-size: 13px;
+    color: #dc2626;
+}
+
+.game-batch__progress {
+    margin-top: 2px;
+}
+
+.game-batch__status {
+    margin: 0;
+    font-size: 12px;
+    color: #64748b;
+}
+
+.game-batch__stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    font-size: 13px;
+    color: #475569;
+}
+
+.game-batch__stat--ok {
+    color: #16a34a;
+    font-weight: 600;
+}
+
+.game-batch__failures {
+    max-height: 120px;
+    margin: 0;
+    padding: 10px 12px;
+    overflow: auto;
+    list-style: none;
+    background: #f8fafc;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #64748b;
+}
+
+.game-batch__actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    margin-top: 4px;
 }
 
 /* 搬运游戏弹窗 */

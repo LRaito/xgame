@@ -1,7 +1,16 @@
 <template>
-    <router-link
-        :to="game.path"
+    <!-- 有本体时是真链接；没有本体时退化成 div，点击只通知页面弹「请先上传游戏本体」，
+         避免 RouterLink 内部导航先于外层 click 监听起来（preventDefault 拦不住 router.push） -->
+    <component
+        :is="playable ? RouterLink : 'div'"
+        :to="playable ? game.path : undefined"
         class="game-card"
+        :class="{ 'game-card--missing': !playable }"
+        :role="playable ? undefined : 'button'"
+        :tabindex="playable ? undefined : 0"
+        @click="onCardClick"
+        @keydown.enter="onBlockedKey"
+        @keydown.space="onBlockedKey"
         @contextmenu.prevent="emit('contextmenu', $event)"
     >
         <!-- 封面渲染按类型走（Flash 光盘 / GB-GBC 卡带 / 普通封面），与详情图片栏、
@@ -33,11 +42,12 @@
                 </template>
             </div>
         </div>
-    </router-link>
+    </component>
 </template>
 
 <script setup>
 import { computed } from "vue";
+import { RouterLink } from "vue-router";
 import {
     PROGRESS_COMPLETED,
     PROGRESS_IN_PROGRESS,
@@ -54,8 +64,27 @@ const props = defineProps({
     aspect: { type: String, default: "" },
 });
 
-// 右键交回给页面（游戏中心用它弹「设置进度 / 设置时长」菜单）
-const emit = defineEmits(["contextmenu"]);
+// 右键交回给页面（游戏中心用它弹「设置进度 / 设置时长」菜单）；
+// 无本体时单击不发跳转，改发 missing-body 让页面提示先上传。
+const emit = defineEmits(["contextmenu", "missing-body"]);
+
+const playable = computed(() => Boolean(props.game.game_path));
+
+function onCardClick(event) {
+    if (playable.value) {
+        return;
+    }
+    event.preventDefault();
+    emit("missing-body", props.game);
+}
+
+function onBlockedKey(event) {
+    if (playable.value) {
+        return;
+    }
+    event.preventDefault();
+    emit("missing-body", props.game);
+}
 
 const playSeconds = computed(() => Number(props.game.play_seconds) || 0);
 
@@ -82,6 +111,11 @@ const showMeta = computed(
     min-width: 0;
     text-decoration: none;
     color: inherit;
+}
+
+/* 无本体时根节点是 div：补上可点击的手型 */
+.game-card--missing {
+    cursor: pointer;
 }
 
 /* 封面框：比例由 GameCover 按 aspect 内联设置，这里只管 hover 抬起。

@@ -41,6 +41,24 @@ export async function confirmAction(message, options = {}) {
     }
 }
 
+/** 单按钮提示框（没有取消项）。用于「请先上传游戏本体」这类只告知、不需选择的情况。 */
+export async function noticeAction(message, options = {}) {
+    const { title = "提示", confirmText = "知道了", type = "warning", ...rest } = options;
+    try {
+        await ElMessageBox.alert(message, title, {
+            ...BASE,
+            ...rest,
+            type,
+            appendTo: overlayAppendTarget(),
+            confirmButtonText: confirmText,
+            showCancelButton: false,
+            confirmButtonClass: "el-button--secondary",
+        });
+    } catch {
+        // 关闭（X / Esc）也当作正常结束
+    }
+}
+
 /** 删除类确认：红色「删除」按钮。 */
 export function dangerConfirm(message, options = {}) {
     return confirmAction(message, {

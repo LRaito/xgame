@@ -566,8 +566,7 @@ def test_ranking_routes_are_not_shadowed(ranked, logged_in):
 def _make_game(app, name, cartridge_id, *, game_type="nes", game_path=None):
     """往平台库存里插一行游戏（本组用例不碰真实文件，直接插行最省事）。
 
-    默认给一个非空的本体路径：关联只认「有本体」的游戏（与游戏中心列表同口径），
-    要测「没本体就不链」时显式传 `game_path=""`。
+    默认给一个非空的本体路径；关联不区分有无本体，要测无本体关联时显式传 `game_path=""`。
     """
     with Session(app.state.engine) as session:
         row = Game(
@@ -667,13 +666,14 @@ def test_ranking_link_ignores_ids_that_are_not_valid_cartridge_ids(
     assert page["items"][0]["path"] is None
 
 
-def test_ranking_skips_games_without_body(ranked, logged_in, app):
-    """没有本体的条目不给链接（点进去只会 404，与游戏中心列表同口径）。"""
+def test_ranking_links_games_without_body(ranked, logged_in, app):
+    """没有本体的条目同样关联；has_body=False 供前端拦下跳转并提示先上传。"""
     _make_game(app, "本体丢了的游戏", "NES-SM", game_path="")
 
-    page = _get(logged_in, RANKING_URL)
+    item = _get(logged_in, RANKING_URL)["items"][0]
 
-    assert page["items"][0]["path"] is None
+    assert item["path"] is not None
+    assert item["has_body"] is False
 
 
 def test_ranking_unlinks_after_game_deleted(ranked, logged_in, app):

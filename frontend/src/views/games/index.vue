@@ -154,6 +154,7 @@
                             :game="game"
                             :aspect="CARD_ASPECT_RAIL"
                             @contextmenu="openMenu($event, game)"
+                            @missing-body="onGameBodyMissing"
                         />
                     </div>
                 </section>
@@ -177,6 +178,7 @@
                             :game="game"
                             :style="sectionCardStyle(sec, index)"
                             @contextmenu="openMenu($event, game)"
+                            @missing-body="onGameBodyMissing"
                         />
                     </div>
                 </section>
@@ -273,6 +275,7 @@ import {
 import { gameTypeLabel } from "@/constants/gameTypes";
 import { useGameTypesStore } from "@/store/gameTypes";
 import { ensureGameAssetSw } from "@/utils/gameAssetCache";
+import { noticeAction } from "@/utils/confirm";
 import { playSecondsToHours } from "@/utils/gamePlaytime";
 import AppDialog from "@components/common/AppDialog.vue";
 import GameCard from "@components/games/GameCard.vue";
@@ -525,6 +528,11 @@ function openMenu(event, game) {
 
 function closeMenu() {
     menu.value = { ...menu.value, visible: false };
+}
+
+/** 无本体卡片：不跳播放页，只提示先上传（本体由游戏管理页补传）。 */
+function onGameBodyMissing() {
+    noticeAction("请先上传游戏本体");
 }
 
 // 右键「详情」：弹窗自己去按 id 取详情（列表载荷里没有 CRC32、创建时间这些字段）

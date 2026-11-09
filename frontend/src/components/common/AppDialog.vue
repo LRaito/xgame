@@ -5,7 +5,8 @@
         :width="width"
         :align-center="alignCenter"
         :close-on-click-modal="false"
-        :close-on-press-escape="true"
+        :close-on-press-escape="!closeDisabled"
+        :show-close="!closeDisabled"
         destroy-on-close
         @close="close"
     >
@@ -43,7 +44,7 @@
 </template>
 
 <script setup>
-defineProps({
+const props = defineProps({
     modelValue: { type: Boolean, default: false },
     title: { type: String, default: "" },
     width: { type: String, default: "480px" },
@@ -57,11 +58,16 @@ defineProps({
     confirmDisabled: { type: Boolean, default: false },
     confirmLoading: { type: Boolean, default: false },
     alignCenter: { type: Boolean, default: false },
+    // 长任务进行中禁止关闭（隐藏右上角 X、屏蔽 Esc 与 close 事件）
+    closeDisabled: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["update:modelValue", "confirm"]);
 
 function close() {
+    if (props.closeDisabled) {
+        return;
+    }
     emit("update:modelValue", false);
 }
 </script>
