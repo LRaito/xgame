@@ -93,19 +93,19 @@
             >
                 <!-- 统计块：进度 + 关键词联动（类型下拉不参与），块内纯数字无单位 -->
                 <div class="games-stats">
-                    <div class="games-stat" :class="{ 'games-stat--dim': !statsData.total }">
+                    <div class="games-stat">
                         <div class="games-stat__v">{{ statsData.total }}</div>
                         <div class="games-stat__l">游戏总数</div>
                     </div>
-                    <div class="games-stat" :class="{ 'games-stat--dim': !statsData.completed }">
+                    <div class="games-stat">
                         <div class="games-stat__v">{{ statsData.completed }}</div>
                         <div class="games-stat__l">已通关</div>
                     </div>
-                    <div class="games-stat" :class="{ 'games-stat--dim': !statsData.inProgress }">
+                    <div class="games-stat">
                         <div class="games-stat__v">{{ statsData.inProgress }}</div>
                         <div class="games-stat__l">进行中</div>
                     </div>
-                    <div class="games-stat" :class="{ 'games-stat--dim': !statsData.hours }">
+                    <div class="games-stat">
                         <div class="games-stat__v">{{ statsData.hours }}</div>
                         <div class="games-stat__l">累计小时数</div>
                     </div>
@@ -839,11 +839,6 @@ onBeforeUnmount(() => {
     font-size: 11.5px;
     letter-spacing: 2px;
     color: #8593ab;
-}
-
-/* 零值置灰，标注「这里没数据」而不是误导成 0 成绩 */
-.games-stat--dim .games-stat__v {
-    color: #bcc8da;
 }
 
 /* 顶部筛选工具栏：与游戏管理页一致的类型下拉 + 搜索框 */
