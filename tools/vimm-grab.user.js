@@ -1,13 +1,14 @@
 // ==UserScript==
 // @name         Vimm's Lair 排行榜抓取
 // @namespace    https://vimm.net/
-// @version      1.0.0
-// @description  按名次区间抓取 Vimm's Lair 游戏的条目 ID、卡带 ID 和封面；检测到人机验证时暂停并打开页面
+// @version      1.2.0
+// @description  按机种与名次区间抓取 Vimm's Lair 游戏的条目 ID、卡带 ID 和封面，可指定保存目录；检测到人机验证时暂停并打开页面
 // @match        https://vimm.net/*
 // @grant        GM_openInTab
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_registerMenuCommand
+// @grant        unsafeWindow
 // @run-at       document-idle
 // @noframes
 // ==/UserScript==
@@ -23,8 +24,10 @@
  *    点标题栏的“—”可收起/展开。
  *
  * 3. 开始抓取
+ *    - 先在“机种”下拉框选择类型（默认 NES）。
+ *    - 可选：点“选择目录”，指定封面与 meta.csv 的保存目录。
  *    - 设置“开始”“结束”名次（按排行榜名次，从 1 开始）。
- *    - 点“开始”。脚本会读取排行榜，逐条抓取：
+ *    - 点“开始”。脚本会读取该机种的排行榜，逐条抓取：
  *      条目 ID（如 834）-> 卡带 ID（如 NES-SM-USA）-> 下载封面（如 NES-SM-USA.jpg）。
  *    - 每处理完一个游戏会随机等待 1~5 秒，降低对方压力。
  *
@@ -41,22 +44,30 @@
  *
  * 6. 记录与去重
  *    - 每成功一个游戏立即写入 Tampermonkey 存储（相当于逐行落盘）。
+ *    - 指定目录后，每成功一个游戏还会立即写入该目录的 meta.csv。
+ *    - 每次点“开始”都会重新读取目标目录的 meta.csv，刷新已抓记录；
+ *      可手动编辑该 CSV 来增删去重项；CSV 不存在时按空记录处理。
  *    - 去重依据是 CSV 第一列（Vimm 条目 ID，如 834），名次变化不会导致重复。
- *    - 点“导出CSV”下载 meta.csv，列为 number,id,name,cart：
+ *    - 点“导出CSV”下载或写入 meta.csv，列为 number,id,name,cart：
  *        number = Vimm 条目 ID（如 834）
  *        id     = 卡带 ID（如 NES-SM-USA）
  *        name   = 游戏名
  *        cart   = 封面文件名（如 NES-SM-USA.jpg）
  *    - 菜单命令“清空已抓取记录”可重置去重数据。
  *
- * 7. 封面下载
- *    - 封面通过 https://vimm.net/image.php 以 blob 方式下载，保存到浏览器默认下载目录。
- *    - 首次批量下载时浏览器可能询问“是否允许下载多个文件”，请选择允许。
+ * 7. 封面保存
+ *    - 未指定目录时：封面通过 https://vimm.net/image.php 以 blob 方式下载到
+ *      浏览器默认下载目录；首次批量下载时可能询问“是否允许下载多个文件”，请选择允许。
+ *    - 指定目录时：封面直接写入该目录，不再弹出下载询问。
+ *    - 目录功能依赖 File System Access API，请使用 Chrome / Edge 等浏览器。
  *
  * 8. 可修改的配置
- *    - 文件下方“配置”区域：SYSTEM（系统代号）、SERIAL_PREFIX（卡带 ID 前缀）、
+ *    - 文件下方“配置”区域：SYSTEMS（机种代号与卡带 ID 前缀）、
  *      SLEEP_MIN / SLEEP_MAX（随机等待范围，单位毫秒）。
- *    - 目前默认适配 NES；换其他系统时请同时调整 SYSTEM 和 SERIAL_PREFIX。
+ *    - code 直接用于排行榜接口；prefixes 用于从详情页识别卡带 ID。
+ *      prefixes 为空数组时，接受“Cart ID / Serial”标签后的任意编号。
+ *    - 若某个机种抓不到卡带 ID，按实际页面补上该机种的 prefixes 即可。
+ *    - 目标目录选择会记住；浏览器重启后首次点“开始”时需重新授权写入。
  *
  * 9. 该网站支持类型
  *    - Atari2600,Atari5200,NES,SMS,Atari7800,TG16,Genesis,TGCD,SNES,CDi,SegaCD,
@@ -72,8 +83,52 @@
   'use strict';
 
   /* ================= 配置 ================= */
-  const SYSTEM = 'NES';            // 排行榜系统代号
-  const SERIAL_PREFIX = 'NES';     // 卡带 ID 前缀
+  // 机种代号用于排行榜接口，prefixes 用于从详情页识别卡带 ID。
+  // prefixes 为空数组时，接受详情页标签后的任意编号。
+  const SYSTEMS = [
+    { code: 'Atari2600', prefixes: ['CX'] },
+    { code: 'Atari5200', prefixes: ['CX'] },
+    { code: 'NES', prefixes: ['NES'] },
+    { code: 'SMS', prefixes: [] },
+    { code: 'Atari7800', prefixes: ['CX'] },
+    { code: 'TG16', prefixes: ['TGX'] },
+    { code: 'Genesis', prefixes: ['MK', 'GM'] },
+    { code: 'TGCD', prefixes: [] },
+    { code: 'SNES', prefixes: ['SNS'] },
+    { code: 'CDi', prefixes: [] },
+    { code: 'SegaCD', prefixes: ['T'] },
+    { code: 'Jaguar', prefixes: ['J'] },
+    { code: '32X', prefixes: ['MK'] },
+    { code: 'Saturn', prefixes: ['T'] },
+    { code: 'PS1', prefixes: ['SL', 'SC'] },
+    { code: 'JaguarCD', prefixes: [] },
+    { code: 'N64', prefixes: ['NUS'] },
+    { code: 'Dreamcast', prefixes: ['T'] },
+    { code: 'PS2', prefixes: ['SL', 'SC'] },
+    { code: 'GameCube', prefixes: ['DOL'] },
+    { code: 'Xbox', prefixes: [] },
+    { code: 'Xbox360', prefixes: [] },
+    { code: 'X360-D', prefixes: [] },
+    { code: 'PS3', prefixes: ['BL', 'BC'] },
+    { code: 'Wii', prefixes: ['RVL'] },
+    { code: 'WiiWare', prefixes: [] },
+    { code: 'WiiU', prefixes: ['WUP'] },
+    { code: 'GB', prefixes: ['DMG'] },
+    { code: 'Lynx', prefixes: ['PA', 'LX'] },
+    { code: 'GG', prefixes: [] },
+    { code: 'VB', prefixes: ['VUE'] },
+    { code: 'GBC', prefixes: ['CGB'] },
+    { code: 'GBA', prefixes: ['AGB'] },
+    { code: 'DS', prefixes: ['NTR'] },
+    { code: 'PSP', prefixes: ['UL', 'UC', 'NP'] },
+    { code: '3DS', prefixes: ['CTR'] },
+  ];
+  const DEFAULT_SYSTEM = 'NES';
+  const SYSTEM_KEY = 'vimm_grab_system_v1';
+  const CSV_NAME = 'meta.csv';
+  const DIR_DB = 'vimm_grab_db';
+  const DIR_STORE = 'handles';
+  const DIR_KEY = 'target_dir';
   const STORE_KEY = 'vimm_grab_results_v1';
   const SERIAL_KEY_PREFIX = 'vimm_grab_serial_';
   const SLEEP_MIN = 1000;          // 每个游戏处理完后的最短等待（毫秒）
@@ -107,20 +162,34 @@
     ].some((marker) => low.includes(marker));
   }
 
-  function extractSerial(html, prefix) {
+  function extractSerial(html, prefixes) {
+    const list = (prefixes || []).map((prefix) => prefix.toUpperCase());
+    const matchPrefix = (value) =>
+      !list.length || list.some((prefix) => value.toUpperCase().startsWith(prefix));
+
     const labelRe = /cart\s*id|cartridge\s*id|serial|product\s*id/gi;
     let match;
     while ((match = labelRe.exec(html)) !== null) {
       const start = match.index + match[0].length;
-      const windowText = html.slice(start, start + 800);
-      const found = [...windowText.matchAll(SERIAL_RE)]
+      const windowHtml = html.slice(start, start + 800);
+
+      // 优先匹配带横杠的编号（如 NES-SM-USA、SLUS-00594）
+      const found = [...windowHtml.matchAll(SERIAL_RE)]
         .map((item) => item[1])
-        .filter((serial) => serial.startsWith(prefix + '-'));
+        .filter(matchPrefix);
       if (found.length) return found[0];
+
+      // 再兼容 CX2613、7006 这类没有横杠的编号：取标签后第一个含数字的词
+      const text = windowHtml.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ');
+      const loose = [...text.matchAll(/\b([A-Z0-9][A-Z0-9-]{1,29})\b/g)]
+        .map((item) => item[1])
+        .filter((value) => /\d/.test(value) && matchPrefix(value));
+      if (loose.length) return loose[0];
     }
+
     const all = [...html.matchAll(SERIAL_RE)]
       .map((item) => item[1])
-      .filter((serial) => serial.startsWith(prefix + '-'));
+      .filter(matchPrefix);
     return all[0] || null;
   }
 
@@ -204,6 +273,150 @@
     GM_setValue(STORE_KEY, JSON.stringify(rows));
   }
 
+  /* ================= CSV ================= */
+  function csvEscape(value) {
+    const text = String(value == null ? '' : value);
+    return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+  }
+
+  function buildCsv(rows) {
+    const lines = ['number,id,name,cart'];
+    for (const row of rows) {
+      lines.push([row.number, row.id, row.name, row.cart].map(csvEscape).join(','));
+    }
+    return lines.join('\r\n') + '\r\n';
+  }
+
+  function parseCsv(text) {
+    const rows = [];
+    let row = [];
+    let field = '';
+    let quoted = false;
+    for (let i = 0; i < text.length; i += 1) {
+      const ch = text[i];
+      if (quoted) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') {
+            field += '"';
+            i += 1;
+          } else {
+            quoted = false;
+          }
+        } else {
+          field += ch;
+        }
+      } else if (ch === '"') {
+        quoted = true;
+      } else if (ch === ',') {
+        row.push(field);
+        field = '';
+      } else if (ch === '\r') {
+        // 忽略，统一按 \n 换行
+      } else if (ch === '\n') {
+        row.push(field);
+        field = '';
+        rows.push(row);
+        row = [];
+      } else {
+        field += ch;
+      }
+    }
+    if (field.length || row.length) {
+      row.push(field);
+      rows.push(row);
+    }
+    return rows;
+  }
+
+  function rowsFromCsv(text) {
+    const raw = String(text || '').replace(/^\uFEFF/, '');
+    const table = parseCsv(raw).filter((row) => row.some((cell) => cell.trim()));
+    if (!table.length) return [];
+    const header = table[0].map((cell) => cell.trim().toLowerCase());
+    const numberIndex = header.indexOf('number');
+    if (numberIndex < 0) return null;
+    const idIndex = header.indexOf('id');
+    const nameIndex = header.indexOf('name');
+    const cartIndex = header.indexOf('cart');
+    return table
+      .slice(1)
+      .map((row) => ({
+        number: (row[numberIndex] || '').trim(),
+        id: idIndex >= 0 ? (row[idIndex] || '').trim() : '',
+        name: nameIndex >= 0 ? (row[nameIndex] || '').trim() : '',
+        cart: cartIndex >= 0 ? (row[cartIndex] || '').trim() : '',
+      }))
+      .filter((row) => row.number);
+  }
+
+  /* ================= 目标目录 ================= */
+  let dirHandle = null;
+
+  function openDirDb() {
+    return new Promise((resolve, reject) => {
+      if (!window.indexedDB) {
+        reject(new Error('浏览器不支持 IndexedDB'));
+        return;
+      }
+      const request = window.indexedDB.open(DIR_DB, 1);
+      request.onupgradeneeded = () => {
+        if (!request.result.objectStoreNames.contains(DIR_STORE)) {
+          request.result.createObjectStore(DIR_STORE);
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error || new Error('IndexedDB 打开失败'));
+    });
+  }
+
+  async function dirDbGet(key) {
+    const db = await openDirDb();
+    return new Promise((resolve, reject) => {
+      const request = db.transaction(DIR_STORE, 'readonly').objectStore(DIR_STORE).get(key);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+  }
+
+  async function dirDbSet(key, value) {
+    const db = await openDirDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DIR_STORE, 'readwrite');
+      tx.objectStore(DIR_STORE).put(value, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function dirDbDelete(key) {
+    const db = await openDirDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(DIR_STORE, 'readwrite');
+      tx.objectStore(DIR_STORE).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  async function writeFileToDir(name, data) {
+    if (!dirHandle) throw new Error('未选择目标目录');
+    const handle = await dirHandle.getFileHandle(name, { create: true });
+    const writable = await handle.createWritable();
+    await writable.write(data);
+    await writable.close();
+  }
+
+  async function writeCsvToDir(rows) {
+    await writeFileToDir(CSV_NAME, buildCsv(rows));
+  }
+
+  async function readCsvFromDir() {
+    if (!dirHandle) throw new Error('未选择目标目录');
+    const handle = await dirHandle.getFileHandle(CSV_NAME);
+    const file = await handle.getFile();
+    return rowsFromCsv(await file.text());
+  }
+
   /* ================= 界面 ================= */
   const host = document.createElement('div');
   host.id = 'vimm-grab-host';
@@ -252,6 +465,18 @@
         color: #fff;
         border-radius: 6px;
         padding: 3px 6px;
+      }
+      select {
+        background: #11111a;
+        border: 1px solid #3a3a55;
+        color: #fff;
+        border-radius: 6px;
+        padding: 3px 6px;
+        font: inherit;
+      }
+      #dirName {
+        color: #b9b9cc;
+        word-break: break-all;
       }
       button {
         background: #2f2f4a;
@@ -302,6 +527,14 @@
       </div>
       <div id="body">
         <div class="row">
+          <label>机种 <select id="system"></select></label>
+        </div>
+        <div class="row">
+          <button id="pickDir">选择目录</button>
+          <button id="clearDir" disabled>取消目录</button>
+          <span id="dirName">未选择（封面走浏览器下载）</span>
+        </div>
+        <div class="row">
           <label>开始 <input id="start" type="number" min="1" step="1" value="1"></label>
           <label>结束 <input id="end" type="number" min="1" step="1" value="10"></label>
         </div>
@@ -320,6 +553,10 @@
 
   const $ = (selector) => shadow.querySelector(selector);
   const bodyEl = $('#body');
+  const systemSelect = $('#system');
+  const pickDirBtn = $('#pickDir');
+  const clearDirBtn = $('#clearDir');
+  const dirNameEl = $('#dirName');
   const startInput = $('#start');
   const endInput = $('#end');
   const runBtn = $('#run');
@@ -330,6 +567,80 @@
   const progressEl = $('#progress');
   const statusEl = $('#status');
   const logEl = $('#log');
+
+  for (const system of SYSTEMS) {
+    const option = document.createElement('option');
+    option.value = system.code;
+    option.textContent = system.code;
+    systemSelect.appendChild(option);
+  }
+  const savedSystem = GM_getValue(SYSTEM_KEY, DEFAULT_SYSTEM);
+  systemSelect.value = SYSTEMS.some((system) => system.code === savedSystem)
+    ? savedSystem
+    : DEFAULT_SYSTEM;
+  systemSelect.addEventListener('change', () => GM_setValue(SYSTEM_KEY, systemSelect.value));
+
+  function currentSystem() {
+    return SYSTEMS.find((system) => system.code === systemSelect.value)
+      || SYSTEMS.find((system) => system.code === DEFAULT_SYSTEM);
+  }
+
+  function directoryPicker() {
+    if (typeof window.showDirectoryPicker === 'function') {
+      return window.showDirectoryPicker.bind(window);
+    }
+    if (typeof unsafeWindow !== 'undefined'
+      && typeof unsafeWindow.showDirectoryPicker === 'function') {
+      return unsafeWindow.showDirectoryPicker.bind(unsafeWindow);
+    }
+    return null;
+  }
+
+  function updateDirLabel() {
+    if (dirHandle) {
+      dirNameEl.textContent = `目录：${dirHandle.name}`;
+      dirNameEl.title = '封面与 meta.csv 会保存到此目录';
+    } else {
+      dirNameEl.textContent = '未选择（封面走浏览器下载）';
+      dirNameEl.title = '';
+    }
+    clearDirBtn.disabled = !dirHandle;
+  }
+
+  async function ensureDirectoryPermission() {
+    if (!dirHandle) return true;
+    try {
+      const status = await dirHandle.requestPermission({ mode: 'readwrite' });
+      if (status !== 'granted') {
+        log('没有目标目录的写入权限，请重新选择目录', 'fail');
+        return false;
+      }
+      return true;
+    } catch (e) {
+      log(`目录权限请求失败：${e.message}`, 'fail');
+      return false;
+    }
+  }
+
+  async function refreshDoneFromDirectory() {
+    if (!dirHandle) return;
+    try {
+      const rows = await readCsvFromDir();
+      if (rows === null) {
+        log(`${CSV_NAME} 缺少 number 列，沿用现有记录`, 'warn');
+        return;
+      }
+      saveRows(rows);
+      log(`已从 ${dirHandle.name}/${CSV_NAME} 刷新 ${rows.length} 条已抓记录`, 'info');
+    } catch (e) {
+      if (e && e.name === 'NotFoundError') {
+        saveRows([]);
+        log(`目标目录中没有 ${CSV_NAME}，已抓记录按空处理`, 'info');
+        return;
+      }
+      log(`读取 ${CSV_NAME} 失败：${e.message}`, 'fail');
+    }
+  }
 
   const state = { running: false, paused: false, total: 0, completed: 0 };
   let resumeResolvers = [];
@@ -353,6 +664,9 @@
 
   function updateButtons() {
     runBtn.disabled = state.running;
+    systemSelect.disabled = state.running;
+    pickDirBtn.disabled = state.running || !directoryPicker();
+    clearDirBtn.disabled = state.running || !dirHandle;
     pauseBtn.disabled = !state.running || state.paused;
     resumeBtn.disabled = !state.running || !state.paused;
   }
@@ -384,11 +698,11 @@
   }
 
   /* ================= 数据抓取 ================= */
-  async function loadRanking(count) {
+  async function loadRanking(count, systemCode) {
     const games = [];
     const seen = new Set();
     for (let page = 1; games.length < count && page <= 100; page += 1) {
-      const url = `/vault/ajax/loadTopTen.php?system=${encodeURIComponent(SYSTEM)}&page=${page}`;
+      const url = `/vault/ajax/loadTopTen.php?system=${encodeURIComponent(systemCode)}&page=${page}`;
       const res = await fetch(url, { credentials: 'same-origin' });
       if (!res.ok) throw new Error(`排行榜 HTTP ${res.status}`);
       const text = await res.text();
@@ -413,7 +727,7 @@
     return games.slice(0, count);
   }
 
-  async function fetchSerial(game) {
+  async function fetchSerial(game, prefixes) {
     const cached = GM_getValue(SERIAL_KEY_PREFIX + game.id, '');
     if (cached) return String(cached);
 
@@ -427,7 +741,7 @@
     if (!res.ok && res.status !== 404) {
       throw new Error(`详情页 HTTP ${res.status}`);
     }
-    const serial = extractSerial(text, SERIAL_PREFIX);
+    const serial = extractSerial(text, prefixes);
     if (!serial) throw new Error('详情页中未找到卡带 ID');
     GM_setValue(SERIAL_KEY_PREFIX + game.id, serial);
     return serial;
@@ -454,7 +768,12 @@
 
     const filename = serial + ext;
     const mime = contentType.split(';')[0].trim() || 'image/' + ext.slice(1);
-    downloadBlob(new Blob([buf], { type: mime }), filename);
+    const blob = new Blob([buf], { type: mime });
+    if (dirHandle) {
+      await writeFileToDir(filename, blob);
+    } else {
+      downloadBlob(blob, filename);
+    }
     return { filename, bytes: buf.byteLength };
   }
 
@@ -467,34 +786,32 @@
     }
   }
 
-  function exportCsv() {
+  async function exportCsv() {
     const rows = loadRows();
-    const escape = (value) => {
-      const text = String(value == null ? '' : value);
-      return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
-    };
-    const lines = ['number,id,name,cart'];
-    for (const row of rows) {
-      lines.push([row.number, row.id, row.name, row.cart].map(escape).join(','));
+    const csv = buildCsv(rows);
+    if (dirHandle) {
+      try {
+        await writeFileToDir(CSV_NAME, csv);
+        log(`已写入 ${dirHandle.name}/${CSV_NAME}（${rows.length} 条）`, 'info');
+      } catch (e) {
+        log(`写入 ${CSV_NAME} 失败：${e.message}`, 'fail');
+      }
+      return;
     }
-    downloadBlob(
-      new Blob([lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }),
-      'meta.csv'
-    );
-    log(`已导出 meta.csv（${rows.length} 条）`, 'info');
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), CSV_NAME);
+    log(`已导出 ${CSV_NAME}（${rows.length} 条）`, 'info');
   }
 
   /* ================= 主流程 ================= */
-  async function runRange(start, end) {
+  async function runRange(start, end, system) {
     state.running = true;
     state.completed = 0;
     state.total = Math.max(0, end - start + 1);
     setPaused(false);
     setProgress(0);
     updateButtons();
-    logEl.textContent = '';
     setStatus('读取排行榜...');
-    log(`开始：${SYSTEM} 第 ${start}~${end} 名`, 'info');
+    log(`开始：${system.code} 第 ${start}~${end} 名`, 'info');
     log('提示：浏览器若询问是否允许下载多个文件，请选择允许。', 'info');
 
     const rows = loadRows();
@@ -503,7 +820,7 @@
 
     let games;
     try {
-      games = await loadRanking(end);
+      games = await loadRanking(end, system.code);
     } catch (e) {
       log(`读取排行榜失败：${e.message}`, 'fail');
       state.running = false;
@@ -552,7 +869,7 @@
         await waitIfPaused();
         setStatus(`抓取中：${label}`);
         try {
-          serial = await fetchSerial(game);
+          serial = await fetchSerial(game, system.prefixes);
         } catch (e) {
           if (e && e.blocked) {
             // 不自动重试：打开页面让用户手动验证，然后暂停等待用户点“继续”
@@ -586,8 +903,15 @@
         });
         saveRows(rows);
         done.add(String(game.id));
+        if (dirHandle) {
+          try {
+            await writeCsvToDir(rows);
+          } catch (e) {
+            log(`写入 ${CSV_NAME} 失败：${e.message}`, 'warn');
+          }
+        }
         ok += 1;
-        log(`[成功] ${label} | 卡带ID ${serial} | ${filename} (${bytes} 字节)`, 'ok');
+        log(`[成功] ${label} | 卡带ID ${serial} | ${filename} (${bytes} 字节${dirHandle ? '，已保存到目录' : ''})`, 'ok');
       } catch (e) {
         fail += 1;
         log(`[失败] ${label} | ${e.message}`, 'fail');
@@ -613,10 +937,11 @@
     const vaultId = match[1];
     if (GM_getValue(SERIAL_KEY_PREFIX + vaultId, '')) return;
 
+    const prefixes = currentSystem().prefixes;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const html = document.documentElement.innerHTML;
       if (!looksBlocked(html)) {
-        const serial = extractSerial(html, SERIAL_PREFIX);
+        const serial = extractSerial(html, prefixes);
         if (serial) {
           GM_setValue(SERIAL_KEY_PREFIX + vaultId, serial);
           log(`已记录条目 ${vaultId} 的卡带 ID：${serial}。回到抓取标签点“继续”。`, 'info');
@@ -628,14 +953,22 @@
   }
 
   /* ================= 事件绑定 ================= */
-  runBtn.addEventListener('click', () => {
+  runBtn.addEventListener('click', async () => {
     const start = parseInt(startInput.value, 10);
     const end = parseInt(endInput.value, 10);
     if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
       log('名次区间无效：开始必须 >= 1，结束必须 >= 开始', 'warn');
       return;
     }
-    runRange(start, end);
+    if (state.running) return;
+    runBtn.disabled = true;
+    logEl.textContent = '';
+    if (!(await ensureDirectoryPermission())) {
+      updateButtons();
+      return;
+    }
+    await refreshDoneFromDirectory();
+    runRange(start, end, currentSystem());
   });
 
   pauseBtn.addEventListener('click', () => {
@@ -652,7 +985,45 @@
     log('继续', 'info');
   });
 
-  exportBtn.addEventListener('click', exportCsv);
+  exportBtn.addEventListener('click', async () => {
+    if (!(await ensureDirectoryPermission())) return;
+    await exportCsv();
+  });
+
+  pickDirBtn.addEventListener('click', async () => {
+    const picker = directoryPicker();
+    if (!picker) {
+      log('当前浏览器不支持选择目录，请使用 Chrome / Edge', 'warn');
+      return;
+    }
+    try {
+      const handle = await picker({ mode: 'readwrite' });
+      dirHandle = handle;
+      updateDirLabel();
+      updateButtons();
+      log(`已选择目标目录：${handle.name}`, 'info');
+      try {
+        await dirDbSet(DIR_KEY, handle);
+      } catch (e) {
+        log('目录已选中，但浏览器无法记住该选择；刷新页面后需重新选择', 'warn');
+      }
+    } catch (e) {
+      if (e && e.name === 'AbortError') return;
+      log(`选择目录失败：${e.message}`, 'fail');
+    }
+  });
+
+  clearDirBtn.addEventListener('click', async () => {
+    dirHandle = null;
+    updateDirLabel();
+    updateButtons();
+    try {
+      await dirDbDelete(DIR_KEY);
+    } catch (e) {
+      // 忽略清理失败
+    }
+    log('已取消目标目录，封面改回浏览器下载', 'info');
+  });
 
   collapseBtn.addEventListener('click', () => {
     bodyEl.classList.toggle('collapsed');
@@ -660,18 +1031,51 @@
   });
 
   if (typeof GM_registerMenuCommand === 'function') {
-    GM_registerMenuCommand('清空已抓取记录', () => {
-      if (window.confirm('确定清空已抓取记录？此操作不可恢复。')) {
+    GM_registerMenuCommand('清空已抓取记录', async () => {
+      const extra = dirHandle ? '目标目录中的 meta.csv 也会被清空。' : '';
+      if (window.confirm(`确定清空已抓取记录？此操作不可恢复。${extra}`)) {
         saveRows([]);
-        log('已清空已抓取记录', 'info');
+        if (!dirHandle) {
+          log('已清空已抓取记录', 'info');
+          return;
+        }
+        if (!await ensureDirectoryPermission()) {
+          log('已清空内存记录，但目标目录的 meta.csv 未清空', 'warn');
+          return;
+        }
+        try {
+          await writeCsvToDir([]);
+          log('已清空已抓取记录（含 meta.csv）', 'info');
+        } catch (e) {
+          log(`清空 ${CSV_NAME} 失败：${e.message}`, 'fail');
+        }
       }
     });
   }
 
   /* ================= 启动 ================= */
+  updateDirLabel();
   updateButtons();
   setStatus('空闲');
   log('准备就绪：设置名次区间后点“开始”。', 'info');
   log('去重依据为 CSV 第一列（Vimm 条目 ID，如 834）。', 'info');
+
+  if (directoryPicker()) {
+    dirDbGet(DIR_KEY)
+      .then((handle) => {
+        if (!handle) return;
+        dirHandle = handle;
+        updateDirLabel();
+        updateButtons();
+        log(`已恢复目标目录：${handle.name}（点“开始”时会请求写入权限）`, 'info');
+      })
+      .catch(() => {
+        log('读取已保存的目标目录失败，请重新选择目录', 'warn');
+      });
+  } else {
+    pickDirBtn.disabled = true;
+    dirNameEl.textContent = '当前浏览器不支持选择目录';
+  }
+
   cacheSerialFromVaultPage();
 })();
