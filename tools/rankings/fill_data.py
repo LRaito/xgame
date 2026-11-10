@@ -33,9 +33,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+import difflib
 import json
 import os
 import re
+import subprocess
 import sys
 import time
 import unicodedata
@@ -109,6 +111,45 @@ CATALOG_STEMS: dict[str, list[str]] = {
     "lynx": ["lynx"],
     "3do": ["3do"],
 }
+
+# catalog 文件 → 榜单机种（用于从已补全的榜单反填中文名）。
+CATALOG_RANKING_PLATFORM: dict[str, str] = {
+    "nes": "nes",
+    "nes-fds": "nes",
+    "snes": "snes",
+    "snes-sufami-turbo": "snes",
+    "gb": "gb",
+    "gbc": "gb",
+    "gba": "gba",
+    "nds": "nds",
+    "n64": "n64",
+    "vb": "vb",
+    "segaMD": "segaMD",
+    "segaGG": "segaGG",
+    "segaCD": "segaCD",
+    "sega32x": "sega32x",
+    "segaSaturn": "segaSaturn",
+    "psx": "psx",
+    "psp": "psp",
+    "pce": "pce",
+    "pcecd": "pce",
+    "ngp": "ngp",
+    "ws": "ws",
+    "atari2600": "atari2600",
+    "atari5200": "atari5200",
+    "atari7800": "atari7800",
+    "jaguar": "jaguar",
+    "lynx": "lynx",
+    "3do": "3do",
+}
+
+# 明显不是“游戏中文名”的条目，catalog 联网补录时排到最后（通常直接留空）。
+NON_GAME_TITLE = re.compile(
+    r"\b(BIOS|SDK|Sample Program|Check Program|Test Program|Demo Disc|"
+    r"Utility|GameShark|Action Replay|Cheat|Middleware|Download Cartridge|"
+    r"Program|Tool|Catalog CD|Firmware)\b",
+    re.I,
+)
 
 # No-Intro DAT：平台 → 压缩包内文件名前缀。
 NOINTRO_PLATFORMS = {
@@ -186,7 +227,29 @@ _ZH_REGION_TAG = (
     r"巴西|巴西版|加拿大|加拿大版|澳大利亚|澳大利亚版|德国|德国版|法国|法国版|"
     r"意大利|意大利版|西班牙|西班牙版|荷兰|荷兰版|瑞典|瑞典版|丹麦|丹麦版|"
     r"挪威|挪威版|芬兰|芬兰版|俄罗斯|俄罗斯版|波兰|波兰版|葡萄牙|葡萄牙版|"
-    r"墨西哥|墨西哥版|阿根廷|阿根廷版"
+    r"墨西哥|墨西哥版|阿根廷|阿根廷版|美|日|欧|韩|中|台|港|"
+    r"法|德|意|西|荷|瑞|丹|挪|芬|俄|波|葡|巴|加|澳|新|需[^()]*系统版本"
+)
+
+# 名录里常见的类型标注，如 `(美)ACT(动作类)`、`(休闲益智)`；展示时去掉。
+_ZH_GENRE_TAG = re.compile(
+    r"\((?:ACT|RPG|SLG|AVG|RAC|SPG|FTG|PZG|TAB|STG|SIM|MUG|ETC|"
+    r"动作类|动作|角色扮演|竞速类|竞速|益智|休闲|休闲益智|休闲类|益智类|"
+    r"射击|格斗|体育|策略|模拟|音乐|冒险|解谜|棋牌|养成|经营|"
+    r"休闲益智|[一-鿿]{1,4}类)\)",
+    re.I,
+)
+
+# 没有括号的尾部地区词，如 `牧场物语-双子村+ 日版`
+_ZH_TRAILING_REGION = re.compile(
+    r"\s+(?:美版|日版|欧版|世界版|亚洲版|韩版|中文版|英文版|日文版|汉化版|"
+    r"演示版|试玩版|测试版|工程版|修正版|非官方版|未授权版)$"
+)
+
+# 括号被去掉后残留的尾部类型码，如 `无敌破坏王 ACT`
+_ZH_TRAILING_GENRE = re.compile(
+    r"\s+(?:ACT|RPG|SLG|AVG|RAC|SPG|FTG|PZG|TAB|STG|SIM|MUG|ETC)$",
+    re.I,
 )
 
 
@@ -200,7 +263,7 @@ def _is_tag_content(text: str) -> bool:
     if not text:
         return True
     parts = [p.strip() for p in re.split(r"[,/;]", text)]
-    zh_parts = [p.strip() for p in re.split(r"[,/;\s]+", text)]
+    zh_parts = [p.strip() for p in re.split(r"[,/;|\s]+", text)]
     if re.fullmatch(_ZH_REGION_TAG, text):
         return True
     if all(re.fullmatch(_ZH_REGION_TAG, p) for p in zh_parts if p):
@@ -254,14 +317,19 @@ def strip_tags(text: str) -> str:
 def clean_zh(text: str) -> str:
     """去掉名录中文名里的平台/地区/版本标签，得到可直接展示的中文名。"""
     text = unicodedata.normalize("NFKC", text or "")
+    # 去掉 `(Trashman)` 这类纯字母的发布组/破解组前缀
+    text = re.sub(r"^\([A-Za-z0-9 ._-]+\)\s*", "", text)
     previous = None
     while previous != text:
         previous, text = text, _ZH_PLATFORM_TAG.sub("", text).strip()
     text = strip_tags(text)
+    text = _ZH_GENRE_TAG.sub("", text)
+    text = _ZH_TRAILING_GENRE.sub("", text)
+    text = _ZH_TRAILING_REGION.sub("", text)
     # 名录里有 `(美版 欧版` 这种漏了右括号的坏行，直接截掉尾巴。
     if text.count("(") > text.count(")"):
         text = text[: text.rfind("(")]
-    return text.strip(" -:：,，;；、")
+    return re.sub(r"\s+", " ", text).strip(" -:：,，;；、")
 
 
 def norm(text: str) -> str:
@@ -1029,6 +1097,378 @@ def gaps(
 
 
 # ---------------------------------------------------------------------------
+# catalog 中文名补全
+# ---------------------------------------------------------------------------
+
+
+def catalog_paths(platforms: list[str] | None = None) -> list[Path]:
+    out = []
+    for path in sorted(CATALOG_DIR.glob("*.csv")):
+        if platforms and path.stem not in platforms:
+            continue
+        out.append(path)
+    return out
+
+
+def read_catalog_csv(path: Path) -> tuple[list[list[str]], bool]:
+    rows: list[list[str]] = []
+    has_header = False
+    with path.open(encoding="utf-8-sig", newline="") as fh:
+        for raw in csv.reader(fh):
+            if not raw:
+                continue
+            if not has_header and [c.strip() for c in raw[:2]] == ["中文名", "英文名"]:
+                has_header = True
+                continue
+            if len(raw) < 2:
+                raw += [""] * (2 - len(raw))
+            rows.append(list(raw))
+    return rows, has_header
+
+
+def write_catalog_csv(path: Path, rows: list[list[str]], has_header: bool) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.writer(fh, lineterminator="\r\n")
+        if has_header:
+            writer.writerow(["中文名", "英文名"])
+        for row in rows:
+            writer.writerow(row)
+    os.replace(tmp, path)
+
+
+def load_ranking_zh_index() -> tuple[
+    dict[str, dict[str, list[tuple[str, str]]]], dict[str, list[tuple[str, str]]]
+]:
+    by_platform: dict[str, dict[str, list[tuple[str, str]]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    global_idx: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for path in ranking_paths():
+        rows, _ = read_ranking(path)
+        for row in rows:
+            if not row.zh or not _CJK.search(row.zh):
+                continue
+            for key in title_keys(row.en):
+                by_platform[path.stem][key].append((row.zh, row.en))
+                global_idx[key].append((row.zh, row.en))
+    return by_platform, global_idx
+
+
+def load_legacy_index() -> dict[str, list[tuple[str, str]]]:
+    """从 git 历史里读旧版五列 ranking.csv，作为人工整理译名的补充来源。"""
+    try:
+        text = subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(REPO_ROOT),
+                "show",
+                "fdd4f4c:backend/search/rankings/ranking.csv",
+            ],
+            stderr=subprocess.DEVNULL,
+        ).decode("utf-8-sig")
+    except Exception:  # noqa: BLE001 - 旧提交不存在就跳过
+        return {}
+    idx: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for row in csv.reader(text.splitlines()):
+        if len(row) < 5 or row[0].strip() == "序号":
+            continue
+        zh, en = clean_zh(row[2].strip()), row[3].strip()
+        if not zh or not en or not _CJK.search(zh):
+            continue
+        for key in title_keys(en):
+            idx[key].append((zh, en))
+    return idx
+
+
+def _catalog_candidate(
+    en: str,
+    stem: str,
+    by_stem: dict[str, dict[str, list[tuple[str, str]]]],
+    global_catalog: dict[str, list[tuple[str, str]]],
+    rank_by_platform: dict[str, dict[str, list[tuple[str, str]]]],
+    rank_global: dict[str, list[tuple[str, str]]],
+    legacy_idx: dict[str, list[tuple[str, str]]],
+) -> tuple[str, str] | None:
+    """按“同文件 → 同机种榜单 → 其他榜单 → 旧版 → 其他文件”的顺序找译名。"""
+    keys = title_keys(en)
+    for key in keys:
+        got = pick_zh(by_stem.get(stem, {}).get(key, []))
+        if got:
+            return got, "catalog-same"
+    rank_platform = CATALOG_RANKING_PLATFORM.get(stem)
+    if rank_platform:
+        for key in keys:
+            got = pick_zh(rank_by_platform.get(rank_platform, {}).get(key, []))
+            if got:
+                return got, "ranking-same"
+    for key in keys:
+        got = pick_zh(rank_global.get(key, []), require_unique=True)
+        if got:
+            return got, "ranking-cross"
+    for key in keys:
+        got = pick_zh(legacy_idx.get(key, []), require_unique=True)
+        if got:
+            return got, "legacy"
+    for key in keys:
+        got = pick_zh(global_catalog.get(key, []), require_unique=True)
+        if got:
+            return got, "catalog-cross"
+    return None
+
+
+_VERSION_WORDS = {
+    "plus",
+    "deluxe",
+    "premium",
+    "ultimate",
+    "complete",
+    "special",
+    "edition",
+    "version",
+    "rev",
+    "2",
+    "3",
+    "4",
+    "ii",
+    "iii",
+    "iv",
+}
+
+
+def _fuzzy_pick(n: str, entries: dict[str, list[str]]) -> str | None:
+    """保守模糊匹配：数字/版本 token 一致、词重叠够高、译名唯一。"""
+    if not n or not entries:
+        return None
+    hits = difflib.get_close_matches(n, list(entries), n=6, cutoff=0.9)
+    q_tokens = set(n.split())
+    q_numbers = re.findall(r"[a-z]*\d+[a-z]*", n)
+    scored: list[tuple[float, str]] = []
+    for hit in hits:
+        ratio = difflib.SequenceMatcher(None, n, hit).ratio()
+        if ratio < 0.92:
+            continue
+        if q_numbers != re.findall(r"[a-z]*\d+[a-z]*", hit):
+            continue
+        h_tokens = set(hit.split())
+        # `Plus`/`Deluxe`/`2` 这类版本词不能一边有一边没有
+        if (q_tokens & _VERSION_WORDS) != (h_tokens & _VERSION_WORDS):
+            continue
+        union = q_tokens | h_tokens
+        if not union or len(q_tokens & h_tokens) / len(union) < 0.75:
+            continue
+        nt, ht = len(q_tokens), len(h_tokens)
+        if abs(nt - ht) > 1 or min(nt, ht) / max(nt, ht) < 0.6:
+            continue
+        scored.append((ratio, hit))
+    if not scored:
+        return None
+    zhs = {zh for _, hit in scored for zh in entries.get(hit, [])}
+    return zhs.pop() if len(zhs) == 1 else None
+
+
+def _fuzzy_candidate(
+    en: str,
+    stem: str,
+    by_stem: dict[str, dict[str, list[tuple[str, str]]]],
+    rank_by_platform: dict[str, dict[str, list[tuple[str, str]]]],
+    rank_global: dict[str, list[tuple[str, str]]],
+) -> tuple[str, str] | None:
+    n = norm(strip_tags(en))
+    if not n:
+        return None
+    same = {
+        key: [zh for zh, _ in values]
+        for key, values in by_stem.get(stem, {}).items()
+    }
+    got = _fuzzy_pick(n, same)
+    if got:
+        return got, "fuzzy-same"
+    rank_platform = CATALOG_RANKING_PLATFORM.get(stem)
+    rank_entries: dict[str, list[str]] = {}
+    if rank_platform:
+        for key, values in rank_by_platform.get(rank_platform, {}).items():
+            rank_entries.setdefault(key, []).extend(zh for zh, _ in values)
+    for key, values in rank_global.items():
+        rank_entries.setdefault(key, []).extend(zh for zh, _ in values)
+    got = _fuzzy_pick(n, rank_entries)
+    if got:
+        return got, "fuzzy-ranking"
+    return None
+
+
+def catalog_fill(
+    platforms: list[str] | None, write: bool, report_path: Path | None, fuzzy: bool = False
+) -> int:
+    by_stem, global_catalog = load_catalog()
+    rank_by_platform, rank_global = load_ranking_zh_index()
+    legacy_idx = load_legacy_index()
+    all_changes: list[Change] = []
+    stats: dict[str, Counter] = {}
+
+    for path in catalog_paths(platforms):
+        stem = path.stem
+        rows, has_header = read_catalog_csv(path)
+        changes: list[Change] = []
+        counter: Counter = Counter()
+        for line, row in enumerate(rows, start=1):
+            zh, en = (row[0].strip(), row[1].strip()) if len(row) >= 2 else ("", "")
+            if zh or not en:
+                continue
+            got = _catalog_candidate(
+                en,
+                stem,
+                by_stem,
+                global_catalog,
+                rank_by_platform,
+                rank_global,
+                legacy_idx,
+            )
+            if not got and fuzzy:
+                got = _fuzzy_candidate(
+                    en, stem, by_stem, rank_by_platform, rank_global
+                )
+            if not got:
+                continue
+            value, source = got
+            value = clean_zh(value)
+            if not value or not _CJK.search(value):
+                continue
+            row[0] = value
+            counter[source] += 1
+            changes.append(Change(stem, line, en, "zh", "", value, source))
+        stats[stem] = counter
+        all_changes.extend(changes)
+        if write and changes:
+            write_catalog_csv(path, rows, has_header)
+
+    print(f"{'catalog':20} {'补中文':>6}  来源")
+    total: Counter = Counter()
+    for stem, counter in sorted(stats.items()):
+        n = sum(counter.values())
+        total.update(counter)
+        if n:
+            print(f"{stem:20} {n:6}  {dict(counter)}")
+    print(f"{'合计':20} {sum(total.values()):6}  {dict(total)}")
+    if report_path:
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps([c.__dict__ for c in all_changes], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        print(f"报告写入 {report_path}")
+    return 0
+
+
+def catalog_gaps(platforms: list[str] | None, outdir: Path) -> int:
+    outdir.mkdir(parents=True, exist_ok=True)
+    summary = []
+    for path in catalog_paths(platforms):
+        stem = path.stem
+        rows, _ = read_catalog_csv(path)
+        items = []
+        for line, row in enumerate(rows, start=1):
+            zh, en = (row[0].strip(), row[1].strip()) if len(row) >= 2 else ("", "")
+            if zh or not en:
+                continue
+            non_game = bool(NON_GAME_TITLE.search(en))
+            priority = 3 if non_game else 1
+            items.append(
+                {
+                    "platform": stem,
+                    "line": line,
+                    "priority": priority,
+                    "en": en,
+                    "zh": "",
+                    "note": "非游戏/工具/演示，通常留空" if non_game else "",
+                }
+            )
+        target = outdir / f"{stem}.json"
+        target.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
+        p1 = sum(1 for i in items if i["priority"] == 1)
+        p3 = len(items) - p1
+        summary.append((stem, len(items), p1, p3))
+    print(f"{'catalog':20} {'待补':>5} {'可搜':>5} {'非游戏':>6}")
+    for stem, total, p1, p3 in summary:
+        if total:
+            print(f"{stem:20} {total:5} {p1:5} {p3:6}")
+    print(f"清单目录 {outdir}")
+    return 0
+
+
+def apply_catalog_suggestions(path: Path, write: bool, report_path: Path | None) -> int:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict):
+        data = data.get("suggestions", [])
+    if not isinstance(data, list):
+        print("建议文件必须是 JSON 数组", file=sys.stderr)
+        return 1
+
+    grouped: dict[str, list[dict]] = defaultdict(list)
+    rejected: Counter = Counter()
+    stems = {p.stem for p in catalog_paths()}
+    for item in data:
+        if not isinstance(item, dict):
+            rejected["不是对象"] += 1
+            continue
+        stem = item.get("platform")
+        if stem not in stems:
+            rejected["未知 catalog 文件"] += 1
+            continue
+        line = item.get("line")
+        if not isinstance(line, int) or line < 1:
+            rejected["line 无效"] += 1
+            continue
+        en = str(item.get("en", "")).strip()
+        zh = clean_zh(str(item.get("zh", "")).strip())
+        url = str(item.get("source_url", "")).strip()
+        if not en or not zh or not _CJK.search(zh):
+            rejected["en/zh 为空或 zh 不含中文"] += 1
+            continue
+        if not url.startswith(("http://", "https://")):
+            rejected["缺少 source_url"] += 1
+            continue
+        grouped[stem].append(item)
+    if rejected:
+        print("拒绝的建议:", dict(rejected))
+
+    all_changes: list[Change] = []
+    for stem, items in sorted(grouped.items()):
+        path_csv = CATALOG_DIR / f"{stem}.csv"
+        rows, has_header = read_catalog_csv(path_csv)
+        by_line = {i + 1: row for i, row in enumerate(rows)}
+        platform_changes: list[Change] = []
+        for item in items:
+            row = by_line.get(item["line"])
+            if row is None or len(row) < 2:
+                continue
+            if norm(row[1]) != norm(item["en"]):
+                continue
+            if row[0].strip():
+                continue
+            value = clean_zh(str(item["zh"]))
+            if not value or not _CJK.search(value):
+                continue
+            row[0] = value
+            platform_changes.append(
+                Change(stem, item["line"], item["en"], "zh", "", value, "web")
+            )
+        all_changes.extend(platform_changes)
+        if write and platform_changes:
+            write_catalog_csv(path_csv, rows, has_header)
+    print(f"应用 {len(all_changes)} 处 catalog 建议")
+    for change in all_changes[:20]:
+        print(f"  {change.platform}:{change.line} {change.en} -> {change.new}")
+    if report_path:
+        report_path.write_text(
+            json.dumps([c.__dict__ for c in all_changes], ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # 同步 DAT
 # ---------------------------------------------------------------------------
 
@@ -1221,6 +1661,23 @@ def main(argv: list[str] | None = None) -> int:
     p_gaps.add_argument("--top", type=int, default=20, help="都缺时只列出前 N 名")
     p_gaps.add_argument("--all", action="store_true", help="连排名靠后的都缺行也输出")
 
+    p_cat_fill = sub.add_parser("catalog-fill", help="补 catalog 里空的中文名")
+    p_cat_fill.add_argument("--write", action="store_true")
+    p_cat_fill.add_argument("--platforms", help="逗号分隔的 catalog 文件 stem")
+    p_cat_fill.add_argument("--report", type=Path)
+    p_cat_fill.add_argument(
+        "--fuzzy", action="store_true", help="开启保守模糊匹配（数字 token 必须一致）"
+    )
+
+    p_cat_gaps = sub.add_parser("catalog-gaps", help="输出 catalog 待补清单")
+    p_cat_gaps.add_argument("--outdir", type=Path, default=Path("/tmp/xgame-catalog-gaps"))
+    p_cat_gaps.add_argument("--platforms", help="逗号分隔的 catalog 文件 stem")
+
+    p_cat_apply = sub.add_parser("catalog-apply", help="应用 catalog 联网建议")
+    p_cat_apply.add_argument("suggestions", type=Path)
+    p_cat_apply.add_argument("--write", action="store_true")
+    p_cat_apply.add_argument("--report", type=Path)
+
     args = parser.parse_args(argv)
     if args.command == "sync":
         return sync(args.cache, args.no_intro_zip, args.mame_only)
@@ -1238,6 +1695,22 @@ def main(argv: list[str] | None = None) -> int:
             else None
         )
         return gaps(platforms, args.outdir, args.top, args.all)
+    if args.command == "catalog-fill":
+        platforms = (
+            [p.strip() for p in args.platforms.split(",") if p.strip()]
+            if args.platforms
+            else None
+        )
+        return catalog_fill(platforms, args.write, args.report, args.fuzzy)
+    if args.command == "catalog-gaps":
+        platforms = (
+            [p.strip() for p in args.platforms.split(",") if p.strip()]
+            if args.platforms
+            else None
+        )
+        return catalog_gaps(platforms, args.outdir)
+    if args.command == "catalog-apply":
+        return apply_catalog_suggestions(args.suggestions, args.write, args.report)
     return apply_suggestions(args.suggestions, args.write, args.report)
 
 

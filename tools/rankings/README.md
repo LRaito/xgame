@@ -50,6 +50,25 @@ python tools/rankings/fill_data.py gaps --outdir /tmp/xgame-ranking-gaps
 python tools/rankings/fill_data.py apply suggestions.json --write
 ```
 
+## 补 `backend/search/catalog/` 的中文名
+
+catalog 是检索名录，格式是两列 `中文名,英文名`。空缺的中文名可以用同一个工具补：
+
+```bash
+# 1. 从同文件其他地区版本、榜单、旧版 ranking.csv、其他 catalog 文件自动补
+python tools/rankings/fill_data.py catalog-fill --write --report /tmp/catalog-report.json
+
+# 2. 输出仍未补的清单，按 catalog 文件拆分，交给联网调研
+python tools/rankings/fill_data.py catalog-gaps --outdir /tmp/xgame-catalog-gaps
+
+# 3. 应用联网建议（每条都必须带 source_url）
+python tools/rankings/fill_data.py catalog-apply suggestions.json --write
+```
+
+自动补全的优先级：同一 catalog 文件 → 同机种榜单 → 其他榜单 → 旧版五列
+ranking.csv → 其他 catalog 文件。跨来源匹配要求译名唯一或明显占多数，
+避免把同名不同游戏翻错。`catalog-apply` 只填空白单元格，不覆盖已有译名。
+
 缓存目录默认 `~/.cache/xgame-ranking-dats`，可用 `--cache` 或环境变量
 `XGAME_DAT_CACHE` 覆盖。缓存不进仓库。
 
