@@ -3,15 +3,15 @@
 索尼克 CD,Sonic CD,8.401975308641974,MK-4407;G-6021
 露娜 - 银河之星,Lunar: The Silver Star,8.374358974358975,T-127015;T-45014
 掠夺者,Snatcher,8.300625,T-95035
-,NHL '94,8.13953488372093,
+加拿大冰球联赛 '94,NHL '94,8.13953488372093,T-50015
 光明力量 CD,Shining Force CD,8.117241379310345,MK-4656;G-6036
-,AH-3: ThunderStrike,8.085057471264367,
+AH3 - 闪电特攻,AH-3: ThunderStrike,8.085057471264367,T-60055
 露娜 - 永恒之蓝,Lunar: Eternal Blue,8.07279569892473,T-127045;T-45074
 海豚历险记,Ecco the Dolphin,8.055,MK-4408;G-6041
 电忍雅士达,Robo Aleste,7.983695652173913,T-48015;T-66014
-,Final Fight,7.974888888888889,
+快打旋风,Final Fight,7.974888888888889,4410;G-6013
 银星战机,Silpheed,7.885736434108528,MK-4423;T-45054
-,FIFA International Soccer,7.88188679245283,
+FIFA 国际化 足球,FIFA International Soccer,7.88188679245283,T-50055
 灵魂之星,Soulstar,7.836226415094339,T-115035;T-60184
 玛雅历险记,Pitfall: The Mayan Adventure,7.831666666666667,T-130025
 海豚 潮汐时间,Ecco: The Tides of Time,7.83047619047619,MK-4441
@@ -23,20 +23,20 @@
 疯狂米老鼠,Mickey Mania,7.733333333333333,T-93265
 闪回 - 身份之谜,Flashback: The Quest for Identity,7.7186666666666675,MK-4448
 波斯王子,Prince of Persia,7.715094339622641,MK-4652;T-60014
-,Road Blaster,7.678358208955225,
-,Wonder Dog,7.645238095238096,
+公路战车,Road Blaster,7.678358208955225,T-32124
+奇迹狗,Wonder Dog,7.645238095238096,T-6402;T-60074
 雷神,Lords of Thunder,7.63148148148148,MK-4450
 美洲虎 XJ220,Jaguar XJ220,7.630769230769231,T-6406;T-60094
-,Championship Soccer '94,7.619354838709677,
-,Chuck Rock II: Son of Chuck,7.586666666666666,
+足球锦标赛 '94,Championship Soccer '94,7.619354838709677,T-93185
+呆呆原始人 II - 小原始人,Chuck Rock II: Son of Chuck,7.586666666666666,T-70045
 永恒冠军：来自黑暗面的挑战,Eternal Champions: Challenge from the Dark Side,7.58171875,MK-4427
 真·女神转生,Shin Megami Tensei,7.577333333333333,T-44044
 终结者,The Terminator,7.550909090909091,T-70015
-,Road Rash,7.54279069767442,
-,Puggsy,7.526829268292683,
-,Bill Walsh College Football,7.525806451612904,
+暴力摩托,Road Rash,7.54279069767442,T-50085
+海岛冒险,Puggsy,7.526829268292683,T-113035
+大学生足球赛,Bill Walsh College Football,7.525806451612904,T-50025
 魔眼杀机,Eye of the Beholder,7.426530612244897,MK-4655;T-75014
-,BC Racers,7.42608695652174,
+石器时代赛车,BC Racers,7.42608695652174,T-115075
 蝙蝠侠归来,Batman Returns,7.419298245614034,MK-4401
 VAY 流星之铠,Vay,7.412272727272727,T-127025;T-44014
 致命杀手 II - GUN FIGHTERS,Lethal Enforcers II: Gun Fighters,7.404827586206897,T-95025;T-95034
@@ -44,14 +44,14 @@ VAY 流星之铠,Vay,7.412272727272727,T-127025;T-44014
 美国职业篮球联赛JAM,NBA Jam,7.375675675675675,T-81035;T-81034
 庆应游击队,Keio Flying Squadron,7.356896551724137,T-60185;T-60114
 神奇蜘蛛侠大战金并,The Amazing Spider-Man vs. The Kingpin,7.353559322033899,MK-4412
-,WWF Rage in the Cage,7.352142857142858,
-,Sega Classics Arcade Collection (Limited Edition),7.350434782608696,
+WWF 笼中之怒,WWF Rage in the Cage,7.352142857142858,T-81015
+世嘉 经典街机 精选集 - 限定版,Sega Classics Arcade Collection (Limited Edition),7.350434782608696,G-6012
 迷宫探险家-盟约之门,Dungeon Explorer,7.283720930232558,MK-4657
-,Heart of the Alien: Out of this World Parts I and II,7.273728813559321,
-,Dungeon Master II: Skullkeep,7.25128205128205,
+,Heart of the Alien: Out of this World Parts I and II,7.273728813559321,T-70025
+地下城主 II - SKULLKEEP,Dungeon Master II: Skullkeep,7.25128205128205,T-60085;T-60144
 机甲袭击,Android Assault: The Revenge of Bari-Arm,7.243888888888888,MK-4445;T-43024
-,Chuck Rock,7.242105263157894,
-,Flink,7.2372093023255815,
+呆呆原始人,Chuck Rock,7.242105263157894,T-6204
+弗兰克,Flink,7.2372093023255815,T-23055
 雄猫战机,Tomcat Alley,7.207342995169081,MK-4429;G-6039
 龙之崛起,Rise of the Dragon,7.195454545454545,MK-4301;G-6002
 致命杀手,Lethal Enforcers,7.1909090909090905,T-95015;T-95014
@@ -59,87 +59,87 @@ VAY 流星之铠,Vay,7.412272727272727,T-127025;T-44014
 梦见馆物语,Mansion of Hidden Souls,7.134328358208955,T-23015;G-6027
 饿狼传说 特别版,Fatal Fury Special,7.0929268292682925,T-60165;T-60214
 侏罗纪公园,Jurassic Park,7.081999999999999,MK-4411;G-6038
-,ESPN Baseball Tonight,7.08,
+ESPN棒球直播,ESPN Baseball Tonight,7.08,T-93115
 猴岛小英雄,The Secret of Monkey Island,7.072477064220183,T-60035;T-60044
-,The Smurfs,7.066666666666667,
+蓝精灵,The Smurfs,7.066666666666667,T-151015-50
 眼镜蛇司令部,Cobra Command,7.036734693877551,MK-4402;T-32064
 银河飞将,Wing Commander,7.022777777777778,T-50045;G-6011
-,Iron Helix,6.985714285714286,
+钢铁螺旋,Iron Helix,6.985714285714286,T-124015
 太空高手,Space Ace,6.985714285714286,T-121025
-,Marko,6.972727272727272,
+马尔科,Marko,6.972727272727272,
 真人快打,Mortal Kombat,6.9140476190476186,T-81025;T-81014
-,Wolfchild,6.891666666666667,
-,PowerMonger,6.853658536585366,
-,Formula One World Championship: Beyond the Limit,6.8428571428571425,
-,World Cup USA 94,6.825,
-,Third World War,6.819354838709677,
+狼孩,Wolfchild,6.891666666666667,T-6403;T-60104
+权力征战,PowerMonger,6.853658536585366,T-50035
+一级方程式世界锦标赛 - 超越极限,Formula One World Championship: Beyond the Limit,6.8428571428571425,
+美国世界杯 '94,World Cup USA 94,6.825,T-79025
+第三次世界大战,Third World War,6.819354838709677,T-22025
 被释放的吸血鬼,Dracula Unleashed,6.8021276595744675,MK-4420
 太空冒险,The Space Adventure,6.79741935483871,T-143015
-,Brutal: Paws of Fury,6.795185185185185,
+动物快打,Brutal: Paws of Fury,6.795185185185185,T-83015
 零点：德克萨斯,Ground Zero Texas,6.75774647887324,T-93145
-,Battle Frenzy,6.753333333333334,
+狂暴战士,Battle Frenzy,6.753333333333334,
 溶胶围墙,Sol-Feace,6.753174603174603,MK-4404;T-32024
 午夜陷阱,Night Trap,6.720540540540541,MK-4903;G-6025
 守护神 海姆达尔,Heimdall,6.703225806451614,T-60145;T-60054
-,Crime Patrol,6.685714285714285,
+罪恶刑警,Crime Patrol,6.685714285714285,T-111055
 时间少女,Time Gal,6.680357142857143,T-6214;T-32114
 威利·比米什的冒险,The Adventures of Willy Beamish,6.653030303030303,T-6300
-,Jeopardy!,6.6380952380952385,
-,RDF: Global Conflict,6.577272727272727,
+危险边缘知识问答,Jeopardy!,6.6380952380952385,T-93095
+RDF - 全球冲突,RDF: Global Conflict,6.577272727272727,T-86025
 星球大战：叛军突击,Star Wars: Rebel Assault,6.555384615384615,T-60075;T-60174
-,Panic!,6.536603773584906,
+,Panic!,6.536603773584906,T-13015
 ,Sherlock Holmes: Consulting Detective - Volume II,6.535483870967742,
-,Devastator,6.495238095238095,
+破坏者,Devastator,6.495238095238095,T-32074
 双调转术,Double Switch,6.493333333333333,MK-4419;G-6040
 疯狗麦基利,Mad Dog McCree,6.457222222222223,T-111015
 福尔摩斯-咨询侦探,Sherlock Holmes: Consulting Detective,6.3999999999999995,MK-4653
-,Cadillacs and Dinosaurs: The Second Cataclysm,6.374358974358975,
+凯迪拉克和恐龙:第二次大灾难,Cadillacs and Dinosaurs: The Second Cataclysm,6.374358974358975,T-153035
 星际保卫战,Starblade,6.364230769230769,T-14025;T-14014
 诺瓦风暴,Novastorm,6.362962962962963,T-113025
-,Hook,6.35,
-,Fahrenheit,6.342333333333333,
+小飞侠,Hook,6.35,T-6205
+华氏温度,Fahrenheit,6.342333333333333,G-6043
 下水道鲨鱼,Sewer Shark,6.272369337979094,T-6201
-,Earnest Evans,6.2176470588235295,
-,Revenge of the Ninja,6.1875,
-,ESPN NBA Hangtime '95,6.150476190476191,
-,Cliffhanger,6.131333333333333,
+热心的埃文斯,Earnest Evans,6.2176470588235295,T-32014
+复仇忍者,Revenge of the Ninja,6.1875,T-49035
+ESPN-NBA大灌篮 '95,ESPN NBA Hangtime '95,6.150476190476191,T-93245
+绝岭雄风,Cliffhanger,6.131333333333333,T-93075
 蝙蝠侠与罗宾大冒险,The Adventures of Batman & Robin,6.116818181818181,MK-4432
 龙穴历险记,Dragon's Lair,6.108620689655172,T-121015;G-6035
-,Bouncers,6.108333333333334,
-,Shadow of the Beast II,6.0929032258064515,
-,Links: The Challenge of Golf,6.069999999999999,
-,Joe Montana's NFL Football,6.066486486486487,
-,Wirehead,6.024117647058823,
+巨人,Bouncers,6.108333333333334,
+暗影野兽 II,Shadow of the Beast II,6.0929032258064515,T-113045
+,Links: The Challenge of Golf,6.069999999999999,T-70095
+乔蒙大拿的橄榄球联赛,Joe Montana's NFL Football,6.066486486486487,T-4201
+弹头,Wirehead,6.024117647058823,
 拳击手,Prize Fighter,6.022083333333334,MK-4206;G-6037
-,Stellar-Fire,6.015428571428572,
+恒星突击,Stellar-Fire,6.015428571428572,T-110025
 ,Ultraverse Prime / Microcosm,6.008333333333333,
 缩影,Microcosm,5.933448275862069,T-113015;T-60164
 ,Mary Shelley's Frankenstein / Bram Stoker's Dracula,5.932857142857143,
-,Make My Video: INXS,5.913333333333333,
+制作我的视频 - INXS,Make My Video: INXS,5.913333333333333,
 尸体杀手,Corpse Killer,5.893809523809524,T-162055
-,MegaRace,5.878571428571428,
-,Make My Video: Kris Kross,5.856410256410256,
+烈火战车,MegaRace,5.878571428571428,T-87025
+制作我的视频 - KRIS KROSS,Make My Video: Kris Kross,5.856410256410256,
 阿内特再现,Anett Futatabi,5.845599999999999,T-32104
-,Kids on Site,5.8428571428571425,
-,Black Hole Assault,5.831794871794871,
-,A/X-101,5.828695652173913,
-,Revengers of Vengeance,5.779230769230769,
-,The Software Toolworks' Star Wars Chess,5.73125,
+现场儿童,Kids on Site,5.8428571428571425,T-162015-50
+黑洞攻击,Black Hole Assault,5.831794871794871,T-6401;T-22024
+,A/X-101,5.828695652173913,T-86015
+复仇者,Revengers of Vengeance,5.779230769230769,T-22035
+星球大战国际象棋,The Software Toolworks' Star Wars Chess,5.73125,T-87035
 忍者战士,The Ninja Warriors,5.698484848484849,T-11024
-,Heavy Nova,5.655555555555555,
+重装诺瓦,Heavy Nova,5.655555555555555,T-22014
 ,The Masked Rider: Kamen Rider ZO,5.6174193548387095,
-,Loadstar: The Legend of Tully Bodine,5.548235294117647,
+"北极星-杜利伯丁传奇 (美国版,巴西版)",Loadstar: The Legend of Tully Bodine,5.548235294117647,T-153015
 冲破火网 III,After Burner III,5.494594594594595,MK-4415;T-68014
-,Surgical Strike,5.436842105263158,
+精确打击,Surgical Strike,5.436842105263158,
 至尊武士,Supreme Warrior,5.42,T-162045
 啄木鸟伍迪,Wild Woody,5.412812499999999,MK-4440
-,Bram Stoker's Dracula,5.411538461538461,
+吸血鬼惊情四百年,Bram Stoker's Dracula,5.411538461538461,T-93065
 恐龙战队,Mighty Morphin Power Rangers,5.3438888888888885,MK-4442
-,Midnight Raiders,5.196363636363636,
-,Slam City with Scottie Pippen,5.153333333333333,
+夜袭者,Midnight Raiders,5.196363636363636,
+,Slam City with Scottie Pippen,5.153333333333333,T-162035
 ,Power Factory featuring C+C Music Factory,5.152413793103449,
 割草人,The Lawnmower Man,5.0442857142857145,T-160015
-,Racing Aces,4.971428571428571,
-,Make My Video: Marky Mark and the Funky Bunch,4.946153846153846,
-,Night Striker,4.855172413793104,
-,NFL's Greatest: San Francisco vs. Dallas 1978-1993,4.641379310344828,
+竞速王牌,Racing Aces,4.971428571428571,
+制作我的视频 - 马克和那群时髦的家伙,Make My Video: Marky Mark and the Funky Bunch,4.946153846153846,
+午夜出击,Night Striker,4.855172413793104,T-11014
+NFL伟大时刻-旧金山对达拉斯 1978-1993,NFL's Greatest: San Francisco vs. Dallas 1978-1993,4.641379310344828,

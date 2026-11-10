@@ -9,15 +9,15 @@
 陷阱1,Pitfall!,7.928679653679654,AX-018
 基斯通警察,Keystone Kapers,7.863681592039801,AX-025
 蒙特祖玛的复仇,Montezuma's Revenge,7.8515151515151524,PB5760
-,Wizard of Wor,7.792592592592594,
-,Medieval Mayhem,7.723809523809523,
+沃尔巫师,Wizard of Wor,7.792592592592594,
+中世纪之战(四人砖块),Medieval Mayhem,7.723809523809523,
 恶魔攻击,Demon Attack,7.721056910569105,IA3200
-,Phaser Patrol,7.715625,
+富士侦察,Phaser Patrol,7.715625,
 导弹指挥官,Missile Command,7.700387596899225,CX2638
 JR吃豆人小姐,Jr. Pac-Man,7.648979591836734,CX26123
-,Robot Tank,7.638333333333334,
+机动坦克,Robot Tank,7.638333333333334,
 打空气,Dig Dug,7.607179487179486,CX2677
-,Super Breakout,7.591836734693878,
+超级打砖块,Super Breakout,7.591836734693878,
 太空侵略者,Space Invaders,7.587458745874587,CX2632
 亚尔斯复仇记,Yars' Revenge,7.548003848003848,CX2655
 冰上曲棍球,Ice Hockey,7.524000000000001,AX-012
@@ -25,7 +25,7 @@ JR吃豆人小姐,Jr. Pac-Man,7.648979591836734,CX26123
 千足虫,Millipede,7.497058823529412,CX26118
 杀虫大战,Centipede,7.48457711442786,CX2676
 贝兹克,Berzerk,7.4744588744588745,CX2650
-,Galaxian,7.4640625,
+小蜜蜂,Galaxian,7.4640625,
 直升机指挥官,Chopper Command,7.46060606060606,AX-015
 ,Frostbite,7.460555555555556,
 索拉里斯星,Solaris,7.455555555555555,CX26136
@@ -33,14 +33,14 @@ JR吃豆人小姐,Jr. Pac-Man,7.648979591836734,CX26123
 ,Jungle King,7.434871794871794,
 混乱,Turmoil,7.408602150537634,11007
 月球侦察,Moon Patrol,7.40503144654088,CX2692
-,DragonStomper,7.403623188405797,
-,Road Runner,7.393846153846154,
-,Solar Fox,7.382352941176471,
+屠龙者,DragonStomper,7.403623188405797,
+走鹊,Road Runner,7.393846153846154,
+太阳狐,Solar Fox,7.382352941176471,
 先锋战机,Vanguard,7.367424242424243,CX2669
 凤凰,Phoenix,7.348511904761905,CX2673
-,Communist Mutants from Space,7.3394736842105255,
+太空突变体,Communist Mutants from Space,7.3394736842105255,
 蓝精灵：营救格格巫城堡,Smurf: Rescue in Gargamel's Castle,7.338461538461538,2465
-,BMX Air Master,7.3307692307692305,
+BMX空中之王,BMX Air Master,7.3307692307692305,
 极点赛车,Pole Position,7.31812865497076,CX2694
 狂热战机,Megamania,7.285185185185185,AX-017
 月球清扫者,Moonsweeper,7.284848484848485,03207
@@ -48,16 +48,16 @@ JR吃豆人小姐,Jr. Pac-Man,7.648979591836734,CX26123
 冒险,Adventure,7.244920634920634,CX2613
 激光骑士,Beamrider,7.232608695652174,AZ-037-04
 小行星,Asteroids,7.229357798165138,CX2649
-,Bump 'N' Jump,7.206896551724138,
-,Stargate,7.185714285714286,
+公路追逐赛,Bump 'N' Jump,7.206896551724138,
+星际之门,Stargate,7.185714285714286,
 油箱炸弹,Kaboom!,7.183416666666666,AG-010
 惊奔,Stampede,7.181884057971015,AG-011
 牙菌斑攻击,Plaque Attack,7.148648648648648,AX-027
 龙之火,Dragonfire,7.120754716981132,IA3611
 加州游戏,California Games,7.098148148148149,80561-00286
-,Front Line,7.071428571428571,
+前线,Front Line,7.071428571428571,
 Q伯特,Q*bert,7.06938775510204,PB5360
-,Winter Games,7.064516129032258,
+冬季运动会,Winter Games,7.064516129032258,
 大力水手,Popeye,7.062962962962962,PB5370
 ,David's Midnight Magic,7.034375,
 四角砖块,Warlords,7.029356725146199,CX2610
@@ -66,205 +66,205 @@ Q伯特,Q*bert,7.06938775510204,PB5360
 星球大战 帝国反击战,Star Wars: The Empire Strikes Back,6.993650793650794,PB5050
 亚特兰蒂斯,Atlantis,6.9898989898989905,IA3203
 ,Starmaster,6.984761904761904,
-,The Activision Decathlon,6.970748299319728,
+十项运动,The Activision Decathlon,6.970748299319728,AZ-030
 ,Astrosmash,6.964864864864865,
 战斗地带,Battlezone,6.961010101010101,CX2681
-,No Escape!,6.93235294117647,
-,Frankenstein's Monster,6.921428571428571,
-,Cross Force,6.9185185185185185,
-,Crackpots,6.9019047619047615,
+捍卫时空战士,No Escape!,6.93235294117647,
+弗兰肯斯坦的怪物,Frankenstein's Monster,6.921428571428571,
+双子射击,Cross Force,6.9185185185185185,
+,Crackpots,6.9019047619047615,AX-029
 ,Cakewalk,6.896551724137931,
-,RealSports Tennis,6.891666666666667,
-,Star Wars,6.891666666666667,
+拟真网球,RealSports Tennis,6.891666666666667,
+星球大战,Star Wars,6.891666666666667,
 大嘴吃豆,Jawbreaker,6.883720930232558,7-002
 ,Frog Bog,6.88,
-,Shootin' Gallery,6.869230769230769,
-,Spider Fighter,6.859073359073359,
+画廊射击,Shootin' Gallery,6.869230769230769,
+蜘蛛战士,Spider Fighter,6.859073359073359,
 间谍猎人,Spy Hunter,6.832000000000001,011-02
 ,Ram It,6.830864197530865,
-,River Raid II,6.83,
-,Pengo,6.813793103448275,
+河上反击2(空中版),River Raid II,6.83,
+碰碰冰,Pengo,6.813793103448275,
 ,Snoopy and the Red Baron,6.809666666666667,
-,Fathom,6.80344827586207,
+探寻,Fathom,6.80344827586207,
 银火,Gravitar,6.8,CX2685
 防卫者,Defender,6.794741784037559,CX2609
-,Crystal Castles,6.794117647058823,
+水晶城堡,Crystal Castles,6.794117647058823,
 滑雪,Skiing,6.789922480620156,AG-005
 鸟骑士,Joust,6.772486772486773,CX2691
 马里奥兄弟,Mario Bros.,6.7062857142857135,CX2697
-,Room of Doom,6.6689655172413795,
-,Tunnel Runner,6.65625,
-,Polaris,6.653846153846154,
+毁灭之屋,Room of Doom,6.6689655172413795,
+迷宫奔跑者,Tunnel Runner,6.65625,
+北极潜艇,Polaris,6.653846153846154,
 打砖块,Breakout,6.642952380952381,CX2622
-,Air Raiders,6.642682926829269,
+,Air Raiders,6.642682926829269,5861
 ,Subterranea,6.636,
-,Commando,6.621212121212121,
+突击队,Commando,6.621212121212121,
 蜘蛛侠,Spider-Man,6.604938271604937,PB5900
-,Big Bird's Egg Catch,6.588888888888889,
-,Fireball,6.5793103448275865,
+大鸟接蛋,Big Bird's Egg Catch,6.588888888888889,CX26104
+火球,Fireball,6.5793103448275865,
 老鼠陷阱,Mouse Trap,6.569230769230769,2459
-,Rabbit Transit,6.566666666666666,
-,Star Trek: Strategic Operations Simulator,6.565625,
+幸运兔,Rabbit Transit,6.566666666666666,
+星际迷航记-模拟作战,Star Trek: Strategic Operations Simulator,6.565625,
 海豚,Dolphin,6.526470588235293,AX-024
 战斗,Combat,6.52026455026455,CX2601
 鬼屋,Haunted House,6.51926406926407,CX2654
 ,Maze Craze: A Game of Cops 'n Robbers,6.515384615384615,
-,Bumper Bash,6.476571428571429,
-,Bank Heist,6.475862068965518,
-,M*A*S*H,6.474482758620689,
+高速弹珠台,Bumper Bash,6.476571428571429,
+,Bank Heist,6.475862068965518,11012
+混合,M*A*S*H,6.474482758620689,
 ,Commando Raid,6.458620689655173,
-,Indy 500,6.442142857142857,
+因迪赛车500,Indy 500,6.442142857142857,
 乡间巡回,Barnstorming,6.441358024691358,AX-013
 高速公路,Freeway,6.419203747072599,AG-009
-,Mr. Do!,6.417857142857143,
-,Lock 'n' Chase,6.417142857142857,
-,Taz,6.4133848133848135,
+嘟先生,Mr. Do!,6.417857142857143,
+新小精灵,Lock 'n' Chase,6.417142857142857,
+,Taz,6.4133848133848135,CX2699
 大金刚,Donkey Kong,6.4125000000000005,2451
 太阳系战机,Gyruss,6.40962962962963,PB5080
-,Planet Patrol,6.407407407407407,
+行星巡逻队,Planet Patrol,6.407407407407407,
 ,Fast Food,6.407070707070707,
 ,Circus Atari,6.391836734693877,
 回避,Dodge 'Em,6.390909090909091,CX2637
 拳击袋鼠,Kangaroo,6.360283687943262,CX2689
 功夫之王,Kung-Fu Master,6.341176470588235,AG-039
 ,Laser Gates,6.315555555555556,
-,Star Wars: Return of the Jedi - Death Star Battle,6.308571428571429,
-,Rescue Terra I,6.3062499999999995,
-,Fantastic Voyage,6.302857142857143,
+星球大战-死星战役,Star Wars: Return of the Jedi - Death Star Battle,6.308571428571429,
+营救地球I,Rescue Terra I,6.3062499999999995,
+神奇旅程,Fantastic Voyage,6.302857142857143,
 星际奇兵,Star Raiders,6.282269503546099,CX2660
-,Tron: Deadly Discs,6.282051282051282,
-,Cookie Monster Munch,6.274358974358974,
+特龙-致命飞盘,Tron: Deadly Discs,6.282051282051282,
+饼干怪兽明希,Cookie Monster Munch,6.274358974358974,
 嘉年华,Carnival,6.2733333333333325,2468
-,Grand Prix,6.26111111111111,
-,Kool-Aid Man,6.259310344827586,
+,Grand Prix,6.26111111111111,AX-014
+酷爱人,Kool-Aid Man,6.259310344827586,
 ,Night Stalker,6.248275862068965,
 ,Mogul Maniac,6.242857142857143,
 ,G.I. Joe: Cobra Strike,6.238095238095238,
 ,RealSports Volleyball,6.228083028083028,
 掠夺者,Marauder,6.227586206896552,7-005
 ,Skydiver,6.226870748299319,
-,Encounter at L-5,6.223076923076923,
-,Eggomania,6.211290322580646,
+L5遭遇战,Encounter at L-5,6.223076923076923,
+疯狂接蛋,Eggomania,6.211290322580646,
 ,Infiltrate,6.197843137254901,
 小猪！,Oink!,6.1803921568627445,AX-023
 夺宝奇兵,Raiders of the Lost Ark,6.17431693989071,CX2659
-,Demons to Diamonds,6.173137973137973,
-,Sorcerer's Apprentice,6.171666666666667,
-,Alien,6.170731707317073,
-,Submarine Commander,6.156613756613757,
-,Star Voyager,6.151111111111111,
+妖怪钻石,Demons to Diamonds,6.173137973137973,
+魔法师的徒弟,Sorcerer's Apprentice,6.171666666666667,
+异型,Alien,6.170731707317073,
+潜艇指挥官,Submarine Commander,6.156613756613757,
+宇宙创世纪,Star Voyager,6.151111111111111,
 ,Towering Inferno,6.149107142857143,
 拳击,Boxing,6.116931216931217,AG-002
-,Tape Worm,6.116666666666666,
-,Crazy Climber,6.111111111111111,
+磁带贪食虫,Tape Worm,6.116666666666666,
+疯狂爬楼工,Crazy Climber,6.111111111111111,
 ,3-D Brickaway,6.108333333333333,
 超级眼镜蛇,Super Cobra,6.095370370370371,PB5320
 网球,Tennis,6.094573643410853,AG-007
-,Buck Rogers: Planet of Zoom,6.051960784313725,
-,Space Battle,6.042857142857143,
+巴克罗杰斯-行星飞行,Buck Rogers: Planet of Zoom,6.051960784313725,
+太空大战,Space Battle,6.042857142857143,
 空中竞技,Sky Jinks,6.024761904761905,AG-019
-,Time Pilot,6.015384615384615,
+时空战机,Time Pilot,6.015384615384615,
 ,Gopher,6.012121212121213,
 捉鬼敢死队,Ghostbusters,6.007692307692308,AZ-108-04
 ,Video Pinball,6.006896551724138,
-,Gorf,5.983333333333333,
+高夫,Gorf,5.983333333333333,
 ,Trick Shot,5.976190476190475,
 激光炮,Laser Blast,5.965909090909091,AG-008
 ,Armor Battle,5.958333333333333,
 塔坦克哈姆的冒险,Tutankham,5.9558333333333335,PB5340
-,Entombed,5.946153846153846,
-,Threshold,5.942222222222222,
+埋葬,Entombed,5.946153846153846,
+临界点,Threshold,5.942222222222222,
 超人,Superman,5.9185185185185185,CX2631
-,Crash Dive,5.86,
-,Beany Bopper,5.85615763546798,
-,Bowling,5.854901960784314,
-,Amidar,5.8315789473684205,
+双栖战机,Crash Dive,5.86,
+射击豆豆,Beany Bopper,5.85615763546798,
+保龄球,Bowling,5.854901960784314,
+,Amidar,5.8315789473684205,PB5310
 矿工2049,Miner 2049er,5.823809523809524,7-008
-,Sky Skipper,5.8133333333333335,
+天空船长,Sky Skipper,5.8133333333333335,
 ,Championship Soccer,5.8,
-,Journey Escape,5.7846153846153845,
-,Adventures of Tron,5.783333333333333,
+逃脱之旅,Journey Escape,5.7846153846153845,
+,Adventures of Tron,5.783333333333333,4317
 狮身人面像之谜,Riddle of the Sphinx,5.7683333333333335,IA3600
-,Blueprint,5.755172413793104,
+蓝本,Blueprint,5.755172413793104,
 短程赛车,Dragster,5.74,AG-001
 ,Halloween,5.691190476190475,
 汉堡时代,BurgerTime,5.6891891891891895,4518
-,Deadly Duck,5.674193548387097,
+亡命鸭子,Deadly Duck,5.674193548387097,
 冒险者,Venture,5.67,2457
-,Space Cavern,5.65625,
-,Basketball,5.655737704918033,
-,Assault,5.614285714285714,
-,Air-Sea Battle,5.602898550724638,
-,Pooyan,5.582795698924731,
-,Bermuda Triangle,5.582352941176471,
+太空洞穴,Space Cavern,5.65625,
+篮球,Basketball,5.655737704918033,CX2624
+星河战队,Assault,5.614285714285714,CA281
+空海战,Air-Sea Battle,5.602898550724638,CX2602
+三只小猪,Pooyan,5.582795698924731,
+百慕大三角,Bermuda Triangle,5.582352941176471,112-007
 夜间赛车,Night Driver,5.5772357723577235,CX2633
 立体空战,Zaxxon,5.564864864864865,2454
-,King Kong,5.558620689655172,
-,The Challenge of... NEXAR,5.5249999999999995,
-,Star Wars: Jedi Arena,5.517948717948718,
-,Pigs in Space starring Miss Piggy,5.515555555555555,
-,Reactor,5.510416666666667,
-,Cosmic Creeps,5.507142857142857,
-,Raft Rider,5.504,
-,Rampage,5.5,
+金刚,King Kong,5.558620689655172,
+内克萨的挑战,The Challenge of... NEXAR,5.5249999999999995,
+星球大战-绝地武土,Star Wars: Jedi Arena,5.517948717948718,
+太空猪,Pigs in Space starring Miss Piggy,5.515555555555555,
+原子炉,Reactor,5.510416666666667,
+宇宙怪兽,Cosmic Creeps,5.507142857142857,
+竞速筏,Raft Rider,5.504,
+怪兽拆楼,Rampage,5.5,
 ,Outlaw,5.45906432748538,
 视频奥林匹克砖块,Video Olympics,5.4375,CX2621
 吃豆人,Pac-Man,5.40327868852459,CX2646
-,China Syndrome,5.35,
+中国综合症,China Syndrome,5.35,SA-205
 ,Casino,5.338709677419355,
-,Strawberry Shortcake: Musical Match-Ups,5.332000000000001,
-,Dark Chambers,5.321428571428571,
+水果音乐比赛,Strawberry Shortcake: Musical Match-Ups,5.332000000000001,
+暗黑密室,Dark Chambers,5.321428571428571,
 ,Gangster Alley,5.315555555555556,
-,Golf,5.308333333333334,
-,Space Jockey,5.257894736842106,
-,Cosmic Swarm,5.25625,
-,Surround,5.189130434782609,
+高尔夫,Golf,5.308333333333334,
+太空骑士,Space Jockey,5.257894736842106,
+宇宙昆虫,Cosmic Swarm,5.25625,CM-003
+双虫斗,Surround,5.189130434782609,
 视频国际象棋,Video Chess,5.181981981981982,CX2645
-,Canyon Bomber,5.156445993031359,
-,Fire Fighter,5.12,
-,Hangman,5.1078947368421055,
-,Lost Luggage,5.1,
-,Donkey Kong Junior,5.094594594594595,
+峡谷轰炸,Canyon Bomber,5.156445993031359,
+救火队员,Fire Fighter,5.12,
+刽子手,Hangman,5.1078947368421055,
+遗失的行李,Lost Luggage,5.1,
+大金刚JR,Donkey Kong Junior,5.094594594594595,
 ,Missile War,5.081818181818182,
 ,Human Cannonball,5.06703580657069,
-,Spacechase,5.04516129032258,
+太空追逐,Spacechase,5.04516129032258,
 ,Math Gran Prix,5.035015873015873,
-,3-D Tic-Tac-Toe,5.024,
+3D井字棋,3-D Tic-Tac-Toe,5.024,CX2618
 ,Video Checkers,5.020689655172413,
-,RealSports Soccer,4.995833333333334,
+拟真足球,RealSports Soccer,4.995833333333334,
 ,Word Zapper,4.964705882352941,
-,Double Dragon,4.910869565217391,
-,CocoNuts,4.903225806451613,
+双截龙,Double Dragon,4.910869565217391,
+接椰子,CocoNuts,4.903225806451613,
 ,I Want My Mommy,4.898550724637681,
-,Desert Falcon,4.85,
-,Porky's,4.79375,
+沙漠猎鹰,Desert Falcon,4.85,
+反斗星波吉,Porky's,4.79375,
 ,Slot Racers,4.7299999999999995,
-,Football,4.715503875968992,
-,Springer,4.6923076923076925,
-,RealSports Baseball,4.6230769230769235,
-,Backgammon,4.619704433497538,
-,Codebreaker,4.618181818181818,
-,Blackjack,4.566689895470383,
-,Crypts of Chaos,4.559259259259259,
-,SwordQuest: FireWorld,4.5297297297297305,
-,Space War,4.505714285714285,
-,SwordQuest: EarthWorld,4.460662525879917,
+足球,Football,4.715503875968992,
+跳跃人,Springer,4.6923076923076925,
+拟真棒球,RealSports Baseball,4.6230769230769235,
+西洋双陆棋,Backgammon,4.619704433497538,CX2617
+GBA金手指密码工具,Codebreaker,4.618181818181818,
+21点,Blackjack,4.566689895470383,
+混沌战士,Crypts of Chaos,4.559259259259259,
+剑斗士-火之世界,SwordQuest: FireWorld,4.5297297297297305,
+太空大战,Space War,4.505714285714285,
+剑斗士-土之世界,SwordQuest: EarthWorld,4.460662525879917,
 ,Racquetball,4.426923076923076,
-,Home Run,4.3559090909090905,
-,Miniature Golf,4.309302325581395,
+全垒打,Home Run,4.3559090909090905,
+迷你高尔夫,Miniature Golf,4.309302325581395,
 ,Hunt & Score,4.293103448275862,
 ,Basic Math,4.285714285714286,
 ,Sneak 'n Peek,4.2555555555555555,
-,Brain Games,4.235714285714286,
+大脑游戏,Brain Games,4.235714285714286,
 ,Star Ship,4.234883720930233,
-,Chase the Chuck Wagon,4.172380952380952,
-,Flag Capture,4.148717948717949,
-,Street Racer,4.1049999999999995,
-,SwordQuest: WaterWorld,4.089655172413793,
-,The Texas Chainsaw Massacre,3.9641337386018236,
-,Bugs,3.9466666666666668,
-,Slot Machine,3.88,
-,Airlock,3.7875,
-,Fire Fly,3.5444444444444447,
-,Skeet Shoot,3.4166666666666665,
+追赶马车,Chase the Chuck Wagon,4.172380952380952,
+夺旗赛,Flag Capture,4.148717948717949,
+街头赛车,Street Racer,4.1049999999999995,
+剑斗士-水之世界,SwordQuest: WaterWorld,4.089655172413793,
+德州链锯大屠杀,The Texas Chainsaw Massacre,3.9641337386018236,
+杀虫,Bugs,3.9466666666666668,
+售货机,Slot Machine,3.88,
+密封舱,Airlock,3.7875,DA1004
+飞火,Fire Fly,3.5444444444444447,
+射飞碟,Skeet Shoot,3.4166666666666665,
 ET外星人,E.T. the Extra-Terrestrial,3.18731884057971,CX2674

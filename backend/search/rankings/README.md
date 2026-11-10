@@ -74,7 +74,9 @@
 
 - `tools/mobygames/mobygames-ranking.user.js` 按机种抓取 MobyGames 排行，直接写成上述四列，
   中文名与卡带 ID 留空，并按英文名去重。
-- 中文名与卡带 ID 由人工整理流程补入。
+- 中文名与卡带 ID 由人工整理流程补入；可用 `tools/rankings/fill_data.py` 自动补全：
+  中文名查 `../catalog/` 名录，卡带 ID 只取 MAME / No-Intro DAT 里能逐字核对的值，
+  查不到就留空。用法见 [`tools/rankings/README.md`](../../../tools/rankings/README.md)。
 - **重新跑抓取脚本会覆盖已有中文名与卡带 ID**（脚本只写空列），重抓后需要重新补入。
 
 ## 生效方式
