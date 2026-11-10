@@ -94,7 +94,7 @@ touch /mnt/x/xgame/runtime/.mounted      # 运行时目录（没单独指定就�
 ```
 
 「游戏发现」页第一次用时服务会自己把索引建好，不用管；榜单 CSV 放进
-`backend/search/ranking/ranking.csv` 后重启一次也会自动加载。
+`backend/search/rankings/ranking.csv` 后重启一次也会自动加载。
 细节见 [`docs/modules/game-discover.md`](docs/modules/game-discover.md)。
 
 ### 注册账号
@@ -349,7 +349,7 @@ Flash 播放页的标题栏按钮是「画质」「窗口」「存档管理」�
 按钮能只看自己已经收录的游戏。已入库的行点中文名或英文名直接进播放页（没上传本体的会提示先上传）；
 **单击卡带 ID 就复制到剪贴板**，方便直接拿去搜或建条目。
 
-榜单数据来自 `backend/search/ranking/ranking.csv`（五列：
+榜单数据来自 `backend/search/rankings/ranking.csv`（五列：
 `序号,机种名称,中文名,英文名,游戏卡带ID`，格式见该目录的 `README.md`）。放好文件后跑一次
 `make index`，或者重启一次服务（启动时会自动加载）。
 

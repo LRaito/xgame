@@ -134,8 +134,8 @@ backend/
   storage/                   # 跨模块存储
     types.py / local.py      # 协议 / LocalStorage
     access.py                # 流式下载响应
-  search/csv/                # 检索名录 CSV
-  search/ranking/            # 榜单 CSV
+  search/catalog/            # 检索名录 CSV
+  search/rankings/           # 榜单 CSV
 tests/                       # pytest
 packaging/windows/           # Windows 解压即用包
 docs/                        # architecture / data_dict / modules / common / plans

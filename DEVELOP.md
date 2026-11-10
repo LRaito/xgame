@@ -185,8 +185,8 @@ cd frontend && npm run lint
 
 「游戏发现」的数据源：
 
-- `backend/search/csv/` 下 37 个中英文名录 CSV（检索）。
-- `backend/search/ranking/ranking.csv`（榜单，五列：`序号,机种名称,中文名,英文名,游戏卡带ID`）。
+- `backend/search/catalog/` 下 37 个中英文名录 CSV（检索）。
+- `backend/search/rankings/ranking.csv`（榜单，五列：`序号,机种名称,中文名,英文名,游戏卡带ID`）。
 
 它们构建成一个只读库 `<数据根>/db/game.db`：
 
@@ -273,5 +273,5 @@ Docker 可能先于 WSL 发行版起来，bind 把空目录挂进了容器。
 | [`docs/data_dict.md`](docs/data_dict.md) | 改代码的人 | 表结构与磁盘路径 |
 | [`docs/`](docs/README.md) | 改代码的人 / AI 助手 | 各功能的实现规格 |
 | [`packaging/windows/README.md`](packaging/windows/README.md) | 打包的人 | Windows 包构建 |
-| [`backend/search/csv/README.md`](backend/search/csv/README.md) | 维护数据的人 | 检索 CSV 格式 |
-| [`backend/search/ranking/README.md`](backend/search/ranking/README.md) | 维护数据的人 | 榜单 CSV 格式 |
+| [`backend/search/catalog/README.md`](backend/search/catalog/README.md) | 维护数据的人 | 检索 CSV 格式 |
+| [`backend/search/rankings/README.md`](backend/search/rankings/README.md) | 维护数据的人 | 榜单 CSV 格式 |

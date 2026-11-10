@@ -9,7 +9,7 @@
 
 数据源两份，都在 `backend/search/` 下：
 
-- `csv/` 下的一份份 `中文,英文` 两列名录（UTF-8 带 BOM、CRLF、无表头），构成检索索引；
+- `catalog/` 下的一份份 `中文,英文` 两列名录（UTF-8 带 BOM、CRLF、无表头），构成检索索引；
   机种由文件名经 `platforms.SEARCH_CSV_CONSOLE_NAMES` 推导，不再写在行里；
 - `ranking/ranking.csv` 的五列榜单（`序号,机种名称,中文名,英文名,游戏卡带ID`），构成游戏榜单。
 
@@ -573,7 +573,7 @@ def _write_consoles(conn: sqlite3.Connection, groups: dict[str, list[str]]) -> d
 def _console_name_for(csv_file: Path) -> str:
     """检索 CSV 的机种身份：文件名 stem 经映射表还原；未登记时按 stem 兜底。
 
-    兜底是为了让 `--csv-dir` 指向自定义目录时仍能用；真实 `backend/search/csv/` 目录的
+    兜底是为了让 `--csv-dir` 指向自定义目录时仍能用；真实 `backend/search/catalog/` 目录的
     文件名完整性由 `tests/test_platforms.py` 钉住。
     """
     return SEARCH_CSV_CONSOLE_NAMES.get(csv_file.stem, csv_file.stem)

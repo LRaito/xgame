@@ -342,5 +342,5 @@
 - 榜单版本独立于检索版本；加榜单表不 bump `SCHEMA_VERSION`。
 - 榜单与库存的关联在请求期做，不落库、不进索引、不缓存。
 - 榜单 CSV 格式见
-  [`backend/search/ranking/README.md`](../backend/search/ranking/README.md)。
+  [`backend/search/rankings/README.md`](../backend/search/rankings/README.md)。
 - 详细行为见 [`game-discover.md`](modules/game-discover.md)。

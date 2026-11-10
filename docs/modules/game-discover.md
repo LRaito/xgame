@@ -14,8 +14,8 @@
 - 榜单读取方是 `ranking_service.py::GameRankingService`。
 - 机种命名的唯一权威是 `backend/games/platforms.py` 的机种词表。
 - 数据契约的权威是 `docs/data_dict.md` 的「游戏发现索引」。
-- 榜单 CSV 的格式契约见 `backend/search/ranking/README.md`。
-- 检索 CSV 的目录约定见 `backend/search/csv/README.md`。
+- 榜单 CSV 的格式契约见 `backend/search/rankings/README.md`。
+- 检索 CSV 的目录约定见 `backend/search/catalog/README.md`。
 - 前端页面是 `frontend/src/views/games/discover/index.vue`。
 
 ## 职责
@@ -33,12 +33,12 @@
 ## 依赖
 
 - `<数据根>/db/game.db` 与 SQLite FTS5。
-- `backend/search/csv/` 的 37 个名录 CSV 与 `backend/search/ranking/ranking.csv`。
+- `backend/search/catalog/` 的 37 个名录 CSV 与 `backend/search/rankings/ranking.csv`。
 - `make index` 与启动时的自动补建。
 
 ## 数据与路径
 
-- 检索数据源是 `backend/search/csv/` 下的 37 个 CSV。
+- 检索数据源是 `backend/search/catalog/` 下的 37 个 CSV。
 - 每行两列：`中文,英文`；UTF-8 带 BOM、CRLF、无表头。
 - 机种由文件名决定，经 `platforms.SEARCH_CSV_CONSOLE_NAMES` 映射回机种名。
 - 规模约 5 万余行、36 个机种。
@@ -46,8 +46,8 @@
 - 只中文或只英文相同的行保留，那是不同地区版本。
 - 检索侧同一机种的多个原始写法合并成一行 console。
 - 合并结果：36 个原始机种 → 32 项（23 统一 + 9 未收录）。
-- 榜单数据源是 `backend/search/ranking/ranking.csv`，五列（`序号,机种名称,中文名,英文名,游戏卡带ID`）。
-- 榜单放单独目录；混进 `csv/` 会被当成坏行。
+- 榜单数据源是 `backend/search/rankings/ranking.csv`，五列（`序号,机种名称,中文名,英文名,游戏卡带ID`）。
+- 榜单放单独目录；混进 `catalog/` 会被当成坏行。
 - 索引库路径是 `<STORAGE_ROOT>/db/game.db`（`GAME_INDEX_FILENAME`）。
 - 索引在数据根里，与 `app.db` 无外键关系，是独立派生只读库。
 - 索引刻意不参与备份，因为它可从 CSV 完整重建。
@@ -256,5 +256,5 @@
 - [前端框架与交互](./frontend.md)
 - [架构设计](../architecture.md)
 - [数据字典](../data_dict.md)
-- [检索名录说明](../../backend/search/csv/README.md)
-- [榜单 CSV 说明](../../backend/search/ranking/README.md)
+- [检索名录说明](../../backend/search/catalog/README.md)
+- [榜单 CSV 说明](../../backend/search/rankings/README.md)

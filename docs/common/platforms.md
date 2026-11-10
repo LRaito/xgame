@@ -31,8 +31,8 @@
 ## 依赖
 
 - EmulatorJS 的 system key 与 core 列表。
-- `backend/search/csv/` 的文件名映射（`SEARCH_CSV_CONSOLE_NAMES`）与
-  `backend/search/ranking/ranking.csv` 的机种写法。
+- `backend/search/catalog/` 的文件名映射（`SEARCH_CSV_CONSOLE_NAMES`）与
+  `backend/search/rankings/ranking.csv` 的机种写法。
 - 前端 `constants/gameTypes.js` 只保留图标、描述等纯 UI 元数据。
 
 ## 数据与路径

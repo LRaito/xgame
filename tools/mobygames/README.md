@@ -178,7 +178,7 @@ https://www.mobygames.com/platform/<slug>/sort:-moby_score/
 
 MobyGames 的排行行只提供：MobyGames game id、标题、发行年份、类型、Moby Score。**没有卡带 ID**。
 
-- `backend/search/ranking/ranking.csv` 的第 5 列「游戏卡带ID」必须另找来源（如 Vimm's Lair），MobyGames 只能提供名次、中文名、英文名与排序依据。
+- `backend/search/rankings/ranking.csv` 的第 5 列「游戏卡带ID」必须另找来源（如 Vimm's Lair），MobyGames 只能提供名次、中文名、英文名与排序依据。
 - 如果直接把 MobyGames 的平台名写进 `机种名称` 列，当前 `backend/games/platforms.py` 的别名认不出下面 10 个写法，榜单机种会被归为 `raw:*`：
 
   `Nintendo 64`、`Nintendo DS`、`SEGA 32X`、`SEGA Saturn`、`SEGA Master System`、

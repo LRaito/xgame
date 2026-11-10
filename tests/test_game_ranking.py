@@ -219,8 +219,8 @@ def test_parse_ranking_csv_rejects_non_utf8(tmp_path):
 
 
 def test_ranking_csv_lives_outside_the_search_csv_dir():
-    """榜单 CSV 不能放进 backend/search/csv/：那个目录会被整目录扫成检索索引。"""
-    assert RANKING_CSV_PATH.parent.name == "ranking"
+    """榜单 CSV 不能放进 backend/search/catalog/：那个目录会被整目录扫成检索索引。"""
+    assert RANKING_CSV_PATH.parent.name == "rankings"
     assert SEARCH_CSV_DIR not in RANKING_CSV_PATH.parents
 
 
