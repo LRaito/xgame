@@ -52,11 +52,12 @@ _EXPECTED_PLATFORMS = ["nes", "snes", "segaMD", None]
 
 
 def _write_csv(path, rows):
-    # 真实名录就是 UTF-8 带 BOM + CRLF，csv 模块负责处理引号
+    # 真实名录就是 UTF-8 带 BOM + CRLF、首行 `中文名,英文名` 表头
     import csv
 
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\r\n")
+        writer.writerow(["中文名", "英文名"])
         writer.writerows(rows)
 
 
@@ -184,7 +185,7 @@ def test_build_index_is_idempotent_and_overwrites(csv_dir, index_path):
 def test_build_index_rejects_bad_row(tmp_path):
     source = tmp_path / "bad"
     source.mkdir()
-    (source / "坏.csv").write_text("中文,英文,多余\n", encoding="utf-8")
+    (source / "坏.csv").write_text("中文名,英文名,多余\n", encoding="utf-8")
     with pytest.raises(IndexBuildError, match="两列|2 列"):
         build_index(source, tmp_path / "db" / "game.db")
 
@@ -309,7 +310,7 @@ def test_ensure_game_index_tolerates_broken_csv(tmp_path):
     """名录坏了也不能拦住服务启动（best-effort）。"""
     source = tmp_path / "bad"
     source.mkdir()
-    (source / "坏.csv").write_text("中文,英文,多余\n", encoding="utf-8")
+    (source / "坏.csv").write_text("中文名,英文名,多余\n", encoding="utf-8")
 
     assert ensure_game_index(_settings(tmp_path), csv_dir=source, ranking_csv=None) is None
     assert not (tmp_path / "storage" / "db" / "game.db").exists()

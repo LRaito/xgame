@@ -482,8 +482,10 @@ def test_search_csv_rows_are_two_columns_with_bom_and_crlf():
         assert raw.startswith(b"\xef\xbb\xbf"), path.name
         assert raw.count(b"\r\n") == raw.count(b"\n"), path.name
         with path.open(encoding="utf-8-sig", newline="") as handle:
-            for line_no, row in enumerate(csv.reader(handle), start=1):
-                assert len(row) == 2, f"{path.name} 第 {line_no} 行有 {len(row)} 列"
+            rows = list(csv.reader(handle))
+        assert rows[0] == ["中文名", "英文名"], path.name
+        for line_no, row in enumerate(rows, start=1):
+            assert len(row) == 2, f"{path.name} 第 {line_no} 行有 {len(row)} 列"
 
 
 def _ranking_csv_consoles() -> set[str]:

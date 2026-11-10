@@ -39,7 +39,7 @@
 ## 数据与路径
 
 - 检索数据源是 `backend/search/catalog/` 下的 37 个 CSV。
-- 每行两列：`中文,英文`；UTF-8 带 BOM、CRLF、无表头。
+- 每行两列：`中文名,英文名`；首行是表头，UTF-8 带 BOM、CRLF。
 - 机种由文件名决定，经 `platforms.SEARCH_CSV_CONSOLE_NAMES` 映射回机种名。
 - 规模约 5 万余行、36 个机种。
 - 按 `(机种原始名,中文,英文)` 三元组去重：52,611 → 51,359 行。

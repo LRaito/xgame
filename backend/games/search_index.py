@@ -9,7 +9,7 @@
 
 数据源两份，都在 `backend/search/` 下：
 
-- `catalog/` 下的一份份 `中文,英文` 两列名录（UTF-8 带 BOM、CRLF、无表头），构成检索索引；
+- `catalog/` 下的一份份 `中文名,英文名` 两列名录（UTF-8 带 BOM、CRLF、首行表头），构成检索索引；
   机种由文件名经 `platforms.SEARCH_CSV_CONSOLE_NAMES` 推导，不再写在行里；
 - `ranking/ranking.csv` 的五列榜单（`序号,机种名称,中文名,英文名,游戏卡带ID`），构成游戏榜单。
 
@@ -131,6 +131,9 @@ _RANKING_COLUMNS = 5
 # 旧版榜单表头第三格。看到它在表头里要给出明确的升级提示，避免四列旧数据被当成
 # 「中文名,英文名」静默解析。
 _RANKING_OLD_TITLE_HEADER = "游戏名称"
+# 检索名录的表头。真实目录里的 CSV 都带这一行；自定义 `--csv-dir` 可以不带，所以按可选处理：
+# 只跳过**第一行**且内容恰好是这两格，避免把恰巧同名的游戏当表头。
+_SEARCH_HEADER = ("中文名", "英文名")
 
 
 class IndexBuildError(Exception):
@@ -453,10 +456,12 @@ def _write_database(
         for csv_file in csv_files:
             console_name = _console_name_for(csv_file)
             for line_no, row in enumerate(_read_csv(csv_file), start=1):
+                if line_no == 1 and _is_search_header(row):
+                    continue
                 if len(row) != 2:
                     raise IndexBuildError(
                         f"{csv_file.name} 第 {line_no} 行有 {len(row)} 列，"
-                        f"应为 2 列（中文,英文）；机种由文件名决定。"
+                        f"应为 2 列（中文名,英文名）；机种由文件名决定。"
                     )
                 zh, en = (cell.strip() for cell in row)
 
@@ -592,6 +597,11 @@ def _read_csv(csv_file: Path):
     """逐行读一个源 CSV。带 BOM、CRLF，所以用 utf-8-sig + newline='' 交给 csv 模块处理引号。"""
     with csv_file.open("r", encoding="utf-8-sig", newline="") as handle:
         yield from csv.reader(handle)
+
+
+def _is_search_header(row: list[str]) -> bool:
+    """第一行是否是 `中文名,英文名` 表头（容忍单元格首尾空白）。"""
+    return len(row) == len(_SEARCH_HEADER) and tuple(cell.strip() for cell in row) == _SEARCH_HEADER
 
 
 def _load_ranking_csv(csv_path: Path) -> RankingData:
