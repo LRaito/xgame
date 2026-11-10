@@ -144,7 +144,7 @@
                 >
                     <thead>
                         <tr>
-                            <th class="game-discover__col-rank">排名</th>
+                            <th class="game-discover__col-rank">序号</th>
                             <th class="game-discover__col-score">评分</th>
                             <!-- 清空机种后是跨机种榜单，必须显示类型，否则看不出每行属于哪台机器 -->
                             <th
