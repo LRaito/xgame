@@ -2,14 +2,17 @@
     <!-- 只有一页时整块不渲染（连 margin 都不留）。用 pageCount 而不是
          `total > pageSize` 判断：total 为 0 时后者也成立，会渲染出一个空分页条 -->
     <div v-if="pageCount > 1" class="app-pagination">
+        <!-- total 不交给 EP 的 layout：它的总数是一整段文本节点，
+             没法只把数字加粗。这里自己渲染「共 N 条」，数字加粗、标签弱化 -->
         <el-pagination
             :current-page="page"
             :page-size="pageSize"
             :total="total"
-            layout="prev, pager, next, total"
+            layout="prev, pager, next"
             background
             @current-change="onPagerChange"
         />
+        <span class="app-pagination__total">共 <b>{{ total }}</b> 条</span>
     </div>
 </template>
 
@@ -135,7 +138,92 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKeydown));
 /* 表格下面居中一行 */
 .app-pagination {
     display: flex;
+    align-items: center;
     justify-content: center;
     margin-top: 20px;
+}
+
+/*
+ * 分页条外观：白色填充、无描边，选中实心品牌蓝。
+ *
+ * 白块靠页面底色（:root 的 #f1f5f9）显形：分页条在表格卡片之外，
+ * 不要再给 .app-pagination 加白色底，否则两者会糊成一片。
+ *
+ * 只覆盖 EP 的内部结构样式，颜色、尺寸、圆角、焦点环全部取 index.css 的
+ * token。EP 的 pagination 变量在这里逐项对齐，避免出现第二套色值。
+ */
+.app-pagination :deep(.el-pagination) {
+    --el-pagination-font-size: var(--app-font-size-sm);
+    --el-pagination-border-radius: var(--app-radius-control-sm);
+    /* is-background 下页码与箭头的填充色 */
+    --el-pagination-button-bg-color: var(--surface);
+    /* 页码与箭头用正文色（01 里的深色数字），总数标签单独弱化 */
+    --el-pagination-button-color: var(--app-text);
+    --el-pagination-hover-color: var(--app-color-selected-fg);
+    --el-pagination-button-disabled-bg-color: transparent;
+    --el-pagination-button-disabled-color: var(--app-color-disabled-text);
+    --el-pagination-item-gap: 6px;
+}
+
+/* EP is-background 每个格子左右各 4px（相邻即 8px），这里收到 3px 凑 6px 间距 */
+.app-pagination :deep(.el-pagination.is-background .el-pager li),
+.app-pagination :deep(.el-pagination.is-background .btn-prev),
+.app-pagination :deep(.el-pagination.is-background .btn-next) {
+    margin: 0 3px;
+}
+/* 上一页不再额外缩进（EP 默认给它 16px），右侧靠 total 的 3px 补成同一间距 */
+.app-pagination :deep(.el-pagination.is-background .btn-prev) {
+    margin-left: 0;
+}
+/* 总数自己在模板里渲染：数字加粗、正文色，两侧文字用弱化色。
+   布局里去掉 total 后 next 成了最后一项，EP 用 !important 清掉了它的右外边距，
+   所以这里给 6px 左外边距就是唯一的间距。 */
+.app-pagination__total {
+    margin-left: 6px;
+    color: var(--app-text-muted);
+    font-size: var(--app-font-size-sm);
+    white-space: nowrap;
+}
+.app-pagination__total b {
+    color: var(--app-text);
+    font-weight: 600;
+}
+
+/* 悬停：浅蓝底 + 深蓝字。省略号（li.more）同样是按钮，一起给 */
+.app-pagination :deep(.el-pagination.is-background .el-pager li:hover:not(.is-active):not(.is-disabled)),
+.app-pagination :deep(.el-pagination.is-background .btn-prev:hover:not(:disabled):not(.is-disabled)),
+.app-pagination :deep(.el-pagination.is-background .btn-next:hover:not(:disabled):not(.is-disabled)) {
+    background-color: var(--app-color-selected-bg);
+    color: var(--app-color-selected-fg);
+}
+
+/* 选中：实心品牌蓝 + 白字。字号不变，只把 EP 的 700 收回到 600 */
+.app-pagination :deep(.el-pagination.is-background .el-pager li.is-active) {
+    background-color: var(--app-color-primary);
+    color: var(--el-color-white);
+    font-weight: 600;
+}
+
+/* 到头时箭头不留灰块，只留浅灰图标 */
+.app-pagination :deep(.el-pagination.is-background .btn-prev:disabled),
+.app-pagination :deep(.el-pagination.is-background .btn-prev.is-disabled),
+.app-pagination :deep(.el-pagination.is-background .btn-next:disabled),
+.app-pagination :deep(.el-pagination.is-background .btn-next.is-disabled) {
+    background-color: transparent;
+    color: var(--app-color-disabled-text);
+}
+
+/* 箭头图标与页码视觉同号（EP 默认 12px） */
+.app-pagination :deep(.el-pagination .btn-prev .el-icon),
+.app-pagination :deep(.el-pagination .btn-next .el-icon) {
+    font-size: var(--app-font-size-md);
+}
+
+/* 键盘焦点沿用全站焦点 token（EP 默认是 1px 内侧描边） */
+.app-pagination :deep(.el-pagination .el-pager li:focus-visible),
+.app-pagination :deep(.el-pagination .btn-prev:focus-visible),
+.app-pagination :deep(.el-pagination .btn-next:focus-visible) {
+    outline: var(--app-focus-axis) solid var(--app-focus-ring-light);
+    outline-offset: var(--app-focus-offset);
 }
 </style>
