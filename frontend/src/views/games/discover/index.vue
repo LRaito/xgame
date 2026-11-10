@@ -27,7 +27,7 @@
                     clearable
                     @keyup.enter="searchNow"
                     @input="onKeywordInput"
-                    @clear="searchNow"
+                    @clear="onKeywordClear"
                 />
             </div>
 
@@ -111,7 +111,7 @@
                     clearable
                     @input="onRankingKeywordInput"
                     @keyup.enter="rankingNow"
-                    @clear="rankingNow"
+                    @clear="onRankingKeywordClear"
                 />
 
                 <!-- 已入库比例，同时是「只看已入库」的开关：单击按下，榜单就只留命中库存的行，再点一下恢复。
@@ -324,6 +324,8 @@ const searchIndexed = ref(true);
 const searchError = ref(false);
 
 let keywordTimer = 0;
+// Element Plus 点 X 会先 emit clear、再 emit input：clear 已立即查询，跳过随后那次防抖
+let skipKeywordInput = false;
 // 请求序号：防抖 + 快速改条件时，慢的旧响应不能覆盖新结果
 let searchSeq = 0;
 
@@ -440,8 +442,18 @@ function searchNow() {
 }
 
 function onKeywordInput() {
+    if (skipKeywordInput) {
+        skipKeywordInput = false;
+        return;
+    }
     clearTimeout(keywordTimer);
     keywordTimer = setTimeout(searchNow, KEYWORD_DEBOUNCE);
+}
+
+/** 点 X 清空：立即查询；紧随其后的 input 已由 skipKeywordInput 跳过。 */
+function onKeywordClear() {
+    skipKeywordInput = true;
+    searchNow();
 }
 
 // --------------------------------------------------------------------------
@@ -491,6 +503,8 @@ const rankingError = ref(false);
 let rankingLoaded = false;
 let rankingSeq = 0;
 let rankingKeywordTimer = null;
+// 同检索框：clear 已立即查询，跳过其后的 input 防抖
+let skipRankingKeywordInput = false;
 
 /** 榜单关联到的游戏还没有本体：不进播放页，提示先上传。 */
 function onMissingBodyLink() {
@@ -573,8 +587,18 @@ function rankingNow() {
 }
 
 function onRankingKeywordInput() {
+    if (skipRankingKeywordInput) {
+        skipRankingKeywordInput = false;
+        return;
+    }
     clearTimeout(rankingKeywordTimer);
     rankingKeywordTimer = setTimeout(rankingNow, KEYWORD_DEBOUNCE);
+}
+
+/** 点 X 清空：立即查询；紧随其后的 input 已由 skipRankingKeywordInput 跳过。 */
+function onRankingKeywordClear() {
+    skipRankingKeywordInput = true;
+    rankingNow();
 }
 
 async function loadRankingConsoles() {

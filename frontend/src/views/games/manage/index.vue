@@ -27,7 +27,7 @@
                     clearable
                     class="game-manage__filter-keyword"
                     @input="onKeywordInput"
-                    @clear="applyFilter"
+                    @clear="onKeywordClear"
                 />
                 <div class="game-manage__actions">
                     <app-button variant="secondary" @click="openBatchImport">批量导入</app-button>
@@ -797,6 +797,8 @@ const typeFilterOptions = computed(() => [
 const filterType = ref("");
 const filterKeyword = ref("");
 let keywordTimer = null;
+// Element Plus 点 X 会先 emit clear、再 emit input：clear 已立即查询，跳过随后那次防抖
+let skipKeywordInput = false;
 // 请求序号：防抖 + 快速翻页时，慢的旧响应不能覆盖新结果（同检索页）
 let requestSeq = 0;
 
@@ -1196,8 +1198,19 @@ function applyFilter() {
 }
 
 function onKeywordInput() {
+    if (skipKeywordInput) {
+        skipKeywordInput = false;
+        return;
+    }
     clearTimeout(keywordTimer);
     keywordTimer = setTimeout(applyFilter, 300);
+}
+
+/** 点 X 清空：立即查询；紧随其后的 input 已由 skipKeywordInput 跳过。 */
+function onKeywordClear() {
+    skipKeywordInput = true;
+    clearTimeout(keywordTimer);
+    applyFilter();
 }
 
 function clearGameFile() {
