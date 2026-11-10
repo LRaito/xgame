@@ -78,12 +78,11 @@ https://www.mobygames.com/game/?format=json&platform=<id>&order_by=moby_score
 7. 每个机种完成立即写 `<项目机种键>.csv`，列为：
 
    ```
-   序号,中文名,英文名,评分,卡带ID
+   中文名,英文名,评分,卡带ID
    ```
 
-   - `序号`：合并去重、按评分降序后的名次，从 1 开始。
    - `中文名`、`卡带ID`：脚本留空，由建索引前的人工整理流程补充。
-   - `英文名`：MobyGames 标题原文。
+   - `英文名`：MobyGames 标题原文；同一机种内唯一，重复标题保留评分最高的一条。
    - `评分`：接口返回的原始 double，如 `8.345679012345679`，不四舍五入。
    - 编码 UTF-8 带 BOM，CRLF，方便 Excel 直接打开。
 
@@ -180,8 +179,8 @@ MobyGames 的排行行只提供：MobyGames game id、标题、发行年份、�
 
 - 脚本输出的文件名就是项目机种 id（`nes.csv`、`segaMD.csv`…），与
   `backend/search/rankings/README.md` 的契约一致，建索引时直接按文件名识别机种。
-- 中文名与卡带 ID 由脚本写成空列，需另找来源（中文名可从旧版 `ranking.csv` 或检索名录回填，
-  卡带 ID 如 Vimm's Lair）后人工补入。
+- 中文名与卡带 ID 由脚本写成空列，需另找来源（中文名可按英文名整理，卡带 ID 如 Vimm's Lair）
+  后人工补入。
 - **重新跑脚本会覆盖已有中文名与卡带 ID**，重抓后需要重新回填。
 - MobyGames 的平台名不再写入 CSV；平台对应关系只用于请求接口，见上面的平台对照表。
 

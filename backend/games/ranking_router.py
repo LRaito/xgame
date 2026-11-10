@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 
 from backend.deps import CurrentUser, GameRankingServiceDep
 from backend.errors import IndexUnavailableError
+from backend.games.search_service import PAGE_SIZE_DEFAULT
 from backend.http import json_err, json_ok
 
 router = APIRouter(prefix="/api/games/search/ranking", tags=["games"])
@@ -20,26 +21,40 @@ def game_ranking(
     _user: CurrentUser,
     service: GameRankingServiceDep,
     console: str = Query(""),
+    keyword: str = Query(""),
+    in_library: bool = Query(False),
+    page: int = Query(1),
+    page_size: int = Query(PAGE_SIZE_DEFAULT),
 ):
-    """取榜单（`console` 是统一机种键，取自 `/consoles`；不传则返回全部机种）。
+    """取榜单的一页（`console` 是统一机种键，取自 `/consoles`；不传则跨机种）。
 
+    关键词与「只看已入库」都由服务端过滤。`page` / `page_size` 越界在 service 收敛。
     榜单没加载时返回 `has_ranking: false` + 空列表（不是错误）。
-    与平台库存关联上的行会多三个字段（`game_id` / `path` / `has_body`，没命中时 `game_id`、`path`
-    为 null、`has_body` 为 false）——前端据此把中英文名渲染成真的 `<a href>`，单击进播放页；
-    关联到无本体条目时同样显示链接样式，但点击提示先上传本体。关联规则见 service。
+    与平台库存关联上的行会多三个字段（`game_id` / `path` / `has_body`）。
     """
     try:
-        page = service.get(console=console or None)
+        result = service.get(
+            console=console or None,
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+            in_library=in_library,
+        )
     except IndexUnavailableError as exc:
         return json_err(str(exc), 503)
     return json_ok(
         {
-            "indexed": page.indexed,
-            "has_ranking": page.has_ranking,
-            "console": page.console,
+            "indexed": result.indexed,
+            "has_ranking": result.has_ranking,
+            "console": result.console,
+            "page": result.page,
+            "page_size": result.page_size,
+            "total": result.total,
+            "matched_total": result.matched_total,
+            "ranking_total": result.ranking_total,
+            "linked_total": result.linked_total,
             "items": [
                 {
-                    "rank": item.rank,
                     "score": item.score,
                     "zh": item.zh,
                     "en": item.en,
@@ -49,7 +64,7 @@ def game_ranking(
                     "path": item.path,
                     "has_body": item.has_body,
                 }
-                for item in page.items
+                for item in result.items
             ],
         }
     )

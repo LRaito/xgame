@@ -8,8 +8,8 @@
 - 这个目录**随 `backend/` 一起进 api 镜像**，所以宿主机上的 `make index` 与容器里的
   启动自动补建都能用到它。
 - 目录里只放数据：不要加 `.py`（没有 `__init__.py` 时 Python 会把它当 namespace package）。
-- **游戏榜单的 CSV 不在这个目录**：它在旁边的 `../rankings/`，每个机种一个五列 CSV。这个目录会被
-  整目录扫成检索索引，五列的榜单混进来会被当成坏行。
+- **游戏榜单的 CSV 不在这个目录**：它在旁边的 `../rankings/`，每个机种一个四列 CSV。这个目录会被
+  整目录扫成检索索引，榜单行混进来会被当成坏行。
 - 数据来自外部整理的中英文对照表，行数/机种数变了不用改代码，重跑 `make index` 覆盖索引即可
   （镜像里换数据要重建镜像）。
 - **文件名 stem 经 `backend/games/platforms.py::SEARCH_CSV_CONSOLE_NAMES` 映射回机种名**

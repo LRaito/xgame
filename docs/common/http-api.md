@@ -157,8 +157,11 @@
 |---|---|---|---|
 | GET | `/api/games/search` | 需登录 | `q` / `console_id` / `page` / `page_size`，服务端分页 |
 | GET | `/api/games/search/consoles` | 需登录 | 机种下拉 `{id, name, platform_id}`，同名已合并 |
-| GET | `/api/games/search/ranking` | 需登录 | `?console=` 机种键，省略则全部机种并按评分全局降序；item 含 `rank`（机种内序号）/ `score` / `zh` / `en` / `platform` |
+| GET | `/api/games/search/ranking` | 需登录 | `console` / `keyword` / `in_library` / `page` / `page_size`，服务端分页；省略 console 则跨机种并按评分全局降序；item 含 `score` / `zh` / `en` / `platform` |
 | GET | `/api/games/search/ranking/consoles` | 需登录 | 榜单机种 `{platform, label, playable}` |
+
+- 榜单响应顶层含 `page` / `page_size` / `total` / `matched_total` / `ranking_total` / `linked_total`；
+  item 不含 rank，名次由前端按分页位置计算。
 
 ## 边界与错误
 

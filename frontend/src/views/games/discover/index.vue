@@ -100,24 +100,24 @@
                     clearable
                     :disabled="!rankingConsoles.length"
                     :options="rankingTypeOptions"
-                    @change="loadRanking"
+                    @change="rankingNow"
                 />
 
-                <!-- 榜单搜索：与检索区那个同一个 class（样式、位置、清空按钮都一样），但**纯前端**过滤
-                     ——榜单是一个机种整份取回来的，逐字即时筛，不需要防抖、也不需要回车或清空的处理
-                     （裸 v-model + clearable，computed 自己会跟着变） -->
+                <!-- 榜单搜索走后端：300ms 防抖，回车立即请求；清空也回到第一页 -->
                 <el-input
                     v-model="rankingKeyword"
                     class="game-discover__keyword"
                     placeholder="搜索中文名或英文名"
                     clearable
+                    @input="onRankingKeywordInput"
+                    @keyup.enter="rankingNow"
+                    @clear="rankingNow"
                 />
 
                 <!-- 已入库比例，同时是「只看已入库」的开关：单击按下，榜单就只留命中库存的行，再点一下恢复。
-                     数字由前端按已整份取回的 rankingItems 现算（榜单不分页），不再多打一次接口。
-                     加载中先藏起来：rankingItems 在请求成功前不会清空，否则切机种会闪一下上一个机种的数字 -->
+                     计数由后端返回；分页后不再用当前页行数当分母。 -->
                 <app-button
-                    v-if="rankingTotal && !rankingLoading"
+                    v-if="rankingStockTotal && !rankingLoading"
                     class="game-discover__stock"
                     variant="secondary"
                     size="sm"
@@ -126,7 +126,7 @@
                 >
                     <span class="game-discover__stock-label">已入库</span>
                     <span class="game-discover__stock-value">
-                        {{ rankingLinkedCount }} / {{ rankingTotal }}
+                        {{ rankingLinkedCount }} / {{ rankingStockTotal }}
                     </span>
                 </app-button>
             </div>
@@ -138,7 +138,7 @@
                 :style="{ height: rankingWrapHeight }"
             >
                 <table
-                    v-if="rankingVisibleItems.length"
+                    v-if="rankingItems.length"
                     class="game-discover__table"
                     :class="{ 'game-discover__table--all': !rankingConsole }"
                 >
@@ -160,10 +160,10 @@
                     </thead>
                     <tbody>
                         <tr
-                            v-for="item in rankingPagedItems"
-                            :key="`${item.platform}-${item.rank}`"
+                            v-for="{ item, rank } in rankingPageRows"
+                            :key="`${item.platform}-${rank}`"
                         >
-                            <td class="game-discover__rank">{{ rankingDisplayRank(item) }}</td>
+                            <td class="game-discover__rank">{{ rank }}</td>
                             <td class="game-discover__score">
                                 {{ formatRankingScore(item.score) }}
                             </td>
@@ -240,16 +240,16 @@
                 <app-empty v-else :description="rankingEmptyDescription" />
             </div>
 
-            <!-- 与检索区同款的分页条：每页行数同样由视口高度自适应。**分页在前端做**——
-                 一份榜单（一个机种）一次全取回来，翻页只是换页码、不再打接口。
+            <!-- 与检索区同款的分页条；翻页由后端重新取一页。
                  键盘翻页同样只在榜单标签亮着时开着（同页两个分页条，监听都挂在 window 上） -->
             <app-pagination
                 v-model:page="rankingPage"
-                :total="rankingVisibleTotal"
+                :total="rankingPageTotal"
                 :page-size="rankingPageSize"
                 :keyboard="activeTab === 'ranking'"
                 previous-shortcut="discover.page.prev"
                 next-shortcut="discover.page.next"
+                @change="loadRanking"
             />
         </section>
     </div>
@@ -470,64 +470,34 @@ function formatRankingScore(score) {
     return Number.isFinite(value) ? value.toFixed(2) : "—";
 }
 const rankingConsole = ref("");
-// 当前取回的榜单：选了机种就是该机种，清空后是**全部机种**（跨机种）
+// 当前页的榜单行（后端分页；不再整份取回）
 const rankingItems = ref([]);
-// 跨机种时的「整个榜单排名」：按后端返回的整份顺序编号（评分降序）。
-// 必须按整份 rankingItems 算，搜索与「只看已入库」只过滤展示，不改变这条记录在总榜里的名次。
-const rankingOverallRanks = computed(() => {
-    const ranks = new Map();
-    rankingItems.value.forEach((item, index) => {
-        ranks.set(`${item.platform}-${item.rank}`, index + 1);
-    });
-    return ranks;
-});
-// 选了机种显示机种内序号；清空机种显示整个榜单的连续名次。
-function rankingDisplayRank(item) {
-    if (rankingConsole.value) {
-        return item.rank;
-    }
-    return rankingOverallRanks.value.get(`${item.platform}-${item.rank}`) ?? item.rank;
-}
-const rankingPage = ref(1);// 「已入库」按钮按下时只展示命中库存的行（纯前端过滤，不再打接口）
+const rankingPage = ref(1);
+// 「已入库」按钮按下时只看命中库存的行（由后端过滤）
 const rankingInLibraryOnly = ref(false);
-// 榜单搜索词。与检索区的 keyword **故意分成两个**：那边是服务端 FTS（搜中英文两列、分词、剥尾部
-// 标签、支持 `mario*` 前缀），这边只是对中文名/英文名做不区分大小写的裸子串匹配，语义不同、别合并
+// 榜单搜索词走后端，输入防抖 300ms
 const rankingKeyword = ref("");
-const rankingNeedle = computed(() => rankingKeyword.value.trim().toLowerCase());
-// 这份榜单里卡带 ID 命中平台库存的行数（后端下发的 path 非空即命中）。
-// **按整份 rankingItems 算、不是当前页**——比例的口径是「这个机种的全部榜单行」；
-// 榜单现在是整份取回、前端分页，以后若改成服务端分页，这个数要挪到后端算。
-const rankingLinkedCount = computed(
-    () => rankingItems.value.filter((item) => item.path).length
-);
+// 后端返回的四个计数：分页总数、关键词命中数、该机种总数、该机种已入库数
+const rankingPageTotal = ref(0);
+const rankingMatchedTotal = ref(0);
+const rankingStockTotal = ref(0);
+const rankingLinkedCount = ref(0);
+const rankingLoading = ref(false);
+const rankingIndexed = ref(true);
+const rankingAvailable = ref(true);
+const rankingError = ref(false);
+
+// 榜单只在第一次切到榜单标签时拉清单，来回切标签不重复请求
+let rankingLoaded = false;
+let rankingSeq = 0;
+let rankingKeywordTimer = null;
 
 /** 榜单关联到的游戏还没有本体：不进播放页，提示先上传。 */
 function onMissingBodyLink() {
     noticeAction("请先上传游戏本体");
 }
-// 只按搜索词过一遍（中文名/英文名的裸子串、不区分大小写）。单独拆出来是为了空态能分清
-// 「是搜索没搜到」还是「搜到了但都没入库」——见 rankingEmptyDescription
-const rankingKeywordMatches = computed(() => {
-    const needle = rankingNeedle.value;
-    if (!needle) {
-        return rankingItems.value;
-    }
-    return rankingItems.value.filter(
-        (item) =>
-            item.zh.toLowerCase().includes(needle) ||
-            item.en.toLowerCase().includes(needle)
-    );
-});
-// 搜索与「只看已入库」是 **AND**（先按词筛、再按库存筛），真正参与分页的就是它；
-// 而按钮上的比例仍按整份 rankingItems 算（分母是这份榜单的总行数，不随过滤变）
-const rankingVisibleItems = computed(() =>
-    rankingInLibraryOnly.value
-        ? rankingKeywordMatches.value.filter((item) => item.path)
-        : rankingKeywordMatches.value
-);
-const rankingVisibleTotal = computed(() => rankingVisibleItems.value.length);
-const rankingTotal = computed(() => rankingItems.value.length);
-// 每页行数自适应（与检索区同一套行高与开销；榜单在前端分页，直接随行数重切即可）
+
+// 每页行数自适应（与检索区同一套行高与开销）。行数变化时重新取当前页。
 const rankingWrapEl = ref(null);
 const { rows: rankingPageSize, measure: measureRankingRows } = useAdaptiveRows(
     {
@@ -540,32 +510,27 @@ const { rows: rankingPageSize, measure: measureRankingRows } = useAdaptiveRows(
     onRankingRowsChange
 );
 
-// 行数变了页码可能越界：收敛到最后一页。榜单整份在前端有，不必重新请求
+// 当前页的展示行：名次 = 前面的页 + 页内位置，不落库。
+const rankingPageRows = computed(() =>
+    rankingItems.value.map((item, index) => ({
+        item,
+        rank: (rankingPage.value - 1) * rankingPageSize.value + index + 1,
+    }))
+);
+
 function onRankingRowsChange() {
+    if (!rankingLoaded) {
+        return;
+    }
     const pages = Math.max(
         1,
-        Math.ceil(rankingVisibleTotal.value / rankingPageSize.value)
+        Math.ceil(rankingPageTotal.value / rankingPageSize.value)
     );
     if (rankingPage.value > pages) {
         rankingPage.value = pages;
     }
+    loadRanking();
 }
-
-// 当前这一页真正渲染的行
-const rankingPagedItems = computed(() =>
-    rankingVisibleItems.value.slice(
-        (rankingPage.value - 1) * rankingPageSize.value,
-        rankingPage.value * rankingPageSize.value
-    )
-);
-const rankingLoading = ref(false);
-const rankingIndexed = ref(true);
-const rankingAvailable = ref(true);
-const rankingError = ref(false);
-
-// 榜单只在第一次切到榜单标签时拉一次，来回切标签不重复请求
-let rankingLoaded = false;
-let rankingSeq = 0;
 
 const rankingEmptyDescription = computed(() => {
     if (rankingError.value) {
@@ -580,16 +545,14 @@ const rankingEmptyDescription = computed(() => {
     if (!rankingConsoles.value.length) {
         return "榜单暂无数据。";
     }
-    // 搜索与「已入库」是 AND：搜到了、但都被「只看已入库」挡掉时要明说，
-    // 否则用户看着按钮上的「已入库 25 / 100」会以为是搜索词的问题
     const rawKeyword = rankingKeyword.value.trim();
-    if (rawKeyword) {
-        if (rankingInLibraryOnly.value && rankingKeywordMatches.value.length) {
-            return `匹配「${rawKeyword}」的游戏都还没入库。`;
-        }
+    if (rawKeyword && rankingMatchedTotal.value === 0) {
         return `没有匹配到中英文名含「${rawKeyword}」的游戏。`;
     }
-    if (rankingInLibraryOnly.value && rankingItems.value.length) {
+    if (rawKeyword && rankingInLibraryOnly.value && rankingPageTotal.value === 0) {
+        return `匹配「${rawKeyword}」的游戏都还没入库。`;
+    }
+    if (rankingInLibraryOnly.value && rankingPageTotal.value === 0) {
         return rankingConsole.value
             ? "这个类型下还没有已入库的游戏。"
             : "全机种下还没有已入库的游戏。";
@@ -599,14 +562,20 @@ const rankingEmptyDescription = computed(() => {
 
 function toggleInLibraryOnly() {
     rankingInLibraryOnly.value = !rankingInLibraryOnly.value;
-    // 行数变了，页码回到第一页（否则可能停在一个已经不存在的页上）
-    rankingPage.value = 1;
+    rankingNow();
 }
 
-// 搜索词一变也回第一页（同上；打字/点 X 清空都走这里，不用再挂 @input / @clear）
-watch(rankingKeyword, () => {
+/** 条件变化：回到第 1 页并重新请求。 */
+function rankingNow() {
+    clearTimeout(rankingKeywordTimer);
     rankingPage.value = 1;
-});
+    loadRanking();
+}
+
+function onRankingKeywordInput() {
+    clearTimeout(rankingKeywordTimer);
+    rankingKeywordTimer = setTimeout(rankingNow, KEYWORD_DEBOUNCE);
+}
 
 async function loadRankingConsoles() {
     if (rankingLoaded) {
@@ -632,6 +601,7 @@ async function loadRankingConsoles() {
     }
     // 页面默认不选类型；清单加载失败就不再打榜单接口
     if (!rankingError.value) {
+        rankingPage.value = 1;
         await loadRanking();
     }
 }
@@ -639,12 +609,13 @@ async function loadRankingConsoles() {
 async function loadRanking() {
     const seq = ++rankingSeq;
     rankingLoading.value = true;
-    // 换机种 / 清空机种都回到第 1 页（换了份数据，旧页码未必还存在）
-    rankingPage.value = 1;
     try {
-        // 清空下拉时不再传 console：后端返回全部机种（跨机种榜单）
         const data = await getGameRankingAPI({
             console: rankingConsole.value || undefined,
+            keyword: rankingKeyword.value.trim() || undefined,
+            in_library: rankingInLibraryOnly.value || undefined,
+            page: rankingPage.value,
+            page_size: rankingPageSize.value,
         });
         if (seq !== rankingSeq) {
             return;
@@ -652,12 +623,21 @@ async function loadRanking() {
         rankingIndexed.value = data.indexed;
         rankingAvailable.value = data.has_ranking;
         rankingItems.value = data.items || [];
+        rankingPage.value = data.page || 1;
+        rankingPageTotal.value = data.total || 0;
+        rankingMatchedTotal.value = data.matched_total || 0;
+        rankingStockTotal.value = data.ranking_total || 0;
+        rankingLinkedCount.value = data.linked_total || 0;
         rankingError.value = false;
     } catch {
         if (seq !== rankingSeq) {
             return;
         }
         rankingItems.value = [];
+        rankingPageTotal.value = 0;
+        rankingMatchedTotal.value = 0;
+        rankingStockTotal.value = 0;
+        rankingLinkedCount.value = 0;
         rankingError.value = true;
     } finally {
         if (seq === rankingSeq) {

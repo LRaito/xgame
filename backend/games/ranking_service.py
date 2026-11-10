@@ -17,6 +17,7 @@ from pathlib import Path
 from backend.errors import IndexUnavailableError
 from backend.games.platforms import PLATFORM_BY_ID, platform_label, platform_order
 from backend.games.search_index import RANKING_SCHEMA_VERSION
+from backend.games.search_service import PAGE_SIZE_DEFAULT, PAGE_SIZE_MAX
 from backend.games.service import GameLink
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,6 @@ CartridgeLookup = Callable[[Sequence[str]], Mapping[str, GameLink]]
 
 @dataclass(frozen=True)
 class RankingItem:
-    rank: int
     score: float
     zh: str
     en: str
@@ -58,6 +58,12 @@ class RankingPage:
     has_ranking: bool
     console: str | None  # 回显的是统一机种键
     items: list[RankingItem]
+    page: int
+    page_size: int
+    total: int  # 已应用 keyword + in_library，分页用
+    matched_total: int  # 已应用 keyword，未应用 in_library
+    ranking_total: int  # 只按 console 过滤
+    linked_total: int  # 只按 console 过滤后，命中库存的行数
 
 
 @dataclass(frozen=True)
@@ -106,48 +112,95 @@ class GameRankingService:
         )
         return RankingConsoles(True, True, consoles)
 
-    def get(self, console: str | None = None) -> RankingPage:
-        """取榜单（不分页）。给了机种就只取该机种；为空时取全部机种（跨机种）。
+    def get(
+        self,
+        console: str | None = None,
+        *,
+        page: int = 1,
+        page_size: int = PAGE_SIZE_DEFAULT,
+        keyword: str = "",
+        in_library: bool = False,
+    ) -> RankingPage:
+        """取榜单的一页。`console` 为空时跨机种；关键词与已入库过滤都在服务端做。"""
+        page = max(1, int(page or 1))
+        page_size = max(1, min(int(page_size or PAGE_SIZE_DEFAULT), PAGE_SIZE_MAX))
 
-        `console` 为空就是整份榜单；页面默认不选类型，用户选中后只返回该类型。
-        """
+        def empty(indexed: bool, has_ranking: bool, chosen: str | None) -> RankingPage:
+            return RankingPage(
+                indexed, has_ranking, chosen, [], 1, page_size, 0, 0, 0, 0
+            )
+
         if not self.is_indexed():
-            return RankingPage(False, False, None, [])
+            return empty(False, False, None)
         requested = (console or "").strip()
+        chosen: str | None = None
         with self._connect() as conn:
             if not _ranking_ready(conn):
-                return RankingPage(True, False, None, [])
+                return empty(True, False, None)
             try:
                 if not requested:
-                    # 跨机种：按评分全局降序；同分按机种、机种内序号稳定排序。
+                    # 跨机种：评分全局降序；同分按自增 id 稳定排序。
                     rows = conn.execute(
-                        "SELECT platform, rank, score, zh, en, cartridge_ids FROM ranking "
-                        "ORDER BY score DESC, platform, rank"
+                        "SELECT platform, score, zh, en, cartridge_ids FROM ranking "
+                        "ORDER BY score DESC, id"
                     ).fetchall()
                     items = [_to_item(row[1:], platform=row[0]) for row in rows]
-                    chosen = None
                 else:
-                    rows = conn.execute("SELECT DISTINCT platform FROM ranking").fetchall()
-                    platforms = [row[0] for row in rows]
+                    platforms = [
+                        row[0]
+                        for row in conn.execute("SELECT DISTINCT platform FROM ranking")
+                    ]
                     if not platforms:
-                        return RankingPage(True, True, None, [])
+                        return empty(True, True, None)
                     chosen = _match_platform(platforms, requested)
                     if chosen is None:
                         # 机种不在榜单里：回显请求值 + 空列表，与检索页的过滤语义一致
-                        return RankingPage(True, True, requested, [])
+                        return empty(True, True, requested)
                     items = [
                         _to_item(row, platform=chosen)
                         for row in conn.execute(
-                            "SELECT rank, score, zh, en, cartridge_ids FROM ranking "
-                            "WHERE platform = ? ORDER BY score DESC, rank",
+                            "SELECT score, zh, en, cartridge_ids FROM ranking "
+                            "WHERE platform = ? ORDER BY score DESC, id",
                             (chosen,),
                         ).fetchall()
                     ]
             except sqlite3.Error as exc:
                 raise _broken(exc) from exc
-        # 关联放在 with 之外：先关掉只读库的连接，再去查平台库存的 app.db
-        page_items = self._attach_links(items)
-        return RankingPage(True, True, chosen, page_items)
+
+        # 关联放在 with 之外：先关掉只读库的连接，再去查平台库存的 app.db。
+        # 计数与「只看已入库」需要整份结果，所以先关联全部行，再在内存里过滤。
+        linked = self._attach_links(items)
+        ranking_total = len(linked)
+        linked_total = sum(1 for item in linked if item.path)
+
+        needle = (keyword or "").strip().casefold()
+        if needle:
+            matched = [
+                item
+                for item in linked
+                if needle in item.zh.casefold() or needle in item.en.casefold()
+            ]
+        else:
+            matched = linked
+        matched_total = len(matched)
+
+        filtered = [item for item in matched if item.path] if in_library else matched
+        total = len(filtered)
+        pages = max(1, (total + page_size - 1) // page_size)
+        page = min(page, pages)
+        offset = (page - 1) * page_size
+        return RankingPage(
+            True,
+            True,
+            chosen,
+            filtered[offset : offset + page_size],
+            page,
+            page_size,
+            total,
+            matched_total,
+            ranking_total,
+            linked_total,
+        )
 
     def _attach_links(self, items: list[RankingItem]) -> list[RankingItem]:
         """把榜单行关联到平台库存的游戏（命中才有 `game_id` / `path`）。
@@ -251,7 +304,7 @@ def _to_console(platform: str, raw_console: str) -> RankingConsole:
 
 
 def _to_item(row: tuple, platform: str) -> RankingItem:
-    rank, score, zh, en, ids_text = row
+    score, zh, en, ids_text = row
     try:
         ids = json.loads(ids_text)
     except (TypeError, ValueError) as exc:
@@ -259,7 +312,6 @@ def _to_item(row: tuple, platform: str) -> RankingItem:
     if not isinstance(ids, list):
         raise _broken(ValueError(f"cartridge_ids 不是数组：{ids_text!r}"))
     return RankingItem(
-        rank=int(rank),
         score=float(score),
         zh=str(zh),
         en=str(en),

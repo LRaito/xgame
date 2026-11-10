@@ -327,10 +327,11 @@
 | `console` | 检索的统一机种：`id` / `name` / `platform_id` / `raw_names` |
 | `game` | 名录一行：`id` / `console_id` / `zh` / `en` / `src` |
 | `game_fts` | FTS5 全文索引，contentless，`zh_uni` / `en_uni` |
-| `ranking` | 榜单一行：`platform` / `console` / `rank` / `score` / `zh` / `en` / `cartridge_ids` |
+| `ranking` | 榜单一行：`id` / `platform` / `console` / `score` / `zh` / `en` / `cartridge_ids` |
 | `meta` | 键值元信息：检索版本、榜单版本与指纹 |
 | `idx_game_console` | `game(console_id, en)` 索引 |
 | `idx_console_platform` | `console(platform_id)` 索引 |
+| `uq_ranking_platform_en` | `ranking(platform, en)` 唯一索引，同一机种内英文名唯一 |
 | `idx_ranking_score` | `ranking(score DESC)`，跨机种按评分全局排序 |
 | `idx_ranking_platform_score` | `ranking(platform, score DESC)`，单机种按评分排序 |
 

@@ -46,8 +46,8 @@
 - 只中文或只英文相同的行保留，那是不同地区版本。
 - 检索侧同一机种的多个原始写法合并成一行 console。
 - 合并结果：36 个原始机种 → 32 项（23 统一 + 9 未收录）。
-- 榜单数据源是 `backend/search/rankings/`，每个机种一个五列 CSV
-  （`序号,中文名,英文名,评分,卡带ID`），机种由文件名（机种 id）决定。
+- 榜单数据源是 `backend/search/rankings/`，每个机种一个四列 CSV
+  （`中文名,英文名,评分,卡带ID`），机种由文件名（机种 id）决定。
 - 榜单放单独目录；混进 `catalog/` 会被当成坏行。
 - 索引库路径是 `<STORAGE_ROOT>/db/game.db`（`GAME_INDEX_FILENAME`）。
 - 索引在数据根里，与 `app.db` 无外键关系，是独立派生只读库。
@@ -123,30 +123,29 @@
 
 **榜单 CSV 与落库。**
 
-- 每个机种一个五列 CSV，文件名 stem 就是机种 id（`nes.csv`、`segaMD.csv`…）。
-- 五列固定：`序号,中文名,英文名,评分,卡带ID`。
-- 中文名可空（查不到译名就留空，页面显示 `—`）；英文名非空。
+- 每个机种一个四列 CSV，文件名 stem 就是机种 id（`nes.csv`、`segaMD.csv`…）。
+- 四列固定：`中文名,英文名,评分,卡带ID`。
+- 中文名可空（查不到译名就留空，页面显示 `—`）；英文名非空，**同一机种内唯一**。
   两者都去掉地区/修订/语言标注（区分版本的标题括号保留）。
 - 评分非空，是普通十进制数字（MobyGames 原始 double），落库为 `REAL`；
   页面固定显示两位小数并四舍五入，后端不做格式化。
-- 表头可有可无；首行第一格是 `序号` 或 `排名` 就跳过；旧版带 `机种名称` 的表头会被明确拒绝。
-- 序号是正整数，同一文件/机种内唯一；重复报错。
-- 页面按序号升序展示并原样显示，不重排。
+- 表头可有可无；首行恰好是四列表头时跳过。
 - 卡带 ID 每行 0~2 个，用 `;` 分隔，也兼容 `、` `,` `，` `/` `；`。
 - 空格、连字符、下划线不是分隔符，因为卡带 ID 里常有空格。
-- 卡带 ID 可以为空，第 5 列可整列省掉；超过 2 个被拒绝。
+- 卡带 ID 可以为空，第 4 列可整列省掉；超过 2 个被拒绝。
 - 空行跳过，Excel 行尾多余空列裁掉；只有表头的文件跳过，所有文件都没有数据行才算错误。
+- 同一机种内英文名重复时，解析会收集全部冲突行（文件名、行号、标题）并报错。
 - 解析错误消息必须带文件名与行号。
-- 落库单表 `ranking(platform, console, rank, score, zh, en, cartridge_ids)`。
-- 主键 `(platform, rank)` 且 `WITHOUT ROWID`。
-- 评分索引：
-  - `idx_ranking_score(score DESC)`：跨机种按评分全局排序；WITHOUT ROWID 的二级索引
-    自动附带主键，实际覆盖 `ORDER BY score DESC, platform, rank`。
-  - `idx_ranking_platform_score(platform, score DESC)`：单机种
-    `WHERE platform = ? ORDER BY score DESC, rank`。
-- 索引在整库重建与就地补载两条路径上都会创建。
+- 落库单表 `ranking(id, platform, console, score, zh, en, cartridge_ids)`。
+- `id` 是自增主键，只用于数据库身份与同分稳定排序，不展示。
 - `platform` 是机种 id；`console` 留文件名 stem 供溯源；`cartridge_ids` 存 JSON 数组文本。
 - 机种存文本而非外键，因为榜单机种未必出现在检索名录里。
+- 索引：
+  - `uq_ranking_platform_en(platform, en)` 唯一索引：同一机种内英文名唯一。
+  - `idx_ranking_score(score DESC)`：跨机种 `ORDER BY score DESC, id`；主键 id 自动附带。
+  - `idx_ranking_platform_score(platform, score DESC)`：单机种
+    `WHERE platform = ? ORDER BY score DESC, id`。
+- 索引在整库重建与就地补载两条路径上都会创建。
 - meta 记 `ranking_schema_version`，独立于检索 `SCHEMA_VERSION`，不 bump 它。
 - 加榜单表是纯新增，老库要继续能检索；补载失败也不能让检索 503。
 - meta 还记 `ranking_fingerprint`、`ranking_source`、`ranking_rows` 等。
@@ -181,8 +180,8 @@
 - 分批是为了避开 SQLite 老版本的 999 宿主参数上限（全机种有 6000+ 个 ID）。
 - 命中结果用 `dataclasses.replace` 附到 `RankingItem` 上。
 - 增删游戏立刻生效，不需要 `make index`，也不用重启。
-- 代价是每次打开/切换榜单多几条走 `uq_games_cartridge_id` 的小查询。
-- 榜单页内翻页不查，因为榜单是一次全取的。
+- 代价是每次请求榜单都会按 500 个一批查库存；分页只影响返回的行数，
+  计数与「只看已入库」仍需先关联整份结果。
 
 **接口。**
 
@@ -190,13 +189,18 @@
 - 参数越界在 service 收敛，不放 `Query(ge=,le=)`（422 会绕开统一错误信封）。
 - `GET /api/games/search/consoles`：每项 `{id, name, platform_id}`。
 - `name` 是统一显示名；`platform_id` 是机种键；未收录为 `null`。
-- `GET /api/games/search/ranking?console=`：需登录，不分页。
-- item 是 `{rank, score, zh, en, platform, cartridge_ids, game_id, path}`。
+- `GET /api/games/search/ranking`：需登录、服务端分页。
+  - 参数：`console`、`keyword`、`in_library`、`page`、`page_size`。
+  - `page_size` 默认 10、上限 100；`page` 越界钳到最后一页。
+- item 是 `{score, zh, en, platform, cartridge_ids, game_id, path}`；**没有 rank**。
 - `score` 是原始 double；前端固定两位小数展示，四舍五入。
-- `console` 传机种键，回显也是机种键；**不传则返回全部机种（跨机种）**，回显 `null`。
-- 跨机种的结果按评分全局降序排，同分按机种、机种内序号稳定排序；`platform` 供前端显示类型列。
-- 跨机种时前端把排名重编号为整个榜单的连续名次；选中机种时显示该机种内序号。
-- 单机种查询同样按评分降序（同分按序号）。
+- `console` 传机种键，回显也是机种键；**不传则跨机种**，回显 `null`。
+- 跨机种按评分全局降序；单机种按该类型内评分降序；同分按自增 id 稳定排序。
+- 响应计数：
+  - `total`：应用 `keyword` + `in_library` 后、分页用的总数。
+  - `matched_total`：应用 `keyword`、未应用 `in_library` 的总数。
+  - `ranking_total`：只按 `console` 过滤的总数。
+  - `linked_total`：只按 `console` 过滤后，命中库存的行数。
 - `GET /api/games/search/ranking/consoles`：返回机种清单。
 - 榜单机种项是 `{platform, label, playable}`。
 - 路由挂在 `/api/games/search/` 下，避免与未来单段 `/{game_id}` 撞车。
@@ -208,31 +212,29 @@
 - 标签栏是一对普通按钮，只能点；不用 `el-radio-group` / `el-segmented`。
 - 原因是原生 radio 焦点在里面时，左右键会换选中项，抢走分页条的键。
 - 检索区：关键词 300ms 防抖 + 回车即搜、机种下拉、三列表格、服务端分页。
+- 榜单区同样是服务端分页：只保存当前页 items 与后端计数。
 - 用请求序号丢弃过期响应。
 - 榜单工具栏 = 机种下拉 + 搜索框 + 紧挨其右的「已入库比例」按钮。
 - 按钮不推到最右，不用 `margin-left: auto`。
 - 机种下拉**可清空**：清空即跨机种，表格多一列「游戏类型」；选中机种时不显示该列。
-- 排名：选中机种时是 CSV 里的机种内序号；清空机种时按整份列表重编号为整个榜单的连续名次。
-  搜索与「只看已入库」只过滤展示，不改变名次。
+- 排名不落库：`rank = (page - 1) × page_size + 页内序号 + 1`。
 - 榜单列顺序：排名、评分、[游戏类型]、中文名、英文名、卡带 ID。
 - 评分由 `formatRankingScore()` 用 `toFixed(2)` 四舍五入；中文名为空时显示 `—`。
-- 榜单搜索与分页全在前端，因为一份榜单（一个机种或全部机种）一次整份取回。
-- 搜索是对中文名/英文名做不区分大小写的裸子串匹配，逐字即时、无防抖无高亮。
+- 榜单搜索走后端：输入 300ms 防抖，回车立即请求；清空、换机种、切「只看已入库」都回第 1 页。
+- 搜索是对中文名/英文名做不区分大小写的裸子串匹配，无高亮。
 - 不认 FTS 语法，`mario*` 的星号是普通字符；不做 NFKC，也不剥尾部标签。
 - 榜单关键词与检索区 `keyword` 是两个独立 ref，语义不同、别合并。
-- 「已入库 N / M」由前端按整份 `rankingItems` 现算。
-- 分子是 `path` 非空的行数，分母是该机种榜单总行数。
+- 「已入库 N / M」直接用接口的 `linked_total / ranking_total`，分母是该机种榜单总行数。
 - 按钮单击即按下：实心主色 + `aria-pressed`，再点恢复全部。
-- 它同时是「只看已入库」的开关；榜单只展示已入库的行。
-- 按钮上的比例恒按整份榜单算，不随搜索与过滤变。
-- 两个条件的关系是 AND：`rankingKeywordMatches` → `rankingVisibleItems`。
-- 表格与分页条按过滤后的行数算；任一条件变化页码回第一页。
+- 它同时是「只看已入库」的开关；开启后请求带 `in_library=true`。
+- 分页条 `:total` 用 `total`；翻页触发 `loadRanking()`。
+- 空态用 `matched_total` / `total` 区分「没有匹配」与「匹配结果都未入库」。
 - 命中库存的行，中英文名都渲染成真 `<a href>`：`<router-link :to="item.path">`。
 - 不加 `@click`，也不加 `custom`，否则 Ctrl/中键开新标签页就废了。
 - 卡带 ID 是并排可点按钮，点击复制。
 - 复制复用 `utils/clipboard.js` 的 `writeClipboard()`；不用 `title` / `el-tooltip`。
 - 页面默认不选类型，首次请求就不传 `console`，直接看跨机种榜单；选中类型后只取该类型。
-- 清空下拉后不传 `console`，后端返回全部机种；此时行 key 仍用 `platform + rank` 保证唯一。
+- 行 key 用 `platform + rank`；rank 由当前页位置计算，单页内唯一。
 - 空态按「谁清空的」分流：关键词、关键词+已入库、只有已入库。
 
 ## 边界与错误
