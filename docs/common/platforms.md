@@ -31,7 +31,8 @@
 ## 依赖
 
 - EmulatorJS 的 system key 与 core 列表。
-- `backend/search/csv/` 与 `backend/search/ranking/ranking.csv` 的机种写法。
+- `backend/search/csv/` 的文件名映射（`SEARCH_CSV_CONSOLE_NAMES`）与
+  `backend/search/ranking/ranking.csv` 的机种写法。
 - 前端 `constants/gameTypes.js` 只保留图标、描述等纯 UI 元数据。
 
 ## 数据与路径
@@ -41,6 +42,8 @@
 - `label` 是统一中文显示名，格式为「厂商 + 空格 + 型号」，如「任天堂 FC」「世嘉 土星」。
 - 没有厂商名的机种只写型号，如 `Amiga`、`DOS`。
 - 认不出机种的原始名展示时也按同一格式补空格，如 `任天堂3DS` → `任天堂 3DS`。
+- `SEARCH_CSV_CONSOLE_NAMES` 把检索名录的文件名 stem 映射回机种原始名；
+  未登记文件名由建索引代码回退为 stem 本身。
 - `aliases` 收两份 CSV 里的各种写法；匹配走 `normalize_name()`（去所有空白 + casefold）。
 - `id` 与 `label` 本身也当别名收，避免认不出的原始名撞上机种键。
 - `extensions` 非空才代表本项目已收录、可上传可玩；值就是 `game_type`。
@@ -155,7 +158,7 @@
 
 ### 检索与榜单
 
-- 两份外部 CSV 的机种列都经本词表归一，认不出的保留原文并归为「未收录」。
+- 检索侧机种来自文件名映射，榜单侧机种列经本词表归一；认不出的保留原文并归为「未收录」。
 - 检索侧同一个机种的多个原始名在建库时合并成一行 `console`。
 - 合并后是 **32 项**：23 个统一机种 + 9 个未收录（原始机种名 36 个）。
 - 典型合并：`任天堂GB` / `任天堂GBC` 都落到 `gb`；`任天堂FC磁碟机` 落到 `nes`。

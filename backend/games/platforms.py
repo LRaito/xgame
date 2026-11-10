@@ -3,7 +3,8 @@
 同一个平台在项目里原本有三套写法，互相看不出是同一个东西：
 
 - **游戏管理**用 `game_type`（`nes` / `segaMD` / …，同时是磁盘目录名）；
-- **游戏检索**用外部名录 CSV 第一列的中文长名（`任天堂FC`、`世嘉MD`、`任天堂GB`、`任天堂GBC` …）；
+- **游戏检索**用名录 CSV 的文件名（`nes.csv`、`segaMD.csv`、`gb.csv`、`gbc.csv` …），
+  文件名经 `SEARCH_CSV_CONSOLE_NAMES` 还原成中文长名（`任天堂FC`、`世嘉MD`、`任天堂GB` …）；
 - **游戏榜单**用榜单 CSV 第 2 列的英文短名（`FC`、`MD`、`GB/GBC` …）。
 
 这里把三者收敛到一份词表上：**机种 id 取 EmulatorJS 的 system key**——游戏最终要在 EmulatorJS 里
@@ -511,6 +512,59 @@ PLATFORM_ORDER: dict[str, int] = {platform.id: index for index, platform in enum
 def resolve_platform(raw: str) -> Platform | None:
     """把外部名录里的机种名解析成机种；认不出返回 None（调用方回退显示原文）。"""
     return PLATFORM_BY_ALIAS.get(normalize_name(raw))
+
+
+# 游戏检索名录 CSV 的「文件名 stem → 机种原始名」。
+#
+# 检索 CSV 现在只有 `中文,英文` 两列，机种身份由文件名决定。这里刻意映射回旧版第一列的
+# 中文写法（而不是映射成 `platform.id`）：去重键仍是 `(机种原始名, 中文, 英文)`，
+# `console.raw_names` 与未收录机种的显示名（`世嘉 dc`、`索尼 PS2`）因此与旧数据完全一致。
+# `ps2-jp` / `ps2-us` 必须共用 `索尼PS2`，否则两份文件之间的同款游戏不会被跨文件去重。
+# 自定义 `--csv-dir` 下未登记的文件名由 search_index 回退为文件名 stem 本身。
+SEARCH_CSV_CONSOLE_NAMES: dict[str, str] = {
+    # 任天堂
+    "nes": "任天堂FC",
+    "nes-fds": "任天堂FC磁碟机",
+    "snes": "任天堂SFC",
+    "snes-sufami-turbo": "任天堂SFC - Sufami Turbo",
+    "gb": "任天堂GB",
+    "gbc": "任天堂GBC",
+    "gba": "任天堂GBA",
+    "nds": "任天堂NDS",
+    "n64": "任天堂N64",
+    "vb": "任天堂Virtual Boy",
+    "3ds": "任天堂3DS",
+    "wii": "任天堂Wii",
+    "wiiu": "任天堂Wiiu",
+    "game-watch": "任天堂GAME&WATCH",
+    "pokemon-mini": "任天堂pokemon mini",
+    # 世嘉
+    "segaMD": "世嘉MD",
+    "segaGG": "世嘉GG",
+    "sega32x": "世嘉32x",
+    "segaSaturn": "世嘉土星SS",
+    "segaCD": "世嘉cd游戏",
+    "dc": "世嘉dc",
+    # 索尼
+    "psx": "索尼PS1",
+    "psp": "索尼PSP",
+    "ps2-jp": "索尼PS2",
+    "ps2-us": "索尼PS2",
+    "psv": "索尼PSV",
+    # 日电 / SNK / 万代
+    "pce": "日电PCE",
+    "pcecd": "日电pcecd",
+    "ngp": "SNK公司NGPC",
+    "ws": "万代WS,WSC",
+    "rx78": "万代RX-78",
+    # 雅达利 / 松下
+    "atari2600": "雅达利2600",
+    "atari5200": "雅达利5200",
+    "atari7800": "雅达利7800",
+    "jaguar": "雅达利Jaguar",
+    "lynx": "雅达利Lynx",
+    "3do": "松下3DO游戏",
+}
 
 
 def platform_order(platform_id: str | None) -> int:

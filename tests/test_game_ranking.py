@@ -29,8 +29,8 @@ from backend.games.search_index import (
 
 # 检索名录：只求 build_index 有东西可建，内容与榜单无关
 _SEARCH_ROWS = [
-    ("任天堂GBA", "黄金太阳", "Golden Sun (USA)"),
-    ("任天堂GBA", "精灵宝可梦 火红", "Pokemon FireRed (USA)"),
+    ("黄金太阳", "Golden Sun (USA)"),
+    ("精灵宝可梦 火红", "Pokemon FireRed (USA)"),
 ]
 
 _RANKING_HEADER = ["序号", "机种名称", "中文名", "英文名", "游戏卡带ID"]
@@ -65,7 +65,7 @@ def _digest(path):
 def csv_dir(tmp_path):
     source = tmp_path / "csv"
     source.mkdir()
-    _write_csv(source / "任天堂GBA.csv", _SEARCH_ROWS)
+    _write_csv(source / "gba.csv", _SEARCH_ROWS)
     return source
 
 

@@ -9,17 +9,19 @@
 
 数据源两份，都在 `backend/search/` 下：
 
-- `csv/` 下的一份份 `机种,中文,英文` 三列名录（UTF-8 带 BOM、CRLF、无表头），构成检索索引；
+- `csv/` 下的一份份 `中文,英文` 两列名录（UTF-8 带 BOM、CRLF、无表头），构成检索索引；
+  机种由文件名经 `platforms.SEARCH_CSV_CONSOLE_NAMES` 推导，不再写在行里；
 - `ranking/ranking.csv` 的五列榜单（`序号,机种名称,中文名,英文名,游戏卡带ID`），构成游戏榜单。
 
 榜单单独建表、单独一个版本号：它的表结构变化不影响检索的 `schema_version`，补榜单失败也不会
 把检索一起变成「版本过旧」。
 
-**机种归一**：两份 CSV 里的「机种」都是自由文本（检索写 `任天堂GB`、榜单写 `GB/GBC`），
-建库时一律经 `backend/games/platforms.py` 的词表解析成统一机种（id 是 EmulatorJS 的
-system key）。所以检索侧同一个机种的多个原始名（`任天堂GB` + `任天堂GBC`）**在库里就是同一行
-console**，页面的机种下拉天然不会出现两个同名项；认不出机种的（Wii、3DS、CD-I…）保留原文、
-`platform_id` 留空，自成一组，显示名仍按「公司名 + 空格 + 型号」补空格。
+**机种归一**：检索名录的机种来自文件名映射（`gb.csv` → `任天堂GB`、`gbc.csv` → `任天堂GBC`），
+榜单里的「机种」仍是自由文本（`GB/GBC`、`MD`…），建库时一律经 `backend/games/platforms.py`
+的词表解析成统一机种（id 是 EmulatorJS 的 system key）。所以检索侧同一个机种的多个原始名
+（`任天堂GB` + `任天堂GBC`）**在库里就是同一行 console**，页面的机种下拉天然不会出现两个同名项；
+认不出机种的（Wii、3DS、CD-I…）保留原文、`platform_id` 留空，自成一组，显示名仍按
+「公司名 + 空格 + 型号」补空格。
 """
 
 import csv
@@ -38,6 +40,7 @@ from pathlib import Path
 from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, Settings
 from backend.games.platforms import (
     PLATFORMS,
+    SEARCH_CSV_CONSOLE_NAMES,
     display_console_name,
     normalize_name,
     resolve_platform,
@@ -243,7 +246,7 @@ def build_index(
     `ranking_csv` 给了就在同一次构建里把榜单也写进去；`strict_ranking=False` 时榜单 CSV
     坏了只记 warning（检索照常建），`True`（`make index`）时直接抛错让人看到问题。
     """
-    csv_files = sorted(Path(csv_dir).glob("*.csv"))
+    csv_files = sorted(Path(csv_dir).glob("*.csv"), key=_csv_sort_key)
     if not csv_files:
         raise IndexBuildError(f"没有找到任何 CSV 名录：{csv_dir}")
 
@@ -440,20 +443,22 @@ def _write_database(
     try:
         conn.executescript(_SCHEMA)
 
-        # 第一遍：读完名录（按 (机种, 中文, 英文) 三元组去重）并按统一机种分组。
+        # 第一遍：读完名录（按 (机种原始名, 中文, 英文) 三元组去重）并按统一机种分组。
+        # 机种原始名来自文件名映射，见 `_console_name_for()`。
         # 行数只有五万级，整份读进内存换「机种 id 可以按词表顺序分配」是划算的。
         rows: list[tuple[str, str, str, str]] = []  # (分组键, 中文, 英文, 来源 CSV)
         seen: set[tuple[str, str, str]] = set()
         groups: dict[str, list[str]] = {}  # 分组键 -> 该组的原始机种名（按首次出现顺序）
 
         for csv_file in csv_files:
+            console_name = _console_name_for(csv_file)
             for line_no, row in enumerate(_read_csv(csv_file), start=1):
-                if len(row) != 3:
+                if len(row) != 2:
                     raise IndexBuildError(
                         f"{csv_file.name} 第 {line_no} 行有 {len(row)} 列，"
-                        f"应为 3 列（机种,中文,英文）。"
+                        f"应为 2 列（中文,英文）；机种由文件名决定。"
                     )
-                console_name, zh, en = (cell.strip() for cell in row)
+                zh, en = (cell.strip() for cell in row)
 
                 # 去重只认三元组完全一致的（跨源文件也算）：同款游戏的不同地区版本
                 # 中文或英文至少有一处不同，必须都留着。
@@ -563,6 +568,24 @@ def _write_consoles(conn: sqlite3.Connection, groups: dict[str, list[str]]) -> d
         )
         console_ids[group] = index
     return console_ids
+
+
+def _console_name_for(csv_file: Path) -> str:
+    """检索 CSV 的机种身份：文件名 stem 经映射表还原；未登记时按 stem 兜底。
+
+    兜底是为了让 `--csv-dir` 指向自定义目录时仍能用；真实 `backend/search/csv/` 目录的
+    文件名完整性由 `tests/test_platforms.py` 钉住。
+    """
+    return SEARCH_CSV_CONSOLE_NAMES.get(csv_file.stem, csv_file.stem)
+
+
+def _csv_sort_key(csv_file: Path) -> tuple[str, str]:
+    """按旧文件名口径排序，保持 raw_names 与未收录机种 id 的顺序不变。
+
+    旧文件名就是「机种原始名 + .csv」；同一原始名的两个文件（ps2-jp / ps2-us）再按
+    新文件名定序，仍与旧的「日版 / 美版」顺序一致。
+    """
+    return (f"{_console_name_for(csv_file)}.csv", csv_file.name)
 
 
 def _read_csv(csv_file: Path):

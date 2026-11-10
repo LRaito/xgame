@@ -23,6 +23,7 @@ from backend.games.platforms import (
     PLATFORM_BY_ALIAS,
     PLATFORM_BY_ID,
     PLATFORMS,
+    SEARCH_CSV_CONSOLE_NAMES,
     BiosSpec,
     all_bundle_extensions,
     bundle_platforms,
@@ -458,15 +459,31 @@ def test_frontend_does_not_hardcode_the_type_registry():
 
 
 def _search_csv_consoles() -> set[str]:
+    """检索名录的机种名来自文件名映射（CSV 内容不再有机种列）。"""
+    return {
+        SEARCH_CSV_CONSOLE_NAMES.get(path.stem, path.stem)
+        for path in SEARCH_CSV_DIR.glob("*.csv")
+    }
+
+
+def test_every_search_csv_file_is_in_the_console_mapping():
+    stems = {path.stem for path in SEARCH_CSV_DIR.glob("*.csv")}
+    assert stems == set(SEARCH_CSV_CONSOLE_NAMES)
+    assert len(stems) == 37
+    # ps2-jp / ps2-us 共用同一个原始机种名，所以映射值只有 36 种
+    assert len(set(SEARCH_CSV_CONSOLE_NAMES.values())) == 36
+
+
+def test_search_csv_rows_are_two_columns_with_bom_and_crlf():
     import csv
 
-    names: set[str] = set()
     for path in sorted(SEARCH_CSV_DIR.glob("*.csv")):
+        raw = path.read_bytes()
+        assert raw.startswith(b"\xef\xbb\xbf"), path.name
+        assert raw.count(b"\r\n") == raw.count(b"\n"), path.name
         with path.open(encoding="utf-8-sig", newline="") as handle:
-            for row in csv.reader(handle):
-                if row and row[0].strip():
-                    names.add(row[0].strip())
-    return names
+            for line_no, row in enumerate(csv.reader(handle), start=1):
+                assert len(row) == 2, f"{path.name} 第 {line_no} 行有 {len(row)} 列"
 
 
 def _ranking_csv_consoles() -> set[str]:
@@ -510,6 +527,14 @@ def test_merged_search_consoles_collapse_into_one_registry_platform():
         for name in _search_csv_consoles()
     }
     assert len(groups) == 32
+    # 文件名映射与旧第一列的写法逐字一致，合并口径不变
+    assert SEARCH_CSV_CONSOLE_NAMES["nes"] == "任天堂FC"
+    assert SEARCH_CSV_CONSOLE_NAMES["nes-fds"] == "任天堂FC磁碟机"
+    assert SEARCH_CSV_CONSOLE_NAMES["snes"] == "任天堂SFC"
+    assert SEARCH_CSV_CONSOLE_NAMES["snes-sufami-turbo"] == "任天堂SFC - Sufami Turbo"
+    assert SEARCH_CSV_CONSOLE_NAMES["gb"] == "任天堂GB"
+    assert SEARCH_CSV_CONSOLE_NAMES["gbc"] == "任天堂GBC"
+    assert SEARCH_CSV_CONSOLE_NAMES["ps2-jp"] == SEARCH_CSV_CONSOLE_NAMES["ps2-us"] == "索尼PS2"
     # 几个典型的合并：GB 与 GBC 同属 `gb`，FC 与 FC 磁碟机同属 `nes`
     assert resolve_platform("任天堂GB").id == resolve_platform("任天堂GBC").id == "gb"
     assert resolve_platform("任天堂FC").id == resolve_platform("任天堂FC磁碟机").id == "nes"
