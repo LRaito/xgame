@@ -247,8 +247,8 @@ def _settings(tmp_path, *, testing=False):
 
 
 def test_ensure_game_index_builds_when_missing(csv_dir, tmp_path):
-    # ranking_csv=None：这一组用例只关心检索索引，不读仓库里的真实榜单 CSV
-    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
+    # ranking_dir=None：这一组用例只关心检索索引，不读仓库里的真实榜单目录
+    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
 
     assert stats is not None
     assert stats.rows == _EXPECTED_ROWS
@@ -257,23 +257,23 @@ def test_ensure_game_index_builds_when_missing(csv_dir, tmp_path):
 
 def test_ensure_game_index_skips_when_present(csv_dir, tmp_path):
     """已有索引就跳过：不重建、不覆盖（内容与 mtime 都不变）。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
+    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
     index_path = tmp_path / "storage" / "db" / "game.db"
     before = _digest(index_path)
 
-    assert ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None) is None
+    assert ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None) is None
     assert _digest(index_path) == before
 
 
 def test_ensure_game_index_rebuilds_on_stale_version(csv_dir, tmp_path):
     """老库（版本号对不上）会被接口一律判 503，所以启动时直接整库重建，升级不用人工跑 make index。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
+    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
     index_path = tmp_path / "storage" / "db" / "game.db"
     with sqlite3.connect(index_path) as conn:
         conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
         conn.commit()
 
-    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
+    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
 
     assert stats is not None
     with sqlite3.connect(index_path) as conn:
@@ -284,7 +284,7 @@ def test_ensure_game_index_rebuilds_on_stale_version(csv_dir, tmp_path):
 
 def test_ensure_game_index_keeps_old_index_when_rebuild_fails(csv_dir, tmp_path):
     """重建失败（源 CSV 没了）时不能把好端端的旧库删掉，也不能拦住启动。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
+    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
     index_path = tmp_path / "storage" / "db" / "game.db"
     with sqlite3.connect(index_path) as conn:
         conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
@@ -312,7 +312,7 @@ def test_ensure_game_index_tolerates_broken_csv(tmp_path):
     source.mkdir()
     (source / "坏.csv").write_text("中文名,英文名,多余\n", encoding="utf-8")
 
-    assert ensure_game_index(_settings(tmp_path), csv_dir=source, ranking_csv=None) is None
+    assert ensure_game_index(_settings(tmp_path), csv_dir=source, ranking_dir=None) is None
     assert not (tmp_path / "storage" / "db" / "game.db").exists()
 
 
@@ -320,7 +320,7 @@ def test_app_startup_builds_missing_index(monkeypatch, csv_dir, tmp_path):
     """接线：create_app() 起来时确实会自检并补建。"""
     monkeypatch.setattr(search_index, "SEARCH_CSV_DIR", csv_dir)
     # 榜单单独测（见 test_game_ranking.py），这里指到一个不存在的文件，避免依赖仓库里的真实榜单
-    monkeypatch.setattr(search_index, "RANKING_CSV_PATH", tmp_path / "ranking.csv")
+    monkeypatch.setattr(search_index, "RANKING_CSV_DIR", tmp_path / "rankings")
 
     create_app({"TESTING": False, "STORAGE_ROOT": str(tmp_path / "storage")})
 

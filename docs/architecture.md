@@ -261,7 +261,7 @@ frontend views / api/*
 
 ### 游戏发现
 
-- 37 个名录 CSV + 1 个榜单 CSV 构建成只读库 `game.db`。
+- 37 个名录 CSV + 34 个机种榜单 CSV 构建成只读库 `game.db`。
 - 检索走 FTS5；榜单在请求期按卡带 ID 关联库存。
 - 细节见 [`game-discover.md`](modules/game-discover.md)。
 

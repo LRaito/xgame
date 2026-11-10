@@ -37,7 +37,8 @@
  *      - 按 Moby Score 降序；
  *      - 遇到第一条无评分的游戏就停止当前 MobyGames 平台页。
  *    每个机种完成后立即写一个 CSV，列固定为：
- *        序号,机种名称,英文名,评分
+ *        序号,中文名,英文名,评分,卡带ID
+ *    中文名与卡带ID 由建索引前的人工整理流程补充，脚本只写空列。
  *    评分写接口返回的原始 double 值（如 8.345679012345679），不做四舍五入。
  *
  * 7. 合并机种
@@ -567,10 +568,10 @@
     return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
   }
 
-  function toCsv(projectId, rows) {
-    const lines = ['序号,机种名称,英文名,评分'];
+  function toCsv(rows) {
+    const lines = ['序号,中文名,英文名,评分,卡带ID'];
     rows.forEach((r, i) => {
-      lines.push([i + 1, projectId, r.title, r.score].map(csvCell).join(','));
+      lines.push([i + 1, '', r.title, r.score, ''].map(csvCell).join(','));
     });
     return `﻿${lines.join('\r\n')}\r\n`;
   }
@@ -627,7 +628,7 @@
         setStatus(`${id} 抓取中`, '#58a6ff');
         try {
           const rows = await scrapePlatform(item);
-          const csv = toCsv(id, rows);
+          const csv = toCsv(rows);
           await saveFile(`${id}.csv`, csv);
           finished += 1;
           log(`${id} 完成：${rows.length} 条 -> ${id}.csv`, 'ok');

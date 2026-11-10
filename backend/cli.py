@@ -2,7 +2,7 @@ from pathlib import Path
 
 import click
 
-from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, get_settings
+from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, get_settings
 from backend.database import ensure_data_dir, init_db, make_engine
 
 
@@ -80,22 +80,22 @@ def serve_cmd(
 @click.option("--csv-dir", type=click.Path(path_type=Path), default=None)
 @click.option("--out", "out_path", type=click.Path(path_type=Path), default=None)
 @click.option(
-    "--ranking-csv",
+    "--ranking-dir",
     type=click.Path(path_type=Path),
     default=None,
-    help=f"游戏榜单 CSV（默认 {RANKING_CSV_PATH.name}）。",
+    help=f"游戏榜单 CSV 目录（默认 {RANKING_CSV_DIR.name}/）。",
 )
 @click.option("--skip-ranking", is_flag=True, help="只重建检索索引，不加载游戏榜单。")
 def build_index_cmd(
     csv_dir: Path | None,
     out_path: Path | None,
-    ranking_csv: Path | None,
+    ranking_dir: Path | None,
     skip_ranking: bool,
 ) -> None:
     """构建游戏检索索引与游戏榜单（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。
 
     服务启动时发现索引不存在也会自动补建一次（见 search_index.ensure_game_index），
-    榜单 CSV 变化时启动也会就地补一次；这个命令是手动重建/更新的入口：换了名录或榜单
+    榜单目录变化时启动也会就地补一次；这个命令是手动重建/更新的入口：换了名录或榜单
     CSV、改了分词规则之后用它覆盖。
     """
     # import 放在函数里：cli 的其它命令不该为了这个可选功能多拖依赖
@@ -105,19 +105,19 @@ def build_index_cmd(
     ensure_data_dir(settings)
     source = csv_dir or SEARCH_CSV_DIR
     target = out_path or settings.game_index_path
-    ranking_source = None if skip_ranking else (ranking_csv or RANKING_CSV_PATH)
+    ranking_source = None if skip_ranking else (ranking_dir or RANKING_CSV_DIR)
 
     click.echo(f"读取名录：{source}")
     if ranking_source is None:
         click.echo("跳过游戏榜单（--skip-ranking）。")
-    elif Path(ranking_source).is_file():
-        click.echo(f"读取榜单：{ranking_source}")
+    elif Path(ranking_source).is_dir():
+        click.echo(f"读取榜单目录：{ranking_source}")
     else:
-        click.echo(f"未找到榜单 CSV（{ranking_source}），本次只建检索索引。")
+        click.echo(f"未找到榜单目录（{ranking_source}），本次只建检索索引。")
 
     try:
         stats = build_index(
-            source, target, ranking_csv=ranking_source, strict_ranking=not skip_ranking
+            source, target, ranking_dir=ranking_source, strict_ranking=not skip_ranking
         )
     except IndexBuildError as exc:
         raise click.ClickException(str(exc)) from exc

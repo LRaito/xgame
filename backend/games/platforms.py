@@ -5,7 +5,7 @@
 - **游戏管理**用 `game_type`（`nes` / `segaMD` / …，同时是磁盘目录名）；
 - **游戏检索**用名录 CSV 的文件名（`nes.csv`、`segaMD.csv`、`gb.csv`、`gbc.csv` …），
   文件名经 `SEARCH_CSV_CONSOLE_NAMES` 还原成中文长名（`任天堂FC`、`世嘉MD`、`任天堂GB` …）；
-- **游戏榜单**用榜单 CSV 第 2 列的英文短名（`FC`、`MD`、`GB/GBC` …）。
+- **游戏榜单**用 `backend/search/rankings/` 下的文件名，stem 就是机种 id（`nes.csv`、`segaMD.csv` …）。
 
 这里把三者收敛到一份词表上：**机种 id 取 EmulatorJS 的 system key**——游戏最终要在 EmulatorJS 里
 跑，能玩不能玩由引擎决定，所以引擎的机种表就是标准。id 集合与每个机种的 core 列表**逐字**取自
@@ -48,7 +48,7 @@ class BiosSpec:
 class Platform:
     """一个机种。
 
-    `aliases` 是外部名录里出现过的各种写法（含检索 CSV 与榜单 CSV 的实际取值），
+    `aliases` 是外部名录里出现过的各种写法（含检索 CSV 的实际取值），
     用于把 `console` 那一列的自由文本解析回机种；匹配时忽略大小写与所有空白。
     """
 

@@ -78,11 +78,11 @@ https://www.mobygames.com/game/?format=json&platform=<id>&order_by=moby_score
 7. 每个机种完成立即写 `<项目机种键>.csv`，列为：
 
    ```
-   序号,机种名称,英文名,评分
+   序号,中文名,英文名,评分,卡带ID
    ```
 
    - `序号`：合并去重、按评分降序后的名次，从 1 开始。
-   - `机种名称`：项目机种键，如 `nes`、`segaMD`。
+   - `中文名`、`卡带ID`：脚本留空，由建索引前的人工整理流程补充。
    - `英文名`：MobyGames 标题原文。
    - `评分`：接口返回的原始 double，如 `8.345679012345679`，不四舍五入。
    - 编码 UTF-8 带 BOM，CRLF，方便 Excel 直接打开。
@@ -178,14 +178,10 @@ https://www.mobygames.com/platform/<slug>/sort:-moby_score/
 
 MobyGames 的排行行只提供：MobyGames game id、标题、发行年份、类型、Moby Score。**没有卡带 ID**。
 
-- `backend/search/rankings/ranking.csv` 的第 5 列「游戏卡带ID」必须另找来源（如 Vimm's Lair），MobyGames 只能提供名次、中文名、英文名与排序依据。
-- 如果直接把 MobyGames 的平台名写进 `机种名称` 列，当前 `backend/games/platforms.py` 的别名认不出下面 10 个写法，榜单机种会被归为 `raw:*`：
-
-  `Nintendo 64`、`Nintendo DS`、`SEGA 32X`、`SEGA Saturn`、`SEGA Master System`、
-  `TurboGrafx-16`、`Neo Geo Pocket Color`、`WonderSwan Color`、
-  `Commodore PET/CBM`、`Commodore 16, Plus/4`
-
-  其余平台名（`NES`、`SNES`、`Genesis`、`SEGA CD`、`Game Boy`、`Game Boy Color`、
-  `Game Boy Advance`、`Game Gear`、`PlayStation`、`PSP`、`PC-FX`、`3DO`、`DOS`、`Arcade` 等）
-  现有别名已经能认。要用 MobyGames 数据，先给词表补别名或转换平台名。
+- 脚本输出的文件名就是项目机种 id（`nes.csv`、`segaMD.csv`…），与
+  `backend/search/rankings/README.md` 的契约一致，建索引时直接按文件名识别机种。
+- 中文名与卡带 ID 由脚本写成空列，需另找来源（中文名可从旧版 `ranking.csv` 或检索名录回填，
+  卡带 ID 如 Vimm's Lair）后人工补入。
+- **重新跑脚本会覆盖已有中文名与卡带 ID**，重抓后需要重新回填。
+- MobyGames 的平台名不再写入 CSV；平台对应关系只用于请求接口，见上面的平台对照表。
 

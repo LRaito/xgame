@@ -1,22 +1,24 @@
 """「游戏榜单」的 CSV 解析、构建与启动就地补载测试。
 
-用例不读仓库里的真实榜单 CSV：在 tmp_path 写几行小 CSV 固件，覆盖真实数据的格式边界
-（UTF-8 带 BOM、CRLF、引号内的逗号、可选表头、机种大小写、卡带 ID 分隔符）。
+用例不读仓库里的真实榜单 CSV：在 tmp_path 写几个机种文件作为固件，覆盖真实数据的格式边界
+（UTF-8 带 BOM、CRLF、引号内的逗号、可选表头、评分、卡带 ID 分隔符）。
 """
 
 import csv
 import hashlib
 import os
+import shutil
 import sqlite3
 
 import pytest
 from sqlmodel import Session
 
 from backend import create_app
-from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, Settings
+from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, Settings
 from backend.games import search_index
 from backend.games.models import Game
-from backend.games.ranking_service import GameRankingService, RankingItem, _pick_default
+from backend.games.platforms import resolve_platform
+from backend.games.ranking_service import GameRankingService, RankingItem
 from backend.games.service import GameLink, GameService
 from backend.games.search_index import (
     RANKING_SCHEMA_VERSION,
@@ -33,20 +35,28 @@ _SEARCH_ROWS = [
     ("精灵宝可梦 火红", "Pokemon FireRed (USA)"),
 ]
 
-_RANKING_HEADER = ["序号", "机种名称", "中文名", "英文名", "游戏卡带ID"]
-# FC 排在最前是为了测「默认机种是 FC」——页面打开时不选也是它
-_RANKING_ROWS = [
-    ["1", "FC", "超级马里奥兄弟", "Super Mario Bros.", "NES-SM"],
-    ["2", "FC", "银河战士", "Metroid", "NES-MT"],
-    ["1", "GBA", "精灵宝可梦 火红", "Pokemon FireRed", "POKEMON FIRE RED"],
-    ["2", "GBA", "黄金太阳", "Golden Sun", "GSAE"],
-    ["3", "GBA", "双版本示例", "Double Version Example", "ID1;ID2"],
-    ["4", "GBA", "查不到编号的游戏", "No ID Game", ""],
-    ["1", "GBC", "塞尔达传说 不可思议的果实", "Zelda - Oracle", "ZELDA"],
-    ["2", "GBC", "分隔符示例", "Separator Example", "A1/ A2"],
-]
-# 归一后的机种：FC→nes、GBA→gba、GBC→gb（同一个机种，所以序号各自独立）
+_RANKING_HEADER = ["序号", "中文名", "英文名", "评分", "卡带ID"]
+# 机种由文件名决定；三个机种文件覆盖跨机种排序与默认「不选类型」的展示。
+_RANKING_FILES = {
+    "nes": [
+        ["1", "超级马里奥兄弟", "Super Mario Bros.", "8.84316671219157", "NES-SM"],
+        ["2", "银河战士", "Metroid", "8.2", "NES-MT"],
+    ],
+    "gba": [
+        ["1", "精灵宝可梦 火红", "Pokemon FireRed", "8.5", "POKEMON FIRE RED"],
+        ["2", "黄金太阳", "Golden Sun", "8.1", "GSAE"],
+        ["3", "双版本示例", "Double Version Example", "7.75", "ID1;ID2"],
+        ["4", "查不到编号的游戏", "No ID Game", "7", ""],
+    ],
+    "gb": [
+        ["1", "塞尔达传说 不可思议的果实", "Zelda - Oracle", "8.0", "ZELDA"],
+        ["2", "分隔符示例", "Separator Example", "6.5", "A1/ A2"],
+    ],
+}
+_RANKING_ROWS = [row for rows in _RANKING_FILES.values() for row in rows]
 _RANKING_PLATFORMS = 3
+# 只有表头的文件：必须被跳过，且照常算在指纹里
+_EMPTY_RANKING_FILE = "pet"
 
 
 def _write_csv(path, rows, *, encoding="utf-8-sig"):
@@ -54,6 +64,15 @@ def _write_csv(path, rows, *, encoding="utf-8-sig"):
     with path.open("w", encoding=encoding, newline="") as handle:
         writer = csv.writer(handle, lineterminator="\r\n")
         writer.writerows(rows)
+
+
+def _write_ranking_dir(path, files=None):
+    """把 `{机种 id: 数据行}` 写成 `<id>.csv`；默认再补一个只有表头的文件。"""
+    path.mkdir(parents=True, exist_ok=True)
+    for platform, rows in (files if files is not None else _RANKING_FILES).items():
+        _write_csv(path / f"{platform}.csv", [_RANKING_HEADER, *rows])
+    _write_csv(path / f"{_EMPTY_RANKING_FILE}.csv", [_RANKING_HEADER])
+    return path
 
 
 def _digest(path):
@@ -70,11 +89,8 @@ def csv_dir(tmp_path):
 
 
 @pytest.fixture
-def ranking_csv(tmp_path):
-    path = tmp_path / "ranking" / "ranking.csv"
-    path.parent.mkdir()
-    _write_csv(path, [_RANKING_HEADER, *_RANKING_ROWS])
-    return path
+def ranking_dir(tmp_path):
+    return _write_ranking_dir(tmp_path / "ranking")
 
 
 @pytest.fixture
@@ -95,7 +111,8 @@ def _meta(path, key):
 def _ranking_rows(path):
     with sqlite3.connect(path) as conn:
         return conn.execute(
-            "SELECT console, rank, zh, en, cartridge_ids FROM ranking ORDER BY console, rank"
+            "SELECT platform, console, rank, score, zh, en, cartridge_ids "
+            "FROM ranking ORDER BY platform, rank"
         ).fetchall()
 
 
@@ -104,71 +121,82 @@ def _ranking_rows(path):
 # --------------------------------------------------------------------------
 
 
-def test_parse_ranking_csv_handles_real_format(tmp_path):
-    """表头 + BOM + CRLF + 引号内的逗号 + 空行 + Excel 行尾空列。"""
-    path = tmp_path / "ranking.csv"
+def test_load_ranking_dir_handles_real_format(tmp_path):
+    """表头 + BOM + CRLF + 引号内的逗号 + 空行 + Excel 行尾空列 + 只有表头的文件。"""
+    path = tmp_path / "ranking"
+    path.mkdir()
     _write_csv(
-        path,
+        path / "gba.csv",
         [
             _RANKING_HEADER,
-            ["1", "GBA", "含,逗号的名字", "Comma, Name", "ID1"],
+            ["1", "含,逗号的名字", "Comma, Name", "8.123456", "ID1"],
             [],
-            ["2", "GBA", "普通游戏", "Normal Game", "ID2,ID3"],
-            ["1", "gbc", "小写机种", "Lowercase Console", "ID4", ""],
+            ["2", "普通游戏", "Normal Game", "7.5", "ID2,ID3"],
+            ["3", "", "No Chinese Name", "6", "ID4", ""],
         ],
     )
+    _write_csv(path / "gb.csv", [_RANKING_HEADER])
+    _write_csv(path / "nes.csv", [_RANKING_HEADER, ["1", "游戏", "Game", "9", "ID1"]])
 
-    data = search_index._load_ranking_csv(path)
+    data = search_index._load_ranking_dir(path)
 
-    assert data.source == "ranking.csv"
-    assert data.fingerprint == hashlib.sha256(path.read_bytes()).hexdigest()
-    assert [row.zh for row in data.rows] == ["含,逗号的名字", "普通游戏", "小写机种"]
-    assert [row.en for row in data.rows] == ["Comma, Name", "Normal Game", "Lowercase Console"]
+    assert data.source == "ranking"
+    assert [row.zh for row in data.rows] == ["含,逗号的名字", "普通游戏", "", "游戏"]
+    assert [row.en for row in data.rows] == [
+        "Comma, Name",
+        "Normal Game",
+        "No Chinese Name",
+        "Game",
+    ]
+    assert [row.score for row in data.rows] == [8.123456, 7.5, 6.0, 9.0]
     assert data.rows[1].cartridge_ids == ("ID2", "ID3")
-    # 机种经词表归一：`GBA` 与 `gbc` 分别落到机种键 `gba` 与 `gb`（`gbc` 是 `gb` 的别名），
-    # 原文照旧留在行上（rows[*].console）供溯源
-    assert data.platforms == ("gba", "gb")
-    assert [row.console for row in data.rows] == ["GBA", "GBA", "gbc"]
+    assert data.platforms == ("gba", "nes")
+    assert [row.console for row in data.rows] == ["gba", "gba", "gba", "nes"]
+    assert data.fingerprint
 
 
-def test_parse_ranking_csv_without_header(tmp_path):
-    path = tmp_path / "ranking.csv"
-    _write_csv(path, [["1", "GBA", "游戏", "Game", "ID1"]])
+def test_load_ranking_dir_without_header(tmp_path):
+    path = tmp_path / "ranking"
+    path.mkdir()
+    _write_csv(path / "gba.csv", [["1", "游戏", "Game", "8.5", "ID1"]])
 
-    data = search_index._load_ranking_csv(path)
+    data = search_index._load_ranking_dir(path)
 
     assert len(data.rows) == 1
     assert data.rows[0].rank == 1
+    assert data.rows[0].score == 8.5
     assert data.rows[0].zh == "游戏"
     assert data.rows[0].en == "Game"
 
 
-def test_parse_ranking_csv_allows_empty_cartridge_ids(tmp_path):
+def test_load_ranking_dir_allows_empty_cartridge_ids(tmp_path):
     """查不到编号的游戏：第 5 列留空或整列省掉都合法，落成空元组。"""
-    path = tmp_path / "ranking.csv"
+    path = tmp_path / "ranking"
+    path.mkdir()
     _write_csv(
-        path,
+        path / "c64.csv",
         [
-            ["1", "C64", "留空", "Empty ID", ""],
-            ["2", "C64", "省掉第 5 列", "Omit Column"],
+            ["1", "留空", "Empty ID", "8", ""],
+            ["2", "省掉第 5 列", "Omit Column", "7"],
         ],
     )
 
-    data = search_index._load_ranking_csv(path)
+    data = search_index._load_ranking_dir(path)
 
     assert [row.cartridge_ids for row in data.rows] == [(), ()]
 
 
-def test_parse_ranking_csv_rejects_old_header(tmp_path):
-    """旧版四列表头要被明确拒绝，不能把「游戏名称」当成中文名静默解析。"""
-    path = tmp_path / "ranking.csv"
+def test_load_ranking_dir_rejects_old_header(tmp_path):
+    """旧版含「机种名称」的表头要被明确拒绝，不能把它当成中文名静默解析。"""
+    path = tmp_path / "ranking"
+    path.mkdir()
     _write_csv(
-        path,
-        [["序号", "机种名称", "游戏名称", "游戏卡带ID"], ["1", "GBA", "游戏", "ID1"]],
+        path / "gba.csv",
+        [["序号", "机种名称", "中文名", "英文名", "游戏卡带ID"], ["1", "GBA", "游戏", "Game", "ID1"]],
     )
 
     with pytest.raises(RankingCsvError) as excinfo:
-        search_index._load_ranking_csv(path)
+        search_index._load_ranking_dir(path)
 
     assert "旧版表头" in str(excinfo.value)
 
@@ -176,52 +204,67 @@ def test_parse_ranking_csv_rejects_old_header(tmp_path):
 @pytest.mark.parametrize(
     "rows",
     [
-        [["1", "GBA", "游戏"]],  # 列数不对（少于 4 列）
-        [["1", "GBA", "游戏", "Game", "ID", "多余的一列"]],  # 列数不对（多于 5 列）
-        [["x", "GBA", "游戏", "Game", "ID"]],  # 序号不是整数
-        [["0", "GBA", "游戏", "Game", "ID"]],  # 序号不是正整数
-        [["1", "GBA", "", "Game", "ID"]],  # 缺中文名
-        [["1", "GBA", "游戏", "", "ID"]],  # 缺英文名
-        [["1", "", "游戏", "Game", "ID"]],  # 缺机种
-        [["1", "GBA", "游戏", "Game", "A,B,C"]],  # 超过 2 个卡带 ID
+        [["1", "游戏"]],  # 列数不对（少于 4 列）
+        [["1", "游戏", "Game", "8", "ID", "多余的一列"]],  # 列数不对（多于 5 列）
+        [["x", "游戏", "Game", "8", "ID"]],  # 序号不是整数
+        [["0", "游戏", "Game", "8", "ID"]],  # 序号不是正整数
+        [["1", "游戏", "", "8", "ID"]],  # 缺英文名
+        [["1", "游戏", "Game", "", "ID"]],  # 缺评分
+        [["1", "游戏", "Game", "abc", "ID"]],  # 评分不是数字
+        [["1", "游戏", "Game", "-1", "ID"]],  # 评分为负
+        [["1", "游戏", "Game", "8", "A,B,C"]],  # 超过 2 个卡带 ID
         [
-            ["1", "GBA", "游戏", "Game", "ID"],
-            ["1", "gba", "另一个", "Another", "ID2"],
+            ["1", "游戏", "Game", "8", "ID"],
+            ["1", "另一个", "Another", "7", "ID2"],
         ],  # 同机种序号重复
     ],
 )
-def test_parse_ranking_csv_rejects_bad_rows(tmp_path, rows):
-    path = tmp_path / "ranking.csv"
-    _write_csv(path, rows)
+def test_load_ranking_dir_rejects_bad_rows(tmp_path, rows):
+    path = tmp_path / "ranking"
+    path.mkdir()
+    _write_csv(path / "gba.csv", rows)
 
     with pytest.raises(RankingCsvError) as excinfo:
-        search_index._load_ranking_csv(path)
+        search_index._load_ranking_dir(path)
 
-    assert "ranking.csv" in str(excinfo.value)
+    assert "gba.csv" in str(excinfo.value)
     assert "第" in str(excinfo.value)
 
 
+def test_load_ranking_dir_rejects_unknown_filename(tmp_path):
+    path = tmp_path / "ranking"
+    path.mkdir()
+    _write_csv(path / "not-a-platform.csv", [["1", "游戏", "Game", "8", "ID"]])
+
+    with pytest.raises(RankingCsvError) as excinfo:
+        search_index._load_ranking_dir(path)
+
+    assert "机种 id" in str(excinfo.value)
+
+
 @pytest.mark.parametrize("rows", [[], [_RANKING_HEADER]])
-def test_parse_ranking_csv_rejects_empty(tmp_path, rows):
-    path = tmp_path / "ranking.csv"
-    _write_csv(path, rows)
+def test_load_ranking_dir_rejects_empty(tmp_path, rows):
+    path = tmp_path / "ranking"
+    path.mkdir()
+    _write_csv(path / "gba.csv", rows)
 
     with pytest.raises(RankingCsvError):
-        search_index._load_ranking_csv(path)
+        search_index._load_ranking_dir(path)
 
 
-def test_parse_ranking_csv_rejects_non_utf8(tmp_path):
-    path = tmp_path / "ranking.csv"
-    path.write_bytes(b"\xff\xfe1,GBA,game,ID\n")
+def test_load_ranking_dir_rejects_non_utf8(tmp_path):
+    path = tmp_path / "ranking"
+    path.mkdir()
+    (path / "gba.csv").write_bytes(b"\xff\xfe1,game,8,ID\n")
 
     with pytest.raises(RankingCsvError):
-        search_index._load_ranking_csv(path)
+        search_index._load_ranking_dir(path)
 
 
-def test_ranking_csv_lives_outside_the_search_csv_dir():
-    """榜单 CSV 不能放进 backend/search/catalog/：那个目录会被整目录扫成检索索引。"""
-    assert RANKING_CSV_PATH.parent.name == "rankings"
-    assert SEARCH_CSV_DIR not in RANKING_CSV_PATH.parents
+def test_ranking_dir_lives_outside_the_search_csv_dir():
+    """榜单目录不能放进 backend/search/catalog/：那个目录会被整目录扫成检索索引。"""
+    assert RANKING_CSV_DIR.name == "rankings"
+    assert SEARCH_CSV_DIR not in RANKING_CSV_DIR.parents
 
 
 # --------------------------------------------------------------------------
@@ -229,27 +272,55 @@ def test_ranking_csv_lives_outside_the_search_csv_dir():
 # --------------------------------------------------------------------------
 
 
-def test_build_index_writes_ranking(csv_dir, ranking_csv, index_path):
-    stats = build_index(csv_dir, index_path, ranking_csv=ranking_csv)
+def test_build_index_writes_ranking(csv_dir, ranking_dir, index_path):
+    stats = build_index(csv_dir, index_path, ranking_dir=ranking_dir)
 
     assert stats.ranking_rows == len(_RANKING_ROWS)
     assert stats.ranking_consoles == _RANKING_PLATFORMS
     assert _meta(index_path, "schema_version") == SCHEMA_VERSION
     assert _meta(index_path, "ranking_schema_version") == RANKING_SCHEMA_VERSION
-    assert _meta(index_path, "ranking_fingerprint") == hashlib.sha256(
-        ranking_csv.read_bytes()
-    ).hexdigest()
-    assert _meta(index_path, "ranking_source") == "ranking.csv"
-    # _ranking_rows 按 console 原文排序：FC(2) → GBA(4) → GBC(2)
+    assert _meta(index_path, "ranking_fingerprint") == search_index._load_ranking_dir(
+        ranking_dir
+    ).fingerprint
+    assert _meta(index_path, "ranking_source") == "ranking"
+    # _ranking_rows 按 platform 排序：gb(2) → gba(4) → nes(2)
     rows = _ranking_rows(index_path)
-    assert rows[0][0] == "FC"
-    assert rows[2][0] == "GBA"
-    assert rows[2][2] == "精灵宝可梦 火红"
-    assert rows[2][3] == "Pokemon FireRed"
-    assert rows[4][4] == '["ID1", "ID2"]'
+    assert rows[0][0] == "gb"
+    assert rows[0][3] == 8.0
+    assert rows[2][0] == "gba"
+    assert rows[2][4] == "精灵宝可梦 火红"
+    assert rows[2][5] == "Pokemon FireRed"
+    assert rows[4][6] == '["ID1", "ID2"]'
     # 没编号的行落成空数组，前端显示「—」
-    assert rows[5][2] == "查不到编号的游戏"
-    assert rows[5][4] == "[]"
+    assert rows[5][4] == "查不到编号的游戏"
+    assert rows[5][6] == "[]"
+
+
+def test_build_index_creates_ranking_score_indexes(csv_dir, ranking_dir, index_path):
+    build_index(csv_dir, index_path, ranking_dir=ranking_dir)
+
+    with sqlite3.connect(index_path) as conn:
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ranking'"
+            )
+        }
+    assert {"idx_ranking_score", "idx_ranking_platform_score"} <= indexes
+
+
+def test_ensure_ranking_loaded_recreates_ranking_score_indexes(csv_dir, ranking_dir, index_path):
+    build_index(csv_dir, index_path)
+    ensure_ranking_loaded(index_path, ranking_dir)
+
+    with sqlite3.connect(index_path) as conn:
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'ranking'"
+            )
+        }
+    assert {"idx_ranking_score", "idx_ranking_platform_score"} <= indexes
 
 
 def test_build_index_without_ranking_leaves_empty_table(csv_dir, index_path):
@@ -262,31 +333,33 @@ def test_build_index_without_ranking_leaves_empty_table(csv_dir, index_path):
     assert _meta(index_path, "ranking_fingerprint") is None
 
 
-def test_build_index_strict_ranking_keeps_old_index(csv_dir, ranking_csv, index_path, tmp_path):
-    build_index(csv_dir, index_path, ranking_csv=ranking_csv)
+def test_build_index_strict_ranking_keeps_old_index(csv_dir, ranking_dir, index_path, tmp_path):
+    build_index(csv_dir, index_path, ranking_dir=ranking_dir)
     before = _digest(index_path)
 
-    bad = tmp_path / "bad-ranking.csv"
-    _write_csv(bad, [["1", "GBA", "游戏", "Game", "A,B,C"]])
+    bad = tmp_path / "bad-ranking"
+    bad.mkdir()
+    _write_csv(bad / "gba.csv", [["1", "游戏", "Game", "8", "A,B,C"]])
     with pytest.raises(RankingCsvError):
-        build_index(csv_dir, index_path, ranking_csv=bad, strict_ranking=True)
+        build_index(csv_dir, index_path, ranking_dir=bad, strict_ranking=True)
 
     assert _digest(index_path) == before
     assert not index_path.with_name("game.db.tmp").exists()
 
 
 def test_build_index_tolerates_bad_ranking_when_not_strict(csv_dir, index_path, tmp_path):
-    bad = tmp_path / "bad-ranking.csv"
-    _write_csv(bad, [["1", "GBA", "游戏", "Game", "A,B,C"]])
+    bad = tmp_path / "bad-ranking"
+    bad.mkdir()
+    _write_csv(bad / "gba.csv", [["1", "游戏", "Game", "8", "A,B,C"]])
 
-    stats = build_index(csv_dir, index_path, ranking_csv=bad, strict_ranking=False)
+    stats = build_index(csv_dir, index_path, ranking_dir=bad, strict_ranking=False)
 
     assert stats.ranking_rows == 0
     assert _ranking_rows(index_path) == []
 
 
-def test_build_index_tolerates_missing_ranking_csv(csv_dir, index_path, tmp_path):
-    stats = build_index(csv_dir, index_path, ranking_csv=tmp_path / "nope.csv")
+def test_build_index_tolerates_missing_ranking_dir(csv_dir, index_path, tmp_path):
+    stats = build_index(csv_dir, index_path, ranking_dir=tmp_path / "nope")
 
     assert stats.rows == len(_SEARCH_ROWS)
     assert stats.ranking_rows == 0
@@ -297,10 +370,10 @@ def test_build_index_tolerates_missing_ranking_csv(csv_dir, index_path, tmp_path
 # --------------------------------------------------------------------------
 
 
-def test_ensure_ranking_loaded_into_search_only_index(csv_dir, ranking_csv, index_path):
+def test_ensure_ranking_loaded_into_search_only_index(csv_dir, ranking_dir, index_path):
     build_index(csv_dir, index_path)  # 先造一个只有检索表的库
 
-    stats = ensure_ranking_loaded(index_path, ranking_csv)
+    stats = ensure_ranking_loaded(index_path, ranking_dir)
 
     assert stats is not None
     assert stats.rows == len(_RANKING_ROWS)
@@ -309,76 +382,80 @@ def test_ensure_ranking_loaded_into_search_only_index(csv_dir, ranking_csv, inde
     assert _meta(index_path, "schema_version") == SCHEMA_VERSION
 
 
-def test_ensure_ranking_loaded_is_idempotent(csv_dir, ranking_csv, index_path):
+def test_ensure_ranking_loaded_is_idempotent(csv_dir, ranking_dir, index_path):
     """指纹一致时连读写连接都不打开：库文件逐字节与 mtime 都不变。"""
     build_index(csv_dir, index_path)
-    ensure_ranking_loaded(index_path, ranking_csv)
+    ensure_ranking_loaded(index_path, ranking_dir)
     before = _digest(index_path)
 
-    stats = ensure_ranking_loaded(index_path, ranking_csv)
+    stats = ensure_ranking_loaded(index_path, ranking_dir)
 
     assert stats is not None
     assert _digest(index_path) == before
 
 
-def test_ensure_ranking_loaded_reloads_when_content_changes(csv_dir, ranking_csv, index_path):
+def test_ensure_ranking_loaded_reloads_when_content_changes(csv_dir, ranking_dir, index_path):
     """内容变了但 size + mtime 被人为保留，也要按 SHA-256 重新加载。"""
     build_index(csv_dir, index_path)
-    ensure_ranking_loaded(index_path, ranking_csv)
-    stat = ranking_csv.stat()
+    ensure_ranking_loaded(index_path, ranking_dir)
+    target = ranking_dir / "gba.csv"
+    stat = target.stat()
 
-    _write_csv(ranking_csv, [_RANKING_HEADER, ["1", "GBA", "换了一个中文名", "New Name", "ID9"]])
-    os.utime(ranking_csv, (stat.st_atime, stat.st_mtime))
+    _write_csv(target, [_RANKING_HEADER, ["1", "换了一个中文名", "New Name", "8.5", "ID9"]])
+    os.utime(target, (stat.st_atime, stat.st_mtime))
 
-    ensure_ranking_loaded(index_path, ranking_csv)
+    ensure_ranking_loaded(index_path, ranking_dir)
 
-    assert _ranking_rows(index_path) == [("GBA", 1, "换了一个中文名", "New Name", '["ID9"]')]
+    rows = _ranking_rows(index_path)
+    assert ("gba", "gba", 1, 8.5, "换了一个中文名", "New Name", '["ID9"]') in rows
+    # 其它机种文件没动，照常保留
+    assert any(row[0] == "gb" for row in rows)
 
 
-def test_ensure_ranking_loaded_keeps_existing_when_csv_missing(csv_dir, ranking_csv, index_path):
+def test_ensure_ranking_loaded_keeps_existing_when_dir_missing(csv_dir, ranking_dir, index_path):
     build_index(csv_dir, index_path)
-    ensure_ranking_loaded(index_path, ranking_csv)
-    ranking_csv.unlink()
+    ensure_ranking_loaded(index_path, ranking_dir)
+    shutil.rmtree(ranking_dir)
 
-    assert ensure_ranking_loaded(index_path, ranking_csv) is None
+    assert ensure_ranking_loaded(index_path, ranking_dir) is None
     assert len(_ranking_rows(index_path)) == len(_RANKING_ROWS)
 
 
-def test_ensure_ranking_loaded_returns_none_when_db_missing(ranking_csv, tmp_path):
-    assert ensure_ranking_loaded(tmp_path / "nope" / "game.db", ranking_csv) is None
+def test_ensure_ranking_loaded_returns_none_when_db_missing(ranking_dir, tmp_path):
+    assert ensure_ranking_loaded(tmp_path / "nope" / "game.db", ranking_dir) is None
 
 
-def test_ensure_ranking_loaded_degrades_without_write_permission(csv_dir, ranking_csv, index_path):
+def test_ensure_ranking_loaded_degrades_without_write_permission(csv_dir, ranking_dir, index_path):
     """库文件/目录只读时只记 warning、不抛，库里原来的榜单保持可用。"""
     build_index(csv_dir, index_path)
     os.chmod(index_path, 0o444)
     os.chmod(index_path.parent, 0o555)
     try:
-        assert ensure_ranking_loaded(index_path, ranking_csv) is None
+        assert ensure_ranking_loaded(index_path, ranking_dir) is None
     finally:
         os.chmod(index_path.parent, 0o755)
 
 
-def test_ensure_game_index_loads_ranking_into_existing_index(csv_dir, ranking_csv, tmp_path):
+def test_ensure_game_index_loads_ranking_into_existing_index(csv_dir, ranking_dir, tmp_path):
     settings = _settings(tmp_path)
     build_index(csv_dir, settings.game_index_path)  # 先造一个只有检索表的库
 
-    assert ensure_game_index(settings, csv_dir=csv_dir, ranking_csv=ranking_csv) is None
+    assert ensure_game_index(settings, csv_dir=csv_dir, ranking_dir=ranking_dir) is None
 
     assert len(_ranking_rows(settings.game_index_path)) == len(_RANKING_ROWS)
 
 
-def test_ensure_game_index_skips_ranking_when_testing(csv_dir, ranking_csv, tmp_path):
+def test_ensure_game_index_skips_ranking_when_testing(csv_dir, ranking_dir, tmp_path):
     settings = _settings(tmp_path, testing=True)
 
-    assert ensure_game_index(settings, csv_dir=csv_dir, ranking_csv=ranking_csv) is None
+    assert ensure_game_index(settings, csv_dir=csv_dir, ranking_dir=ranking_dir) is None
     assert not settings.game_index_path.exists()
 
 
-def test_app_startup_loads_ranking(monkeypatch, csv_dir, ranking_csv, tmp_path):
+def test_app_startup_loads_ranking(monkeypatch, csv_dir, ranking_dir, tmp_path):
     """接线：create_app() 起来时会把榜单 CSV 加载进 game.db。"""
     monkeypatch.setattr(search_index, "SEARCH_CSV_DIR", csv_dir)
-    monkeypatch.setattr(search_index, "RANKING_CSV_PATH", ranking_csv)
+    monkeypatch.setattr(search_index, "RANKING_CSV_DIR", ranking_dir)
 
     create_app({"TESTING": False, "STORAGE_ROOT": str(tmp_path / "storage")})
 
@@ -397,9 +474,9 @@ RANKING_CONSOLES_URL = "/api/games/search/ranking/consoles"
 
 
 @pytest.fixture
-def ranked(app, csv_dir, ranking_csv, index_path):
+def ranked(app, csv_dir, ranking_dir, index_path):
     """建好带榜单的索引（路径与 app 的 game_index_path 一致）。"""
-    build_index(csv_dir, index_path, ranking_csv=ranking_csv)
+    build_index(csv_dir, index_path, ranking_dir=ranking_dir)
     return index_path
 
 
@@ -420,7 +497,6 @@ def test_ranking_missing_index_returns_guidance(logged_in, index_path):
         "indexed": False,
         "has_ranking": False,
         "consoles": [],
-        "default_console": None,
     }
     data = _get(logged_in, RANKING_URL)
     assert data == {"indexed": False, "has_ranking": False, "console": None, "items": []}
@@ -443,7 +519,7 @@ def test_ranking_without_ranking_data(app, logged_in, csv_dir, index_path):
     assert page["items"] == []
 
 
-def test_ranking_consoles_and_default(ranked, logged_in):
+def test_ranking_consoles(ranked, logged_in):
     data = _get(logged_in, RANKING_CONSOLES_URL)
 
     assert data["indexed"] is True
@@ -454,36 +530,39 @@ def test_ranking_consoles_and_default(ranked, logged_in):
         {"platform": "gb", "label": "任天堂 GB/GBC", "playable": True},
         {"platform": "gba", "label": "任天堂 GBA", "playable": True},
     ]
-    assert data["default_console"] == "nes"
+    assert "default_console" not in data
 
 
 def test_ranking_without_console_returns_all_consoles(ranked, logged_in):
-    """不传 console 就是跨机种榜单；默认 FC 是前端从 /consoles 的 default_console 自己选的。"""
+    """不传 console 就是跨机种榜单；页面默认不选类型，因此首次请求走的也是这条。"""
     page = _get(logged_in, RANKING_URL)
 
     assert page["console"] is None
-    # 排序：词表顺序 nes → gb → gba，同机种内按序号
+    # 排序：评分全局降序；同分按 platform、机种内序号稳定排序
     assert [item["zh"] for item in page["items"]] == [
         "超级马里奥兄弟",
-        "银河战士",
-        "塞尔达传说 不可思议的果实",
-        "分隔符示例",
         "精灵宝可梦 火红",
+        "银河战士",
         "黄金太阳",
+        "塞尔达传说 不可思议的果实",
         "双版本示例",
         "查不到编号的游戏",
+        "分隔符示例",
     ]
     assert [item["platform"] for item in page["items"]] == [
         "nes",
+        "gba",
         "nes",
+        "gba",
         "gb",
+        "gba",
+        "gba",
         "gb",
-        "gba",
-        "gba",
-        "gba",
-        "gba",
     ]
+    scores = [item["score"] for item in page["items"]]
+    assert scores == sorted(scores, reverse=True)
     assert page["items"][0]["en"] == "Super Mario Bros."
+    assert page["items"][0]["score"] == 8.84316671219157
     assert page["items"][0]["cartridge_ids"] == ["NES-SM"]
 
 
@@ -491,6 +570,9 @@ def test_ranking_gba_page(ranked, logged_in):
     page = _get(logged_in, RANKING_URL, console="gba")
 
     assert [item["rank"] for item in page["items"]] == [1, 2, 3, 4]
+    scores = [item["score"] for item in page["items"]]
+    assert scores == [8.5, 8.1, 7.75, 7.0]
+    assert scores == sorted(scores, reverse=True)
     assert page["items"][0]["platform"] == "gba"
     assert page["items"][0]["zh"] == "精灵宝可梦 火红"
     assert page["items"][0]["en"] == "Pokemon FireRed"
@@ -501,7 +583,7 @@ def test_ranking_gba_page(ranked, logged_in):
 
 
 def test_ranking_specific_console_and_separators(ranked, logged_in):
-    # CSV 里写的是 `GBC`，归一后的机种键是 `gb`（与 `GB` 同一个机种）
+    # 机种由文件名决定：gb.csv → 机种键 `gb`
     page = _get(logged_in, RANKING_URL, console="gb")
 
     assert page["console"] == "gb"
@@ -594,13 +676,20 @@ def _delete_game(app, game_id):
 
 @pytest.fixture
 def ranked_with(app, csv_dir, index_path, tmp_path):
-    """按用例自己写的榜单行建索引（默认固件覆盖不到的写法用）。"""
+    """按用例自己写的榜单行建索引（默认固件覆盖不到的写法用）。
+
+    传入行是 `[序号, 机种原始名, 中文名, 英文名, 卡带ID]`，按机种拆成 `<id>.csv`，
+    评分统一补 `8.0`。
+    """
 
     def _build(rows):
-        path = tmp_path / "custom-ranking" / "ranking.csv"
-        path.parent.mkdir(parents=True, exist_ok=True)
-        _write_csv(path, [_RANKING_HEADER, *rows])
-        build_index(csv_dir, index_path, ranking_csv=path)
+        files: dict[str, list[list[str]]] = {}
+        for rank, console, zh, en, ids in rows:
+            platform = resolve_platform(console)
+            assert platform is not None, console
+            files.setdefault(platform.id, []).append([rank, zh, en, "8.0", ids])
+        path = _write_ranking_dir(tmp_path / "custom-ranking", files)
+        build_index(csv_dir, index_path, ranking_dir=path)
         return index_path
 
     return _build
@@ -715,7 +804,7 @@ def test_ranking_link_counts_for_stock_ratio(ranked, logged_in, app):
     assert sum(1 for item in items if item["path"]) == 2
 
 
-def test_ranking_service_without_lookup_does_not_link(ranked, csv_dir, ranking_csv):
+def test_ranking_service_without_lookup_does_not_link(ranked, csv_dir, ranking_dir):
     """不注入查库存的回调 = 不关联（默认值，老的构造方式行为不变）。"""
     page = GameRankingService(ranked).get("nes")
 
@@ -738,6 +827,7 @@ def test_cross_console_cartridge_lookup_is_chunked(tmp_path):
     items = [
         RankingItem(
             rank=index + 1,
+            score=8.0,
             zh=f"游戏{index}",
             en=f"Game {index}",
             platform="nes",
@@ -750,12 +840,3 @@ def test_cross_console_cartridge_lookup_is_chunked(tmp_path):
 
     assert calls == [500, 100]
     assert all(item.path for item in linked)
-
-
-def test_pick_default_console_prefers_fc_then_registry_order():
-    """默认机种按统一机种键挑：有 FC 就选它，否则取词表里最靠前的（未收录的排最后）。"""
-    assert _pick_default(["gb", "gba", "nes"]) == "nes"
-    assert _pick_default(["gb", "gba"]) == "gb"  # 词表里 GB/GBC 在 GBA 前
-    assert _pick_default(["snes", "nes"]) == "nes"  # 词表里 FC 在 SFC 前
-    assert _pick_default(["raw:3ds", "snes"]) == "snes"  # 未收录的抢不到默认位
-    assert _pick_default([]) is None

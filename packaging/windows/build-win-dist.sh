@@ -164,8 +164,8 @@ else
 fi
 test -d "$PKG/backend/search/catalog" || { say "！backend/search/catalog 没带上，检索索引建不出来"; exit 1; }
 # 榜单是可选数据：还没整理好时只提示，不拦构建（包里的榜单页会显示「榜单尚未加载」）
-test -f "$PKG/backend/search/rankings/ranking.csv" \
-    || say "提示：backend/search/rankings/ranking.csv 没带上，这个包的游戏榜单是空的。"
+test -d "$PKG/backend/search/rankings" \
+    || say "提示：backend/search/rankings 没带上，这个包的游戏榜单是空的。"
 
 for name in launcher.py winops.py smoke_win.py allow-lan.ps1 xgame.ico \
             启动游戏平台.cmd 允许局域网访问.bat \

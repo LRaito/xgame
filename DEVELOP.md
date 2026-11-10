@@ -186,13 +186,13 @@ cd frontend && npm run lint
 「游戏发现」的数据源：
 
 - `backend/search/catalog/` 下 37 个中英文名录 CSV（检索）。
-- `backend/search/rankings/ranking.csv`（榜单，五列：`序号,机种名称,中文名,英文名,游戏卡带ID`）。
+- `backend/search/rankings/` 下 34 个机种榜单 CSV（每个机种一个文件，五列：`序号,中文名,英文名,评分,卡带ID`）。
 
 它们构建成一个只读库 `<数据根>/db/game.db`：
 
 ```bash
 make index
-# CLI 还可加 --skip-ranking（只重建检索）或 --ranking-csv PATH
+# CLI 还可加 --skip-ranking（只重建检索）或 --ranking-dir PATH
 ```
 
 - 只有一个写入模块：`backend/games/search_index.py`。
@@ -221,7 +221,7 @@ sudo chown -R "$USER" "$STORAGE_HOST_DIR"
 - 改 `backend/games/search_text.py` 后必须重跑 `make index`，否则中文可能静默搜不到。
 - 改检索表结构要加 `SCHEMA_VERSION`。
 - 改榜单表结构改 `RANKING_SCHEMA_VERSION`，不要动 `SCHEMA_VERSION`。
-- 榜单 CSV 换内容不用改版本号：重跑 `make index`，或重启让服务按指纹补载。
+- 榜单目录换内容不用改版本号：重跑 `make index`，或重启让服务按指纹补载。
 
 ## 提交约定
 

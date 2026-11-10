@@ -40,6 +40,7 @@ def game_ranking(
             "items": [
                 {
                     "rank": item.rank,
+                    "score": item.score,
                     "zh": item.zh,
                     "en": item.en,
                     "platform": item.platform,
@@ -56,10 +57,11 @@ def game_ranking(
 
 @router.get("/consoles")
 def game_ranking_consoles(_user: CurrentUser, service: GameRankingServiceDep):
-    """机种下拉的候选项（只列榜单 CSV 里出现过的机种）与默认机种。
+    """机种下拉的候选项（只列榜单 CSV 里出现过的机种）。
 
     每项 `{platform, label, playable}`：`platform` 是统一机种键（请求榜单时原样回传），
     `label` 是与游戏管理/检索共用的统一显示名，`playable` 表示本平台是否已收录该机种。
+    页面默认不选中任何类型。
     """
     try:
         result = service.list_consoles()
@@ -77,6 +79,5 @@ def game_ranking_consoles(_user: CurrentUser, service: GameRankingServiceDep):
                 }
                 for item in result.consoles
             ],
-            "default_console": result.default_console,
         }
     )

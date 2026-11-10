@@ -33,7 +33,7 @@
 ## 依赖
 
 - `<数据根>/db/game.db` 与 SQLite FTS5。
-- `backend/search/catalog/` 的 37 个名录 CSV 与 `backend/search/rankings/ranking.csv`。
+- `backend/search/catalog/` 的 37 个名录 CSV 与 `backend/search/rankings/` 的 34 个机种榜单 CSV。
 - `make index` 与启动时的自动补建。
 
 ## 数据与路径
@@ -46,7 +46,8 @@
 - 只中文或只英文相同的行保留，那是不同地区版本。
 - 检索侧同一机种的多个原始写法合并成一行 console。
 - 合并结果：36 个原始机种 → 32 项（23 统一 + 9 未收录）。
-- 榜单数据源是 `backend/search/rankings/ranking.csv`，五列（`序号,机种名称,中文名,英文名,游戏卡带ID`）。
+- 榜单数据源是 `backend/search/rankings/`，每个机种一个五列 CSV
+  （`序号,中文名,英文名,评分,卡带ID`），机种由文件名（机种 id）决定。
 - 榜单放单独目录；混进 `catalog/` 会被当成坏行。
 - 索引库路径是 `<STORAGE_ROOT>/db/game.db`（`GAME_INDEX_FILENAME`）。
 - 索引在数据根里，与 `app.db` 无外键关系，是独立派生只读库。
@@ -66,7 +67,7 @@
 - 文件存在但 `meta.schema_version` 与代码不符时也会整库重建一次。
 - `TESTING` 下直接跳过；全程 best-effort，失败只记 warning、不拦启动。
 - 手动入口：`make index` → `python -m backend.cli index` → `build_index()`。
-- `--skip-ranking` 可以只重建检索。
+- `--skip-ranking` 可以只重建检索；`--ranking-dir PATH` 可以临时换一份榜单目录。
 - 第二条是 `ensure_ranking_loaded()`，启动时把榜单就地补进已存在的库。
 - 构建一律整库重建 + 原子替换。
 - 步骤：写同目录 `game.db.tmp` → `chmod 0644` → `os.replace()`。
@@ -122,27 +123,34 @@
 
 **榜单 CSV 与落库。**
 
-- 五列固定：`序号,机种名称,中文名,英文名,游戏卡带ID`。
-- 中文名、英文名都非空；中文名优先从检索名录按英文名匹配，查不到的按最广泛译名补齐，
-  不允许留空。两列都要去掉地区/修订/语言标注（区分版本的标题括号保留）。
-- 表头可有可无；首行第一格是 `序号` 或 `排名` 就跳过；旧版四列表头会被明确拒绝。
-- 序号是正整数，同一机种内唯一；重复报错。
+- 每个机种一个五列 CSV，文件名 stem 就是机种 id（`nes.csv`、`segaMD.csv`…）。
+- 五列固定：`序号,中文名,英文名,评分,卡带ID`。
+- 中文名可空（查不到译名就留空，页面显示 `—`）；英文名非空。
+  两者都去掉地区/修订/语言标注（区分版本的标题括号保留）。
+- 评分非空，是普通十进制数字（MobyGames 原始 double），落库为 `REAL`；
+  页面固定显示两位小数并四舍五入，后端不做格式化。
+- 表头可有可无；首行第一格是 `序号` 或 `排名` 就跳过；旧版带 `机种名称` 的表头会被明确拒绝。
+- 序号是正整数，同一文件/机种内唯一；重复报错。
 - 页面按序号升序展示并原样显示，不重排。
-- 机种名称非空，建库时经词表归一成机种键，`GBA` 与 `gba` 自然合并。
 - 卡带 ID 每行 0~2 个，用 `;` 分隔，也兼容 `、` `,` `，` `/` `；`。
 - 空格、连字符、下划线不是分隔符，因为卡带 ID 里常有空格。
 - 卡带 ID 可以为空，第 5 列可整列省掉；超过 2 个被拒绝。
-- 空行跳过，Excel 行尾多余空列裁掉；空文件或只有表头算错误。
+- 空行跳过，Excel 行尾多余空列裁掉；只有表头的文件跳过，所有文件都没有数据行才算错误。
 - 解析错误消息必须带文件名与行号。
-- 落库单表 `ranking(platform, console, rank, zh, en, cartridge_ids)`。
+- 落库单表 `ranking(platform, console, rank, score, zh, en, cartridge_ids)`。
 - 主键 `(platform, rank)` 且 `WITHOUT ROWID`。
-- `platform` 是归一机种键，认不出时写 `raw:{归一后的原文}`。
-- `console` 留 CSV 原文供溯源；`cartridge_ids` 存 JSON 数组文本。
+- 评分索引：
+  - `idx_ranking_score(score DESC)`：跨机种按评分全局排序；WITHOUT ROWID 的二级索引
+    自动附带主键，实际覆盖 `ORDER BY score DESC, platform, rank`。
+  - `idx_ranking_platform_score(platform, score DESC)`：单机种
+    `WHERE platform = ? ORDER BY score DESC, rank`。
+- 索引在整库重建与就地补载两条路径上都会创建。
+- `platform` 是机种 id；`console` 留文件名 stem 供溯源；`cartridge_ids` 存 JSON 数组文本。
 - 机种存文本而非外键，因为榜单机种未必出现在检索名录里。
 - meta 记 `ranking_schema_version`，独立于检索 `SCHEMA_VERSION`，不 bump 它。
 - 加榜单表是纯新增，老库要继续能检索；补载失败也不能让检索 503。
 - meta 还记 `ranking_fingerprint`、`ranking_source`、`ranking_rows` 等。
-- 指纹是 CSV 原始字节 SHA-256，只有成功加载后才写。
+- 指纹覆盖目录里所有 CSV 的「文件名 + 原始字节」SHA-256，只有成功加载后才写。
 - 用指纹而非 size+mtime，因为 `touch`/`git checkout` 会改 mtime 但内容不变。
 
 **榜单就地补载。**
@@ -152,7 +160,7 @@
 - 需要更新时先 `PRAGMA journal_mode = DELETE`，再 `BEGIN IMMEDIATE`。
 - 事务内二次比对指纹，然后 DROP 旧表、建表、全量插入、upsert meta。
 - 成功后 commit；异常 rollback，旧榜单原封不动。
-- CSV 缺失时保留库里已有榜单，不删不改。
+- 榜单目录缺失时保留库里已有榜单，不删不改。
 - 启动加载是 best-effort，失败只记 warning。
 
 **榜单与平台库存的关联。**
@@ -165,7 +173,7 @@
 - 后者遇到 `Part No. 7004 0894` 这类原文会抛错，把只读接口打挂。
 - 不区分有无本体：无本体条目同样关联（`has_body=false`），点击提示先上传、不跳转。
 - 不校验机种；卡带 ID 是「同一盘卡带」的全局身份。
-- 榜单的 `platform` 还有 `raw:3ds` 这类永远等不上 `game_type` 的值。
+- 榜单的 `platform` 全部是机种 id，不再有 `raw:` 值。
 - 命中行多 `game_id`、`path` 与 `has_body`；`path` 由 `service.play_path()` 按类型给。
 - `path` 与 `GameItem.path` 同一实现；没命中时 `game_id` / `path` 都是 `null`。
 - `GameRankingService` 构造函数注入窄回调 `cartridge_lookup`。
@@ -183,10 +191,13 @@
 - `GET /api/games/search/consoles`：每项 `{id, name, platform_id}`。
 - `name` 是统一显示名；`platform_id` 是机种键；未收录为 `null`。
 - `GET /api/games/search/ranking?console=`：需登录，不分页。
-- item 是 `{rank, zh, en, platform, cartridge_ids, game_id, path}`，不再有单列 `title`。
+- item 是 `{rank, score, zh, en, platform, cartridge_ids, game_id, path}`。
+- `score` 是原始 double；前端固定两位小数展示，四舍五入。
 - `console` 传机种键，回显也是机种键；**不传则返回全部机种（跨机种）**，回显 `null`。
-- 跨机种的结果按词表顺序、同机种内按序号排；`platform` 供前端显示类型列。
-- `GET /api/games/search/ranking/consoles`：返回机种清单与 `default_console`。
+- 跨机种的结果按评分全局降序排，同分按机种、机种内序号稳定排序；`platform` 供前端显示类型列。
+- 跨机种时前端把排名重编号为整个榜单的连续名次；选中机种时显示该机种内序号。
+- 单机种查询同样按评分降序（同分按序号）。
+- `GET /api/games/search/ranking/consoles`：返回机种清单。
 - 榜单机种项是 `{platform, label, playable}`。
 - 路由挂在 `/api/games/search/` 下，避免与未来单段 `/{game_id}` 撞车。
 
@@ -201,6 +212,10 @@
 - 榜单工具栏 = 机种下拉 + 搜索框 + 紧挨其右的「已入库比例」按钮。
 - 按钮不推到最右，不用 `margin-left: auto`。
 - 机种下拉**可清空**：清空即跨机种，表格多一列「游戏类型」；选中机种时不显示该列。
+- 排名：选中机种时是 CSV 里的机种内序号；清空机种时按整份列表重编号为整个榜单的连续名次。
+  搜索与「只看已入库」只过滤展示，不改变名次。
+- 榜单列顺序：排名、评分、[游戏类型]、中文名、英文名、卡带 ID。
+- 评分由 `formatRankingScore()` 用 `toFixed(2)` 四舍五入；中文名为空时显示 `—`。
 - 榜单搜索与分页全在前端，因为一份榜单（一个机种或全部机种）一次整份取回。
 - 搜索是对中文名/英文名做不区分大小写的裸子串匹配，逐字即时、无防抖无高亮。
 - 不认 FTS 语法，`mario*` 的星号是普通字符；不做 NFKC，也不剥尾部标签。
@@ -216,8 +231,8 @@
 - 不加 `@click`，也不加 `custom`，否则 Ctrl/中键开新标签页就废了。
 - 卡带 ID 是并排可点按钮，点击复制。
 - 复制复用 `utils/clipboard.js` 的 `writeClipboard()`；不用 `title` / `el-tooltip`。
-- 榜单初始机种取 `/consoles` 的 `default_console`（FC）；没有就取词表最靠前，未收录排最后。
-- 清空下拉后不传 `console`，后端返回全部机种；此时行 key 用 `platform + rank`（跨机种序号会重来）。
+- 页面默认不选类型，首次请求就不传 `console`，直接看跨机种榜单；选中类型后只取该类型。
+- 清空下拉后不传 `console`，后端返回全部机种；此时行 key 仍用 `platform + rank` 保证唯一。
 - 空态按「谁清空的」分流：关键词、关键词+已入库、只有已入库。
 
 ## 边界与错误
@@ -244,9 +259,9 @@
 - `tests/test_platforms.py`：用真实 CSV 钉住机种解析与未收录名单。
 - `tests/test_game_search.py`：分词、查询边界、去重、分页稳定性。
 - 还覆盖版本过旧 503、坏库 503、运行期不写索引、只读权限。
-- `tests/test_game_ranking.py`：榜单 CSV 解析与坏行报错。
+- `tests/test_game_ranking.py`：榜单目录解析与坏行报错。
 - 还覆盖缺省表头、空卡带 ID、非 UTF-8、榜单目录必须独立。
-- 还覆盖整库重建、指纹幂等、内容变化重载、CSV 缺失保留旧榜。
+- 还覆盖整库重建、指纹幂等、内容变化重载、目录缺失保留旧榜。
 - 还覆盖启动加载、榜单未加载、版本过旧 503、运行期不写索引。
 - 库存关联覆盖：命中、按类型给 path、第二个 ID 命中、大小写不敏感。
 - 关联还覆盖：非法 ID 不抛错、无本体不关联、删游戏后立刻断开。

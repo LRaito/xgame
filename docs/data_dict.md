@@ -317,7 +317,7 @@
 | 读取方 | `GameSearchService` / `GameRankingService` |
 | 连接 | `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接 |
 | 是否备份 | 不备份；可从 CSV 重建 |
-| 源数据 | 37 个检索 CSV + `ranking.csv` |
+| 源数据 | 37 个检索 CSV + 34 个机种榜单 CSV |
 | 重建 | 整库重建 + `os.replace`；不开 WAL |
 
 ### 表
@@ -327,10 +327,12 @@
 | `console` | 检索的统一机种：`id` / `name` / `platform_id` / `raw_names` |
 | `game` | 名录一行：`id` / `console_id` / `zh` / `en` / `src` |
 | `game_fts` | FTS5 全文索引，contentless，`zh_uni` / `en_uni` |
-| `ranking` | 榜单一行：`platform` / `console` / `rank` / `zh` / `en` / `cartridge_ids` |
+| `ranking` | 榜单一行：`platform` / `console` / `rank` / `score` / `zh` / `en` / `cartridge_ids` |
 | `meta` | 键值元信息：检索版本、榜单版本与指纹 |
 | `idx_game_console` | `game(console_id, en)` 索引 |
 | `idx_console_platform` | `console(platform_id)` 索引 |
+| `idx_ranking_score` | `ranking(score DESC)`，跨机种按评分全局排序 |
+| `idx_ranking_platform_score` | `ranking(platform, score DESC)`，单机种按评分排序 |
 
 ### 约定
 

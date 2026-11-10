@@ -2,7 +2,7 @@
 
 数据是 `backend/games/search_index.py` 写进 `<根路径>/db/game.db` 的 `ranking` 表
 （`make index` 构建、服务启动时就地补载）。**这里只读**：每个请求开一条 `mode=ro` 的短连接，
-从不建文件、从不写。榜单没加载（老库、或 CSV 还没到位）是正常状态，返回
+从不建文件、从不写。榜单没加载（老库、或 CSV 目录还没到位）是正常状态，返回
 `has_ranking: false` 而不是报错。
 """
 
@@ -21,9 +21,6 @@ from backend.games.service import GameLink
 
 logger = logging.getLogger(__name__)
 
-# 榜单页默认选中的机种（统一机种键，也就是 EmulatorJS 的 system key）：FC。
-_DEFAULT_PLATFORM = "nes"
-
 # 「按卡带ID 找库存游戏」的能力，由构造函数注入（实现见 `GameService.map_for_cartridge_ids`）：
 # 传一批**原始**卡带ID 文本，回一批命中的 `{原始ID: GameLink}`。榜单服务自己不碰 `games` 表，
 # 也不 import 平台库存那边的 service，只认这个窄接口。
@@ -33,6 +30,7 @@ CartridgeLookup = Callable[[Sequence[str]], Mapping[str, GameLink]]
 @dataclass(frozen=True)
 class RankingItem:
     rank: int
+    score: float
     zh: str
     en: str
     platform: str
@@ -67,7 +65,6 @@ class RankingConsoles:
     indexed: bool
     has_ranking: bool
     consoles: list[RankingConsole]
-    default_console: str | None
 
 
 # 一次库存关联查询最多带多少个卡带 ID。单个机种最多 100 行 × 2 个 ID = 200；
@@ -88,16 +85,15 @@ class GameRankingService:
         return self._db_path.is_file()
 
     def list_consoles(self) -> RankingConsoles:
-        """机种清单（去重、按词表顺序）与默认机种。
+        """机种清单（去重、按词表顺序）。
 
-        `MIN(console)` 取的是该机种在 CSV 里出现过的写法中最小的一条，只用于「认不出机种」
-        的那些当兜底；认得出的用词表统一显示名，未收录但登记了显示名的（`3DS`、`CD-I`）也统一。
+        `MIN(console)` 只为取一条可溯源的原文；展示名一律走词表的统一 `label`。
         """
         if not self.is_indexed():
-            return RankingConsoles(False, False, [], None)
+            return RankingConsoles(False, False, [])
         with self._connect() as conn:
             if not _ranking_ready(conn):
-                return RankingConsoles(True, False, [], None)
+                return RankingConsoles(True, False, [])
             try:
                 rows = conn.execute(
                     "SELECT platform, MIN(console) FROM ranking GROUP BY platform"
@@ -108,15 +104,12 @@ class GameRankingService:
             (_to_console(row[0], row[1]) for row in rows),
             key=lambda item: (platform_order(item.platform), item.platform),
         )
-        return RankingConsoles(
-            True, True, consoles, _pick_default([item.platform for item in consoles])
-        )
+        return RankingConsoles(True, True, consoles)
 
     def get(self, console: str | None = None) -> RankingPage:
         """取榜单（不分页）。给了机种就只取该机种；为空时取全部机种（跨机种）。
 
-        `console` 为空**不再回落到默认机种**：榜单页默认选中 FC 是前端拿
-        `/consoles` 的 `default_console` 自己填的；用户把下拉清空时，这里返回整份榜单。
+        `console` 为空就是整份榜单；页面默认不选类型，用户选中后只返回该类型。
         """
         if not self.is_indexed():
             return RankingPage(False, False, None, [])
@@ -126,13 +119,11 @@ class GameRankingService:
                 return RankingPage(True, False, None, [])
             try:
                 if not requested:
-                    # 跨机种：platform 一起取出来，按词表顺序再按序号排（raw: 机种排最后）。
+                    # 跨机种：按评分全局降序；同分按机种、机种内序号稳定排序。
                     rows = conn.execute(
-                        "SELECT platform, rank, zh, en, cartridge_ids FROM ranking"
+                        "SELECT platform, rank, score, zh, en, cartridge_ids FROM ranking "
+                        "ORDER BY score DESC, platform, rank"
                     ).fetchall()
-                    rows.sort(
-                        key=lambda row: (platform_order(row[0]), row[0], int(row[1]))
-                    )
                     items = [_to_item(row[1:], platform=row[0]) for row in rows]
                     chosen = None
                 else:
@@ -147,8 +138,8 @@ class GameRankingService:
                     items = [
                         _to_item(row, platform=chosen)
                         for row in conn.execute(
-                            "SELECT rank, zh, en, cartridge_ids FROM ranking "
-                            "WHERE platform = ? ORDER BY rank",
+                            "SELECT rank, score, zh, en, cartridge_ids FROM ranking "
+                            "WHERE platform = ? ORDER BY score DESC, rank",
                             (chosen,),
                         ).fetchall()
                     ]
@@ -239,15 +230,6 @@ def _ranking_ready(conn: sqlite3.Connection) -> bool:
     return bool(version and fingerprint and table)
 
 
-def _pick_default(platforms: list[str]) -> str | None:
-    """默认机种：FC → 词表里最靠前的那个（认不出机种的排在词表之后，不会抢到默认位）。"""
-    if not platforms:
-        return None
-    if _DEFAULT_PLATFORM in platforms:
-        return _DEFAULT_PLATFORM
-    return min(platforms, key=lambda item: (platform_order(item), item))
-
-
 def _match_platform(platforms: list[str], requested: str) -> str | None:
     """把请求里的机种键对回库里的写法：先精确，再大小写不敏感（`raw:` 那些是归一后的原文）。"""
     if requested in platforms:
@@ -269,7 +251,7 @@ def _to_console(platform: str, raw_console: str) -> RankingConsole:
 
 
 def _to_item(row: tuple, platform: str) -> RankingItem:
-    rank, zh, en, ids_text = row
+    rank, score, zh, en, ids_text = row
     try:
         ids = json.loads(ids_text)
     except (TypeError, ValueError) as exc:
@@ -278,6 +260,7 @@ def _to_item(row: tuple, platform: str) -> RankingItem:
         raise _broken(ValueError(f"cartridge_ids 不是数组：{ids_text!r}"))
     return RankingItem(
         rank=int(rank),
+        score=float(score),
         zh=str(zh),
         en=str(en),
         platform=platform,

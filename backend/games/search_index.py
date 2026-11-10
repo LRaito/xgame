@@ -11,17 +11,17 @@
 
 - `catalog/` 下的一份份 `中文名,英文名` 两列名录（UTF-8 带 BOM、CRLF、首行表头），构成检索索引；
   机种由文件名经 `platforms.SEARCH_CSV_CONSOLE_NAMES` 推导，不再写在行里；
-- `ranking/ranking.csv` 的五列榜单（`序号,机种名称,中文名,英文名,游戏卡带ID`），构成游戏榜单。
+- `rankings/` 下每个机种一个五列 CSV（`序号,中文名,英文名,评分,卡带ID`），构成游戏榜单；
+  机种由文件名（机种 id）决定。
 
 榜单单独建表、单独一个版本号：它的表结构变化不影响检索的 `schema_version`，补榜单失败也不会
 把检索一起变成「版本过旧」。
 
 **机种归一**：检索名录的机种来自文件名映射（`gb.csv` → `任天堂GB`、`gbc.csv` → `任天堂GBC`），
-榜单里的「机种」仍是自由文本（`GB/GBC`、`MD`…），建库时一律经 `backend/games/platforms.py`
-的词表解析成统一机种（id 是 EmulatorJS 的 system key）。所以检索侧同一个机种的多个原始名
-（`任天堂GB` + `任天堂GBC`）**在库里就是同一行 console**，页面的机种下拉天然不会出现两个同名项；
-认不出机种的（Wii、3DS、CD-I…）保留原文、`platform_id` 留空，自成一组，显示名仍按
-「公司名 + 空格 + 型号」补空格。
+榜单机种直接来自文件名（`nes.csv` → 机种 id `nes`），两份数据都用 `backend/games/platforms.py`
+的词表表达同一套机种。检索侧同一个机种的多个原始名（`任天堂GB` + `任天堂GBC`）**在库里就是同一行
+console**，页面的机种下拉天然不会出现两个同名项；检索名录里认不出的机种（Wii、3DS、CD-I…）
+保留原文、`platform_id` 留空，自成一组，显示名仍按「公司名 + 空格 + 型号」补空格。
 """
 
 import csv
@@ -37,8 +37,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, Settings
+from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, Settings
 from backend.games.platforms import (
+    PLATFORM_BY_ID,
     PLATFORMS,
     SEARCH_CSV_CONSOLE_NAMES,
     display_console_name,
@@ -58,7 +59,9 @@ SCHEMA_VERSION = "2"
 # 榜单表结构的版本，独立于上面的检索版本。
 # 2：机种归一（ranking 表加 platform 列，主键从 (console, rank) 改成 (platform, rank)）
 # 3：单列 title 拆成 zh / en 两列（与检索页的中文名、英文名对齐）
-RANKING_SCHEMA_VERSION = "3"
+# 4：增加 score 列（MobyGames 原始 double）
+# 5：增加评分索引（跨机种 score、机种+score）
+RANKING_SCHEMA_VERSION = "5"
 
 # 建库语句。game_fts 是 contentless（content=''）表：只存倒排索引、不重复存正文，
 # 正文永远从 game 表取——所以 snippet()/highlight() 在它上面恒返回 NULL，高亮必须在前端做。
@@ -99,19 +102,20 @@ CREATE VIRTUAL TABLE game_fts USING fts5(
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
-# 榜单表。`platform` 是统一机种键（认得出机种就是 EmulatorJS 的 system key，认不出就用原文），
-# `console` 留一份 CSV 原文供溯源与展示兜底。`PRIMARY KEY (platform, rank)` 同时满足两种查询：
-# `SELECT platform, MIN(console) … GROUP BY platform`（小表全扫）与
-# `WHERE platform = ? ORDER BY rank`（主键前缀有序，不必再建索引）。
+# 榜单表。`platform` 是机种 key（来自榜单文件名，也就是 EmulatorJS 的 system key），
+# `console` 留一份文件名 stem 供溯源与展示兜底。`score` 存 MobyGames 原始 double。
+# `PRIMARY KEY (platform, rank)` 仍然服务 `SELECT platform, MIN(console) … GROUP BY platform`
+# 与按机种回查序号；评分排序走下面两个二级索引（见 `_RANKING_INDEXES`）。
 #
 # 机种存文本而不是外键到 console 表：榜单的机种未必出现在检索名录里，复用 console 表会污染
-# 检索的机种下拉（两个页面各自维护自己的机种清单，只是**用同一份词表归一**）。
+# 检索的机种下拉（两个页面各自维护自己的机种清单，只是**用同一份词表**）。
 # cartridge_ids 存 JSON 数组文本：每行 0~2 个，读取时 json.loads 即可，不需要子表与 join。
 _RANKING_SCHEMA = """
 CREATE TABLE IF NOT EXISTS ranking(
     platform      TEXT NOT NULL,
     console       TEXT NOT NULL,
     rank          INTEGER NOT NULL CHECK (rank >= 1),
+    score         REAL NOT NULL,
     zh            TEXT NOT NULL,
     en            TEXT NOT NULL,
     cartridge_ids TEXT NOT NULL,
@@ -121,16 +125,34 @@ CREATE TABLE IF NOT EXISTS ranking(
 
 _SCHEMA = _SEARCH_SCHEMA + _RANKING_SCHEMA
 
+# 榜单的评分索引。两条查询各用一个：
+# - 跨机种：`ORDER BY score DESC, platform, rank`。WITHOUT ROWID 的二级索引会自动附带
+#   主键列，所以 `(score DESC)` 索引的实际顺序就是 `(score DESC, platform, rank)`。
+# - 单机种：`WHERE platform = ? ORDER BY score DESC, rank`。联合索引
+#   `(platform, score DESC)` 再附带主键里的 `rank`，正好覆盖这条查询。
+_RANKING_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_ranking_score ON ranking(score DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ranking_platform_score ON ranking(platform, score DESC)",
+)
+
+
+def _create_ranking_indexes(conn: sqlite3.Connection) -> None:
+    for statement in _RANKING_INDEXES:
+        conn.execute(statement)
+
+
 # 榜单里同一格最多两个卡带 ID（也可以一个都没有），用这些分隔符分开。**空格不是分隔符**：卡带 ID 里常有空格
 # （如 `POKEMON FIRE RED`），按空格拆会把一个 ID 拆成好几个；连字符与下划线同样不分割。
 _RANKING_ID_SPLIT = re.compile(r"[、,，/;；]+")
 # 允许出现的表头（第一条非空行第一格命中就跳过）。
 _RANKING_HEADERS = {"序号", "排名"}
-# 榜单 CSV 的列数（序号,机种名称,中文名,英文名,游戏卡带ID）；卡带 ID 为空时可省成 4 列。
+# 榜单 CSV 的列数（序号,中文名,英文名,评分,卡带ID）；卡带 ID 为空时可省成 4 列。
 _RANKING_COLUMNS = 5
-# 旧版榜单表头第三格。看到它在表头里要给出明确的升级提示，避免四列旧数据被当成
-# 「中文名,英文名」静默解析。
-_RANKING_OLD_TITLE_HEADER = "游戏名称"
+# 旧版榜单表头的第二格。看到它在表头里要给出明确的升级提示：机种已经改由文件名决定，
+# 不能再把「机种名称」当成中文名静默解析。
+_RANKING_OLD_CONSOLE_HEADER = "机种名称"
+# 评分只接受普通十进制写法，落库转 double；负号、科学计数法一律拒绝。
+_RANKING_SCORE_RE = re.compile(r"^\d+(?:\.\d+)?$")
 # 检索名录的表头。真实目录里的 CSV 都带这一行；自定义 `--csv-dir` 可以不带，所以按可选处理：
 # 只跳过**第一行**且内容恰好是这两格，避免把恰巧同名的游戏当表头。
 _SEARCH_HEADER = ("中文名", "英文名")
@@ -157,9 +179,10 @@ class BuildStats:
 
 @dataclass(frozen=True)
 class RankingRow:
-    platform: str  # 统一机种键（认不出机种时就是 CSV 原文）
-    console: str  # CSV 原文，仅作溯源与展示兜底
+    platform: str  # 统一机种键（文件名 stem，也就是 EmulatorJS 的 system key）
+    console: str  # 文件名 stem，仅作溯源与展示兜底
     rank: int
+    score: float
     zh: str
     en: str
     cartridge_ids: tuple[str, ...]
@@ -168,7 +191,7 @@ class RankingRow:
 @dataclass(frozen=True)
 class RankingData:
     rows: tuple[RankingRow, ...]
-    platforms: tuple[str, ...]  # 归一后的机种键（去重，按首次出现顺序）
+    platforms: tuple[str, ...]  # 机种键（去重，按首次出现顺序）
     fingerprint: str
     source: str
 
@@ -180,7 +203,7 @@ class RankingLoadStats:
     fingerprint: str
 
 
-# `ensure_game_index(ranking_csv=...)` 的默认值：区分「没传，用 RANKING_CSV_PATH」与
+# `ensure_game_index(ranking_dir=...)` 的默认值：区分「没传，用 RANKING_CSV_DIR」与
 # 「显式传 None，本次不处理榜单」——测试要能 monkeypatch 模块常量，也要能关掉榜单。
 _DEFAULT_RANKING = object()
 
@@ -189,7 +212,7 @@ def ensure_game_index(
     settings: Settings,
     *,
     csv_dir: Path | None = None,
-    ranking_csv: Path | None | object = _DEFAULT_RANKING,
+    ranking_dir: Path | None | object = _DEFAULT_RANKING,
 ) -> BuildStats | None:
     """启动时补一次索引：**没有才建**，已经存在就跳过；榜单另外就地补一次。
 
@@ -202,14 +225,14 @@ def ensure_game_index(
     if settings.TESTING:
         return None
 
-    if ranking_csv is _DEFAULT_RANKING:
-        ranking_path: Path | None = RANKING_CSV_PATH
+    if ranking_dir is _DEFAULT_RANKING:
+        ranking_path: Path | None = RANKING_CSV_DIR
     else:
-        ranking_path = Path(ranking_csv) if ranking_csv else None
+        ranking_path = Path(ranking_dir) if ranking_dir else None
 
     target = settings.game_index_path
     if target.is_file() and _index_version_matches(target):
-        # 库已经在且版本对得上：只把榜单补进去（源 CSV 没变时这个调用一个字节都不写）
+        # 库已经在且版本对得上：只把榜单补进去（源目录没变时这个调用一个字节都不写）
         _load_ranking_best_effort(target, ranking_path)
         return None
     if target.is_file():
@@ -228,7 +251,7 @@ def ensure_game_index(
 
     try:
         # build_index 自己会打一条 INFO（路径 + 行数 + 机种数），这里不重复
-        return build_index(source, target, ranking_csv=ranking_path, strict_ranking=False)
+        return build_index(source, target, ranking_dir=ranking_path, strict_ranking=False)
     except Exception as exc:  # noqa: BLE001 - 建不出来不该拦住服务启动
         logger.warning("自动构建游戏检索索引失败（不影响启动）：%s", exc)
         return None
@@ -238,7 +261,7 @@ def build_index(
     csv_dir: Path,
     out_path: Path,
     *,
-    ranking_csv: Path | None = None,
+    ranking_dir: Path | None = None,
     strict_ranking: bool = False,
 ) -> BuildStats:
     """读 `csv_dir` 下所有检索 CSV，重建 `out_path`（`<根路径>/db/game.db`）。
@@ -246,7 +269,7 @@ def build_index(
     可重复执行：每次都从零重建，成功后整体替换旧文件。失败不会留下半成品——
     临时文件写在同目录、失败即删，旧库原封不动。
 
-    `ranking_csv` 给了就在同一次构建里把榜单也写进去；`strict_ranking=False` 时榜单 CSV
+    `ranking_dir` 给了就在同一次构建里把榜单也写进去；`strict_ranking=False` 时榜单目录
     坏了只记 warning（检索照常建），`True`（`make index`）时直接抛错让人看到问题。
     """
     csv_files = sorted(Path(csv_dir).glob("*.csv"), key=_csv_sort_key)
@@ -254,11 +277,11 @@ def build_index(
         raise IndexBuildError(f"没有找到任何 CSV 名录：{csv_dir}")
 
     ranking_data = None
-    if ranking_csv is not None:
-        ranking_path = Path(ranking_csv)
-        if ranking_path.is_file():
+    if ranking_dir is not None:
+        ranking_path = Path(ranking_dir)
+        if ranking_path.is_dir():
             try:
-                ranking_data = _load_ranking_csv(ranking_path)
+                ranking_data = _load_ranking_dir(ranking_path)
             except RankingCsvError:
                 if strict_ranking:
                     raise
@@ -316,26 +339,26 @@ def build_index(
 
 def ensure_ranking_loaded(
     db_path: Path,
-    csv_path: Path,
+    ranking_dir: Path,
     *,
     strict: bool = False,
 ) -> RankingLoadStats | None:
-    """把榜单 CSV 就地补进一个已经存在的 `game.db`（服务启动时调用）。
+    """把榜单目录就地补进一个已经存在的 `game.db`（服务启动时调用）。
 
-    幂等：源 CSV 的 SHA-256 与库里的指纹一致时**连读写连接都不打开**，一个字节都不写。
-    指纹用原始字节算而不是 size+mtime：`touch`、`git checkout`、解压都会改 mtime 但内容没变，
-    而 `cp -p` / 解压工具又会保留 mtime，两者都会误判。
+    幂等：榜单目录里所有 CSV 的 SHA-256 与库里的指纹一致时**连读写连接都不打开**，
+    一个字节都不写。指纹用原始字节算而不是 size+mtime：`touch`、`git checkout`、解压都会
+    改 mtime 但内容没变，而 `cp -p` / 解压工具又会保留 mtime，两者都会误判。
 
     `strict=False`（启动路径）时任何失败都只记 warning 并返回 `None`，绝不拦住启动；
     `strict=True` 时抛出 `IndexBuildError`。
     """
     db_path = Path(db_path)
-    csv_path = Path(csv_path)
-    if not db_path.is_file() or not csv_path.is_file():
+    ranking_dir = Path(ranking_dir)
+    if not db_path.is_file() or not ranking_dir.is_dir():
         return None
 
     try:
-        data = _load_ranking_csv(csv_path)
+        data = _load_ranking_dir(ranking_dir)
     except RankingCsvError as exc:
         if strict:
             raise
@@ -381,6 +404,7 @@ def ensure_ranking_loaded(
             return stats
         conn.execute("DROP TABLE IF EXISTS ranking")
         conn.execute(_RANKING_SCHEMA)
+        _create_ranking_indexes(conn)
         _write_ranking(conn, data)
         conn.commit()
     except (sqlite3.Error, OSError) as exc:
@@ -401,15 +425,15 @@ def ensure_ranking_loaded(
     return stats
 
 
-def _load_ranking_best_effort(db_path: Path, csv_path: Path | None) -> None:
+def _load_ranking_best_effort(db_path: Path, ranking_dir: Path | None) -> None:
     """启动路径的包装：任何异常都只记日志，绝不冒泡到 `create_app()`。"""
-    if csv_path is None:
+    if ranking_dir is None:
         return
-    if not Path(csv_path).is_file():
-        logger.info("没有找到游戏榜单 CSV（%s），跳过加载。", csv_path)
+    if not Path(ranking_dir).is_dir():
+        logger.info("没有找到游戏榜单 CSV 目录（%s），跳过加载。", ranking_dir)
         return
     try:
-        ensure_ranking_loaded(db_path, csv_path, strict=False)
+        ensure_ranking_loaded(db_path, ranking_dir, strict=False)
     except Exception as exc:  # noqa: BLE001 - 兜底，函数内部已经处理过常见错误
         logger.warning("加载游戏榜单失败（不影响启动）：%s", exc)
 
@@ -445,6 +469,7 @@ def _write_database(
     conn = sqlite3.connect(temp_path)
     try:
         conn.executescript(_SCHEMA)
+        _create_ranking_indexes(conn)
 
         # 第一遍：读完名录（按 (机种原始名, 中文, 英文) 三元组去重）并按统一机种分组。
         # 机种原始名来自文件名映射，见 `_console_name_for()`。
@@ -604,114 +629,137 @@ def _is_search_header(row: list[str]) -> bool:
     return len(row) == len(_SEARCH_HEADER) and tuple(cell.strip() for cell in row) == _SEARCH_HEADER
 
 
-def _load_ranking_csv(csv_path: Path) -> RankingData:
-    """解析榜单 CSV，返回行、机种与内容指纹。任何格式问题都抛带行号的中文错误。"""
-    raw = csv_path.read_bytes()
-    fingerprint = hashlib.sha256(raw).hexdigest()
-    try:
-        text = raw.decode("utf-8-sig")
-    except UnicodeDecodeError as exc:
-        raise RankingCsvError(f"{csv_path.name} 不是 UTF-8 编码，请另存为 UTF-8 后重试。") from exc
+def _load_ranking_dir(ranking_dir: Path) -> RankingData:
+    """解析榜单目录，返回行、机种与多文件内容指纹。任何格式问题都抛带文件名与行号的中文错误。"""
+    csv_files = sorted(Path(ranking_dir).glob("*.csv"))
+    if not csv_files:
+        raise RankingCsvError(f"{ranking_dir} 下没有任何榜单 CSV。")
 
+    digest = hashlib.sha256()
     rows: list[RankingRow] = []
-    consoles: dict[str, str] = {}  # 归一后的机种键 -> 首次出现的 CSV 原文（溯源/展示兜底）
+    platforms: list[str] = []
+    seen_platforms: set[str] = set()
     seen_ranks: set[tuple[str, int]] = set()
-    first_row = True
 
-    for line_no, raw_row in enumerate(csv.reader(io.StringIO(text, newline="")), start=1):
-        row = list(raw_row)
-        # Excel 常在行尾留一串空列，先裁掉再判列数
-        while row and not row[-1].strip():
-            row.pop()
-        if not row or all(not cell.strip() for cell in row):
-            continue
-        if first_row:
-            first_row = False
-            if row[0].strip() in _RANKING_HEADERS:
-                if len(row) >= 3 and row[2].strip() == _RANKING_OLD_TITLE_HEADER:
-                    raise RankingCsvError(
-                        f"{csv_path.name} 第 {line_no} 行仍是旧版表头（第三列是"
-                        f"「{_RANKING_OLD_TITLE_HEADER}」），请改成"
-                        f"「序号,机种名称,中文名,英文名,游戏卡带ID」五列。"
-                    )
-                continue
-        # 第 5 列（卡带 ID）允许为空：写成空列会被上面的裁尾删掉，所以 4 列也算合法。
-        if len(row) not in (4, _RANKING_COLUMNS):
+    for csv_path in csv_files:
+        raw = csv_path.read_bytes()
+        # 指纹覆盖「文件名 + 原始字节」：改名、换内容、增删文件都会变；空文件也算一份。
+        digest.update(csv_path.name.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(raw)
+        digest.update(b"\0")
+
+        platform = PLATFORM_BY_ID.get(csv_path.stem)
+        if platform is None:
             raise RankingCsvError(
-                f"{csv_path.name} 第 {line_no} 行有 {len(row)} 列，"
-                f"应为 5 列（序号,机种名称,中文名,英文名,游戏卡带ID），"
-                f"卡带 ID 为空时可省掉第 5 列。"
+                f"{csv_path.name}：榜单文件名必须是机种 id（如 nes.csv、segaMD.csv）。"
             )
-
-        seq_text, console, zh, en = (cell.strip() for cell in row[:4])
-        ids_text = row[4].strip() if len(row) > 4 else ""
         try:
-            rank = int(seq_text)
-        except ValueError as exc:
+            text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError as exc:
             raise RankingCsvError(
-                f"{csv_path.name} 第 {line_no} 行的序号「{seq_text}」不是整数。"
+                f"{csv_path.name} 不是 UTF-8 编码，请另存为 UTF-8 后重试。"
             ) from exc
-        if rank < 1:
-            raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行的序号必须是正整数。")
-        if not console:
-            raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行缺少机种名称。")
-        if not zh:
-            raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行缺少中文名。")
-        if not en:
-            raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行缺少英文名。")
 
-        ids: list[str] = []
-        for part in _RANKING_ID_SPLIT.split(ids_text):
-            part = part.strip()
-            if part and part not in ids:
-                ids.append(part)
-        if len(ids) > 2:
-            raise RankingCsvError(
-                f"{csv_path.name} 第 {line_no} 行有 {len(ids)} 个游戏卡带ID，最多 2 个。"
+        first_row = True
+        for line_no, raw_row in enumerate(csv.reader(io.StringIO(text, newline="")), start=1):
+            row = list(raw_row)
+            # Excel 常在行尾留一串空列，先裁掉再判列数；最多裁到 5 列。
+            while len(row) > _RANKING_COLUMNS and not row[-1].strip():
+                row.pop()
+            if not row or all(not cell.strip() for cell in row):
+                continue
+            if first_row:
+                first_row = False
+                if row[0].strip() in _RANKING_HEADERS:
+                    if len(row) > 1 and row[1].strip() == _RANKING_OLD_CONSOLE_HEADER:
+                        raise RankingCsvError(
+                            f"{csv_path.name} 第 {line_no} 行仍是旧版表头（第二列是"
+                            f"「{_RANKING_OLD_CONSOLE_HEADER}」），机种已改由文件名决定，"
+                            f"请改成「序号,中文名,英文名,评分,卡带ID」五列。"
+                        )
+                    continue
+            # 第 5 列（卡带 ID）允许为空：写成空列会被上面的裁尾删掉，所以 4 列也算合法。
+            if len(row) not in (4, _RANKING_COLUMNS):
+                raise RankingCsvError(
+                    f"{csv_path.name} 第 {line_no} 行有 {len(row)} 列，"
+                    f"应为 5 列（序号,中文名,英文名,评分,卡带ID），"
+                    f"卡带 ID 为空时可省掉第 5 列。"
+                )
+
+            seq_text, zh, en, score_text = (cell.strip() for cell in row[:4])
+            ids_text = row[4].strip() if len(row) > 4 else ""
+            try:
+                rank = int(seq_text)
+            except ValueError as exc:
+                raise RankingCsvError(
+                    f"{csv_path.name} 第 {line_no} 行的序号「{seq_text}」不是整数。"
+                ) from exc
+            if rank < 1:
+                raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行的序号必须是正整数。")
+            if not en:
+                raise RankingCsvError(f"{csv_path.name} 第 {line_no} 行缺少英文名。")
+            if not _RANKING_SCORE_RE.match(score_text):
+                raise RankingCsvError(
+                    f"{csv_path.name} 第 {line_no} 行的评分「{score_text}」不是有效的数字。"
+                )
+
+            ids: list[str] = []
+            for part in _RANKING_ID_SPLIT.split(ids_text):
+                part = part.strip()
+                if part and part not in ids:
+                    ids.append(part)
+            if len(ids) > 2:
+                raise RankingCsvError(
+                    f"{csv_path.name} 第 {line_no} 行有 {len(ids)} 个游戏卡带ID，最多 2 个。"
+                )
+
+            if (platform.id, rank) in seen_ranks:
+                raise RankingCsvError(
+                    f"{csv_path.name} 第 {line_no} 行：机种「{platform.id}」的序号 {rank} 重复。"
+                )
+            seen_ranks.add((platform.id, rank))
+            if platform.id not in seen_platforms:
+                seen_platforms.add(platform.id)
+                platforms.append(platform.id)
+            rows.append(
+                RankingRow(
+                    platform=platform.id,
+                    console=csv_path.stem,
+                    rank=rank,
+                    score=float(score_text),
+                    zh=zh,
+                    en=en,
+                    cartridge_ids=tuple(ids),
+                )
             )
 
-        # 机种经词表归一：`GBA` 与 `gba`、`MD` 与 `世嘉MD` 都落到同一个机种键上，
-        # 「同一机种内序号唯一」这条契约因此比按原始名比更准。
-        key = _console_group(console)
-        if key not in consoles:
-            consoles[key] = console
-        if (key, rank) in seen_ranks:
-            raise RankingCsvError(
-                f"{csv_path.name} 第 {line_no} 行：机种「{consoles[key]}」的序号 {rank} 重复。"
-            )
-        seen_ranks.add((key, rank))
-        rows.append(
-            RankingRow(
-                platform=key,
-                console=console,
-                rank=rank,
-                zh=zh,
-                en=en,
-                cartridge_ids=tuple(ids),
-            )
-        )
+        # 只有表头的机种文件合法（例如暂无评分的 c128/pcfx/pet），继续读下一份。
 
     if not rows:
-        raise RankingCsvError(f"{csv_path.name} 一行榜单数据都没有（空文件，或只有表头）。")
+        raise RankingCsvError(
+            f"{ranking_dir} 下的榜单 CSV 一行数据都没有（空文件，或只有表头）。"
+        )
 
     return RankingData(
         rows=tuple(rows),
-        platforms=tuple(consoles),
-        fingerprint=fingerprint,
-        source=csv_path.name,
+        platforms=tuple(platforms),
+        fingerprint=digest.hexdigest(),
+        source=ranking_dir.name,
     )
 
 
 def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, int]:
     """把榜单整份写进 `ranking` 表并更新 meta（调用方负责事务与建表）。"""
     conn.executemany(
-        "INSERT INTO ranking(platform, console, rank, zh, en, cartridge_ids) "
-        "VALUES(?, ?, ?, ?, ?, ?)",
+        "INSERT INTO ranking(platform, console, rank, score, zh, en, cartridge_ids) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?)",
         [
             (
                 row.platform,
                 row.console,
                 row.rank,
+                row.score,
                 row.zh,
                 row.en,
                 json.dumps(list(row.cartridge_ids), ensure_ascii=False),

@@ -8,8 +8,8 @@
 - id / 别名不冲突；
 - 可玩机种 = `service.GAME_TYPES` 里的机种部分，且顺序一致；
 - 前端 `constants/gameTypes.js` 的 label 与词表逐字一致；
-- 两份**真实** CSV 里的每一个机种名都能被解析，或明确落在「未收录」名单里——
-  名录换了写法而词表没跟上时，这条会红（否则页面上会静默多出一个「未收录」机种）。
+- 检索名录这一份**真实** CSV 里的每一个机种名都能被解析，或明确落在「未收录」名单里；
+  榜单目录的文件名则必须逐个是可玩机种 id——写法变了而词表没跟上时，这两条会红。
 """
 
 import json
@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR
+from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR
 from backend.games.platforms import (
     PLATFORM_BY_ALIAS,
     PLATFORM_BY_ID,
@@ -66,7 +66,6 @@ _UNMATCHED_SEARCH_CONSOLES = {
     "索尼PS2",
     "索尼PSV",
 }
-_UNMATCHED_RANKING_CONSOLES = {"3DS", "CD-I"}
 
 
 def _emulatorjs_cores() -> dict[str, set[str]]:
@@ -365,7 +364,7 @@ def test_platform_label_falls_back_to_the_raw_name():
 
 
 def test_platform_label_uses_unified_names_for_unmatched_consoles():
-    """榜单里出现的未收录机种也按统一描述展示，不吐 CSV 原文。"""
+    """外部名录里出现的未收录机种也按统一描述展示，不吐 CSV 原文。"""
     assert platform_label(None, "3DS") == "任天堂 3DS"
     assert platform_label("raw:3ds", "3DS") == "任天堂 3DS"
     assert platform_label(None, "CD-I") == "飞利浦 CD-i"
@@ -454,7 +453,7 @@ def test_frontend_does_not_hardcode_the_type_registry():
 
 
 # --------------------------------------------------------------------------
-# 与两份真实 CSV 的一致性
+# 与真实检索名录 / 榜单目录的一致性
 # --------------------------------------------------------------------------
 
 
@@ -488,19 +487,8 @@ def test_search_csv_rows_are_two_columns_with_bom_and_crlf():
             assert len(row) == 2, f"{path.name} 第 {line_no} 行有 {len(row)} 列"
 
 
-def _ranking_csv_consoles() -> set[str]:
-    import csv
-    import io
-
-    text = RANKING_CSV_PATH.read_text(encoding="utf-8-sig")
-    names: set[str] = set()
-    for index, row in enumerate(csv.reader(io.StringIO(text, newline=""))):
-        row = [cell.strip() for cell in row]
-        if not any(row) or (index == 0 and row[0] in {"序号", "排名"}):
-            continue
-        if len(row) >= 2 and row[1]:
-            names.add(row[1])
-    return names
+def _ranking_file_stems() -> set[str]:
+    return {path.stem for path in RANKING_CSV_DIR.glob("*.csv")}
 
 
 def _assert_all_resolve(names: set[str], unmatched: set[str]) -> None:
@@ -517,9 +505,17 @@ def test_every_search_console_name_resolves_or_is_listed_as_unmatched():
     _assert_all_resolve(_search_csv_consoles(), _UNMATCHED_SEARCH_CONSOLES)
 
 
-def test_every_ranking_console_name_resolves_or_is_listed_as_unmatched():
-    assert _ranking_csv_consoles()
-    _assert_all_resolve(_ranking_csv_consoles(), _UNMATCHED_RANKING_CONSOLES)
+def test_every_ranking_filename_is_a_playable_platform_id():
+    """榜单机种由文件名承担：stem 必须是词表里的可玩机种 id。"""
+    stems = _ranking_file_stems()
+    assert stems
+    for stem in sorted(stems):
+        assert stem in PLATFORM_BY_ID, f"榜单文件名「{stem}.csv」不是机种 id"
+        assert PLATFORM_BY_ID[stem].extensions, f"榜单文件名「{stem}.csv」不是可玩机种"
+
+
+def test_ranking_files_cover_every_playable_platform():
+    assert _ranking_file_stems() == {platform.id for platform in playable_platforms()}
 
 
 def test_merged_search_consoles_collapse_into_one_registry_platform():
@@ -547,15 +543,10 @@ def test_merged_search_consoles_collapse_into_one_registry_platform():
     )
 
 
-def test_ranking_consoles_do_not_share_a_platform():
-    """榜单里一个机种一行，所以两个不同的写法不该落到同一个机种上（否则下拉会出现同名项）。"""
-    groups: dict[str, list[str]] = {}
-    for name in _ranking_csv_consoles():
-        platform = resolve_platform(name)
-        key = platform.id if platform else f"raw:{normalize_name(name)}"
-        groups.setdefault(key, []).append(name)
-    collisions = {key: names for key, names in groups.items() if len(names) > 1}
-    assert collisions == {}
+def test_ranking_filenames_resolve_to_themselves():
+    """文件名既是机种 id，也要能被别名索引反查回同一个机种。"""
+    for stem in _ranking_file_stems():
+        assert resolve_platform(stem).id == stem
 
 
 def test_registry_is_serializable_to_json():

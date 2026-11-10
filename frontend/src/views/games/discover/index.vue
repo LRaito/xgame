@@ -145,7 +145,8 @@
                     <thead>
                         <tr>
                             <th class="game-discover__col-rank">排名</th>
-                            <!-- 清空机种后是跨机种榜单，必须显示类型，否则序号会在不同机器之间重来 -->
+                            <th class="game-discover__col-score">评分</th>
+                            <!-- 清空机种后是跨机种榜单，必须显示类型，否则看不出每行属于哪台机器 -->
                             <th
                                 v-if="!rankingConsole"
                                 class="game-discover__col-ranking-console"
@@ -162,17 +163,22 @@
                             v-for="item in rankingPagedItems"
                             :key="`${item.platform}-${item.rank}`"
                         >
-                            <td class="game-discover__rank">{{ item.rank }}</td>
+                            <td class="game-discover__rank">{{ rankingDisplayRank(item) }}</td>
+                            <td class="game-discover__score">
+                                {{ formatRankingScore(item.score) }}
+                            </td>
                             <td v-if="!rankingConsole" class="game-discover__nowrap">
                                 {{ rankingPlatformLabel(item.platform) }}
                             </td>
                             <td>
+                                <!-- 回填后仍可能没有中文名：显示 —，不渲染空链接 -->
+                                <span v-if="!item.zh" class="game-discover__none">—</span>
                                 <!-- 卡带 ID 与平台库存对上的行：中英文名是**真链接**（router-link 渲染成
                                      原生 <a href>），没截断时单击进播放页，Ctrl+点击 / 中键由浏览器自己开新标签页；
                                      截断时单击优先展开全名（AppTruncatableName 在捕获阶段拦掉默认跳转）。
                                      对上但还没上传本体的行保持链接样式，单击只弹提示、不进播放页；
                                      没对上的行就是纯文本 -->
-                                <app-truncatable-name>
+                                <app-truncatable-name v-else>
                                     <router-link
                                         v-if="item.path && item.has_body"
                                         class="game-discover__link"
@@ -455,9 +461,33 @@ const rankingConsoleLabels = computed(() =>
 function rankingPlatformLabel(platform) {
     return rankingConsoleLabels.value[platform] || platform || "";
 }
+// 评分只在这里格式化：后端返回原始 double，页面固定两位小数（四舍五入）。
+function formatRankingScore(score) {
+    if (score === null || score === undefined || score === "") {
+        return "—";
+    }
+    const value = Number(score);
+    return Number.isFinite(value) ? value.toFixed(2) : "—";
+}
 const rankingConsole = ref("");
 // 当前取回的榜单：选了机种就是该机种，清空后是**全部机种**（跨机种）
 const rankingItems = ref([]);
+// 跨机种时的「整个榜单排名」：按后端返回的整份顺序编号（评分降序）。
+// 必须按整份 rankingItems 算，搜索与「只看已入库」只过滤展示，不改变这条记录在总榜里的名次。
+const rankingOverallRanks = computed(() => {
+    const ranks = new Map();
+    rankingItems.value.forEach((item, index) => {
+        ranks.set(`${item.platform}-${item.rank}`, index + 1);
+    });
+    return ranks;
+});
+// 选了机种显示机种内序号；清空机种显示整个榜单的连续名次。
+function rankingDisplayRank(item) {
+    if (rankingConsole.value) {
+        return item.rank;
+    }
+    return rankingOverallRanks.value.get(`${item.platform}-${item.rank}`) ?? item.rank;
+}
 const rankingPage = ref(1);// 「已入库」按钮按下时只展示命中库存的行（纯前端过滤，不再打接口）
 const rankingInLibraryOnly = ref(false);
 // 榜单搜索词。与检索区的 keyword **故意分成两个**：那边是服务端 FTS（搜中英文两列、分词、剥尾部
@@ -589,8 +619,8 @@ async function loadRankingConsoles() {
         rankingIndexed.value = data.indexed;
         rankingAvailable.value = data.has_ranking;
         rankingConsoles.value = data.consoles || [];
-        rankingConsole.value =
-            data.default_console || rankingConsoles.value[0]?.platform || "";
+        // 默认不选中任何类型：打开页面即看全部机种（跨机种榜单）
+        rankingConsole.value = "";
         rankingError.value = false;
     } catch {
         rankingConsoles.value = [];
@@ -600,7 +630,7 @@ async function loadRankingConsoles() {
     } finally {
         rankingLoading.value = false;
     }
-    // 默认机种由后端的 default_console 决定（FC）；清单加载失败就不再打榜单接口
+    // 页面默认不选类型；清单加载失败就不再打榜单接口
     if (!rankingError.value) {
         await loadRanking();
     }
@@ -814,6 +844,10 @@ onMounted(async () => {
     width: 88px;
 }
 
+.game-discover__col-score {
+    width: 76px;
+}
+
 /* 跨机种榜单才出现的「游戏类型」列；比检索区窄，给中英文名留空间 */
 .game-discover__col-ranking-console {
     width: 150px;
@@ -844,6 +878,11 @@ onMounted(async () => {
 }
 
 .game-discover__rank {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.game-discover__score {
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
 }
