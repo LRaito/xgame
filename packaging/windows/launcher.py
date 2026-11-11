@@ -32,6 +32,8 @@ import webbrowser
 from pathlib import Path
 from typing import NoReturn
 
+from xgame_console import emit
+
 ROOT = Path(__file__).resolve().parent
 INI_PATH = ROOT / "xgame.ini"
 RUNTIME_DIR = ROOT / "runtime"
@@ -120,11 +122,11 @@ def load_config() -> Config:
 # ---------- 输出 ----------
 
 
-def say(message: str = "") -> None:
+def say(message: str = "", level: str = "info") -> None:
     if QUIET:
         logger.info(message)
         return
-    print(message, flush=True)
+    emit(level, message)
 
 
 def fatal(message: str) -> None:
@@ -135,7 +137,7 @@ def fatal(message: str) -> None:
         (RUNTIME_DIR / "last-error.txt").write_text(message + "\n", encoding="utf-8")
     except OSError:
         pass
-    say(f"\n[启动失败] {message}")
+    say(message, "fail")
     if QUIET and os.name == "nt":
         try:
             ctypes.windll.user32.MessageBoxW(None, message, "XGame 启动失败", 0x10)
@@ -164,7 +166,7 @@ def check_runtime() -> None:
             connection.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")
         connection.close()
     except sqlite3.Error:
-        say("提示：本机 Python 的 SQLite 没有 FTS5，「游戏发现」的游戏名录会一直显示尚未构建。")
+        say("提示：本机 Python 的 SQLite 没有 FTS5，「游戏发现」的游戏名录会一直显示尚未构建。", "warn")
 
 
 def check_data_dir(data_dir: Path, *, label: str = "数据目录") -> None:
@@ -182,12 +184,11 @@ def check_data_dir(data_dir: Path, *, label: str = "数据目录") -> None:
         )
     marker = data_dir / ".mounted"
     if marker.exists() and label == "数据目录":
-        say()
-        say("!" * 62)
-        say("注意：这个数据目录里有 .mounted 哨兵，说明它是 Docker/WSL 那条路线在用的。")
-        say("两边同时打开同一份数据会把数据库写坏——请先执行 docker compose down，")
-        say("或者把 xgame.ini 里的 data_dir 换成另一个目录。")
-        say("!" * 62)
+        say("!" * 62, "warn")
+        say("注意：这个数据目录里有 .mounted 哨兵，说明它是 Docker/WSL 那条路线在用的。", "warn")
+        say("两边同时打开同一份数据会把数据库写坏——请先执行 docker compose down，", "warn")
+        say("或者把 xgame.ini 里的 data_dir 换成另一个目录。", "warn")
+        say("!" * 62, "warn")
 
 
 # ---------- 「来自 Internet」标记 ----------
@@ -329,16 +330,16 @@ def say_addresses(config: Config) -> None:
     启动成功时和「已经在运行、不重复启动」时都用它——后者尤其要让用户看到地址，
     因为这时候浏览器不一定能自动打开（比如开机自启起的服务，根本没有窗口）。
     """
-    say(f"  本机打开：http://127.0.0.1:{config.port}")
+    say(f"本机打开：http://127.0.0.1:{config.port}")
     if config.host != "0.0.0.0":
         return
     ips = local_ips()
     if not ips:
         return
-    say(f"  局域网内（手机/平板）：http://{ips[0]}:{config.port}")
+    say(f"局域网内（手机/平板）：http://{ips[0]}:{config.port}")
     for other in ips[1:]:
-        say(f"    （上面那个连不上就试试 http://{other}:{config.port}）")
-    say("  手机打不开就先双击一次「允许局域网访问.bat」（会弹一次权限确认）。")
+        say(f"（上面那个连不上就试试 http://{other}:{config.port}）")
+    say("手机打不开就先双击一次「允许局域网访问.bat」（会弹一次权限确认）。")
 
 
 def write_runtime_files(port: int) -> None:
@@ -396,16 +397,14 @@ def serve(config: Config) -> int:
             f"请查看日志：{config.data_dir / 'logs' / 'xgame.log'}"
         )
 
-    say()
     say("=" * 62)
-    say(f"  XGame {current_version()} 已经跑起来了")
+    say(f"XGame {current_version()} 已经跑起来了", "ok")
     say_addresses(config)
     if config.host == "0.0.0.0":
-        say("  同一个账号在不同地址下算两个站点，本地存档不互通，建议固定用一个地址。")
-    say("  数据目录：" + str(config.data_dir))
-    say("  关闭本窗口即停止服务。")
+        say("同一个账号在不同地址下算两个站点，本地存档不互通，建议固定用一个地址。")
+    say("数据目录：" + str(config.data_dir))
+    say("关闭本窗口即停止服务。")
     say("=" * 62)
-    say()
 
     if config.open_browser:
         webbrowser.open(open_url)
@@ -421,7 +420,7 @@ def serve(config: Config) -> int:
         server.should_exit = True
         thread.join(timeout=10)
     time.sleep(0.5)  # 给 server 一点时间收尾
-    say("服务已停止。")
+    say("服务已停止。", "ok")
     return 0
 
 
@@ -442,7 +441,7 @@ def upgrade_error(message: str) -> NoReturn:
     升级失败或拒绝升级不该覆盖上一次启动故障的原因。
     """
     logger.error("数据库升级失败：%s", message)
-    say(f"\n[升级失败] {message}")
+    say(message, "fail")
     raise SystemExit(1)
 
 
@@ -466,8 +465,8 @@ def upgrade_database() -> int:
 
     # 只警告不拒绝：.mounted 是人工创建的，Docker 停掉后仍会留着。
     if (config.data_dir / ".mounted").exists():
-        say("注意：数据目录里有 .mounted 哨兵，可能还在被 Docker/WSL 路线共用。")
-        say("      升级前请确认那边已经停止服务，否则会写坏数据库。")
+        say("注意：数据目录里有 .mounted 哨兵，可能还在被 Docker/WSL 路线共用。", "warn")
+        say("      升级前请确认那边已经停止服务，否则会写坏数据库。", "warn")
 
     say(f"数据目录：{config.data_dir}")
     say(f"运行时目录：{config.runtime_dir}")
@@ -488,7 +487,9 @@ def upgrade_database() -> int:
 
     if code == 0:
         # 0 也可能是「已是最新」或「尚未初始化」，不能统一说「升级完成」
-        say("现在可以双击「启动游戏平台.cmd」启动。")
+        say("数据库升级检查完成，现在可以双击「启动游戏平台.cmd」启动。", "ok")
+    else:
+        say(f"数据库升级失败（退出码 {code}）。", "fail")
     return code
 
 
@@ -542,7 +543,8 @@ def parse_args(argv: list[str]) -> dict:
         elif item == "--no-browser":
             options["no_browser"] = True
         else:
-            raise SystemExit(f"未知参数：{item}（{_USAGE}）")
+            emit("fail", f"未知参数：{item}（{_USAGE}）")
+            raise SystemExit(2)
     return options
 
 
@@ -562,7 +564,8 @@ def main(argv: list[str] | None = None) -> int:
         # 快捷方式 / 开机自启 / 解除锁定：建 .lnk 要用 PowerShell，逻辑在 winops.py
         import winops
 
-        say(winops.run_action(options["action"], ROOT))
+        message = winops.run_action(options["action"], ROOT)
+        say(message, winops.action_level(message))
         return 0
 
     config = load_config()
@@ -578,18 +581,15 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(config.data_dir)
 
     if still_locked():
-        say()
-        say("提示：这一份还带着「来自 Internet」标记，双击 .bat / .cmd 时 Windows 会先弹一次")
-        say("      「无法验证发布者」。双击一次「解除锁定.bat」（只需一次）以后就不再弹了。")
+        say("提示：这一份还带着「来自 Internet」标记，双击 .bat / .cmd 时 Windows 会先弹一次", "warn")
+        say("      「无法验证发布者」。双击一次「解除锁定.bat」（只需一次）以后就不再弹了。", "warn")
 
     # 先确认没有第二个实例在跑。双击第二次不该起第二个服务（除了白占资源，两个进程打开
     # 同一个 SQLite 更容易出事）：这里只把地址告诉用户、顺手把浏览器打开。
     instance = SingleInstance(f"Local\\xgame-port-{config.port}")
     if not instance.acquire():
-        say()
         say("XGame 已经在运行了，不用再开一个。")
         say_addresses(config)
-        say()
         if config.open_browser:
             webbrowser.open(f"http://127.0.0.1:{config.port}")
         return 0

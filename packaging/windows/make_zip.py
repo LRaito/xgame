@@ -19,6 +19,8 @@ import sys
 import zipfile
 from pathlib import Path
 
+from xgame_console import fail, ok
+
 SKIP_DIR_NAMES = {"__pycache__"}
 
 
@@ -36,13 +38,13 @@ def collect(root: Path) -> list[Path]:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 3:
-        print(f"用法：{argv[0]} <包目录> <输出.zip>", file=sys.stderr)
+        fail(f"用法：{argv[0]} <包目录> <输出.zip>")
         return 2
 
     root = Path(argv[1]).resolve()
     out = Path(argv[2]).resolve()
     if not root.is_dir():
-        print(f"没有这个目录：{root}", file=sys.stderr)
+        fail(f"没有这个目录：{root}")
         return 1
 
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -57,7 +59,7 @@ def main(argv: list[str]) -> int:
             entries += 1
 
     size = out.stat().st_size
-    print(f"已打包 {entries} 个条目：{out.name}（{size / 1024 / 1024:.1f} MB）")
+    ok(f"已打包 {entries} 个条目：{out.name}（{size / 1024 / 1024:.1f} MB）")
     return 0
 
 

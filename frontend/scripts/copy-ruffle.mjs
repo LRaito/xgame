@@ -2,6 +2,8 @@ import { cpSync, mkdirSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { info } from "./console.mjs";
+
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const src = join(root, "node_modules/@ruffle-rs/ruffle");
 const dest = join(root, "public/ruffle");
@@ -14,4 +16,4 @@ for (const file of readdirSync(src)) {
     }
 }
 
-console.log("已复制 Ruffle 运行时到 public/ruffle/");
+info("已复制 Ruffle 运行时到 public/ruffle/");

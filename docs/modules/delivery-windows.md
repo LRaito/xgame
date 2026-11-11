@@ -39,7 +39,7 @@
 - 但**绝不允许同时打开同一份数据目录**。
 - Windows 侧与 WSL/容器侧的文件锁互相看不见，同时写就是坏库。
 - 压缩包里没有多余的一层目录，条目直接躺在根上。
-- 包内主要条目：`python/`、`backend/`、`upgrade/`、`web/`、`launcher.py`。
+- 包内主要条目：`python/`、`backend/`、`upgrade/`、`web/`、`launcher.py`、`xgame_console.py`。
 - 还有 `启动游戏平台.cmd`、`升级数据库.cmd`、`允许局域网访问.bat` 与 `allow-lan.ps1`。
 - `data/` 是数据目录，首次启动自动建。
 - `runtime/` 是包内临时目录，放 `port.txt` 与 `last-error.txt`。

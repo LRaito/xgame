@@ -69,9 +69,9 @@ index:
 	@root="$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}}"; \
 	test -d "$$root" && ! test -w "$$root" \
 		&& { \
-			echo "运行时根不可写：$$root"; \
-			echo "（多半是 Docker 容器以 root 建的目录）先执行一次："; \
-			echo "    sudo chown -R \"$$USER\" \"$$root\""; \
+			bash scripts/log.sh fail "运行时根不可写：$$root"; \
+			bash scripts/log.sh fail "（多半是 Docker 容器以 root 建的目录）先执行一次："; \
+			bash scripts/log.sh fail "    sudo chown -R \"$$USER\" \"$$root\""; \
 			exit 1; \
 		} || true
 	RUNTIME_ROOT=$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}} \
@@ -82,7 +82,7 @@ index:
 # SQLite 单写者，升级期间不能有 api 在写库。根取值与 compose 一致。
 # 升级代码在 upgrade/，按 system_config.db_version 逐版本执行；已是最新时只提示。
 upgrade:
-	@echo "请先停止服务（docker compose down，或关闭 Windows 启动窗口）。"
+	@bash scripts/log.sh info "请先停止服务（docker compose down，或关闭 Windows 启动窗口）。"
 	STORAGE_ROOT=$${STORAGE_HOST_DIR:-./data/storage} \
 	RUNTIME_ROOT=$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}} \
 	python3 -m upgrade $(ARGS)

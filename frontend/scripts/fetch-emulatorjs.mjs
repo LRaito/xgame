@@ -31,6 +31,7 @@
  * public/emulatorjs（frontend/.dockerignore 不再排除它），宿主机资产齐全时镜像构建零下载。
  */
 import { createHash } from "node:crypto";
+import { fail, info, ok, warn } from "./console.mjs";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -247,7 +248,7 @@ function renderProgress({ index, total, path, loaded, bytes }) {
           ` ${formatSize(loaded)}/${formatSize(bytes)}`
         : formatSize(loaded);
     process.stdout.write(
-        `\r\x1b[2K总进度 ${progressBar(overall)} ${done}/${total}  ${path} ${current}`
+        `\r\x1b[2K\x1b[36m[INFO]\x1b[0m 总进度 ${progressBar(overall)} ${done}/${total}  ${path} ${current}`
     );
 }
 
@@ -363,7 +364,7 @@ const localVersion = diskVersion();
 
 // 快路径：版本标记一致且文件齐全 → 完全离线，直接跳过
 if (localVersion === EJS_VERSION && REQUIRED.every(presentOnDisk)) {
-    console.log(`EmulatorJS v${EJS_VERSION} 资产已就绪于 public/emulatorjs/，跳过下载。`);
+    info(`EmulatorJS v${EJS_VERSION} 资产已就绪于 public/emulatorjs/，跳过下载。`);
     process.exit(0);
 }
 
@@ -388,12 +389,12 @@ if (forceRefresh || !presentOnDisk(LOCALE_OUT)) {
 }
 
 if (forceRefresh) {
-    console.log(
+    warn(
         `本地 .emulatorjs.done 记录的是 ${localVersion}，与目标 ${EJS_VERSION} 不符，` +
             `将从 ${BASE} 整包重下…（常规升级请先删除 public/emulatorjs/）`
     );
 } else if (queue.length) {
-    console.log(
+    info(
         `复用本地 ${reused} 个文件，从 ${BASE} 补齐缺失的 ${queue.length} 个 ` +
             `EmulatorJS v${EJS_VERSION} 文件…`
     );
@@ -438,16 +439,16 @@ try {
     writeFileSync(join(destRoot, DONE_MARKER), `${EJS_VERSION}\n`, "utf-8");
 } catch (error) {
     endProgressLine();
-    console.error(`EmulatorJS 资产下载失败：${error.message}`);
-    console.error("已下载的文件会被保留，修正后重跑本脚本即可续传剩余文件，无需从头再来。");
+    fail(`EmulatorJS 资产下载失败：${error.message}`);
+    fail("已下载的文件会被保留，修正后重跑本脚本即可续传剩余文件，无需从头再来。");
     process.exit(1);
 }
 
 if (downloaded > 0) {
     for (const { path, sha256 } of results) {
-        console.log(`  ✔ ${path}  (${sha256.slice(0, 12)}…)`);
+        info(`  ✔ ${path}  (${sha256.slice(0, 12)}…)`);
     }
-    console.log(`本次补齐 ${downloaded} 个文件（${(totalBytes / 1024 / 1024).toFixed(2)} MB），本地复用 ${reused} 个。`);
+    ok(`本次补齐 ${downloaded} 个文件（${(totalBytes / 1024 / 1024).toFixed(2)} MB），本地复用 ${reused} 个。`);
 } else {
-    console.log(`EmulatorJS v${EJS_VERSION} 资产已齐全（复用本地 ${reused} 个），仅刷新版本标记，无需下载。`);
+    info(`EmulatorJS v${EJS_VERSION} 资产已齐全（复用本地 ${reused} 个），仅刷新版本标记，无需下载。`);
 }

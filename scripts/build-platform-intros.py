@@ -38,6 +38,10 @@ from PIL import Image
 
 ROOT = Path(__file__).resolve().parent.parent
 ASSET_ROOT = ROOT / "frontend" / "src" / "assets" / "platforms"
+
+# 脚本输出统一走 Windows 包里的同一份实现（标签与颜色只有一处定义）。
+sys.path.insert(0, str(ROOT / "packaging" / "windows"))
+from xgame_console import emit  # noqa: E402
 IMAGES_JS = ROOT / "frontend" / "src" / "constants" / "platformIntros" / "images.js"
 RAW_DIR = Path("/tmp/platform-intros-raw")
 
@@ -437,8 +441,8 @@ MEDIA_WORDS = (
     "umd", "cassette", "game card", "game pak", "memory card",
 )
 
-def log(message: str) -> None:
-    print(message, flush=True)
+def log(message: str, level: str = "info") -> None:
+    emit(level, message)
 
 
 def http_get(url: str, *, retries: int = 6, timeout: int = 60) -> bytes:
@@ -652,7 +656,7 @@ def save_webp(name: str, target: Path, info: dict, force: bool = False) -> bool:
     if target.exists() and target.stat().st_size > 0 and not force:
         return True
     if not info or not info.get("url"):
-        log(f"  跳过（取不到地址）：{name}")
+        log(f"  跳过（取不到地址）：{name}", "warn")
         return False
     try:
         data = http_get(info["url"])
@@ -668,7 +672,7 @@ def save_webp(name: str, target: Path, info: dict, force: bool = False) -> bool:
         image.save(target, "WEBP", quality=WEBP_QUALITY, method=6)
         return True
     except Exception as exc:  # noqa: BLE001
-        log(f"  处理失败：{name}（{exc}）")
+        log(f"  处理失败：{name}（{exc}）", "warn")
         return False
 
 
@@ -859,11 +863,12 @@ def main() -> None:
     assert_ids()
     selected = [entry for entry in MANIFEST if not args.only or entry["id"] in args.only]
     if not selected:
-        raise SystemExit(f"未知 id：{args.only}")
+        log(f"未知 id：{args.only}", "fail")
+        raise SystemExit(1)
 
     if args.write_images_js:
         write_images_js()
-        log(f"已重建 {IMAGES_JS}")
+        log(f"已重建 {IMAGES_JS}", "ok")
         return
 
     credits = load_existing_credits()
@@ -885,9 +890,9 @@ def main() -> None:
 
     if not args.only:
         write_images_js()
-        log(f"已写入 {IMAGES_JS}")
+        log(f"已写入 {IMAGES_JS}", "ok")
     else:
-        log("只处理了部分 id，未重建 images.js（全部跑完会自动重建）")
+        log("只处理了部分 id，未重建 images.js（全部跑完会自动重建）", "warn")
 
 
 if __name__ == "__main__":

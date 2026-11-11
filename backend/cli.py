@@ -1,9 +1,17 @@
 from pathlib import Path
+from typing import NoReturn
 
 import click
 
 from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, get_settings
+from backend.console import fail, info, ok
 from backend.database import ensure_data_dir, has_business_tables, init_db, make_engine
+
+
+def _stop(message: str) -> NoReturn:
+    """CLI 的统一失败出口：打 [FAIL] 并返回非零退出码。"""
+    fail(message)
+    raise SystemExit(1)
 
 
 @click.group()
@@ -18,10 +26,9 @@ def init_db_cmd() -> None:
     ensure_data_dir(settings)
     engine = make_engine(settings)
     if has_business_tables(engine):
-        click.echo("数据库已存在，结构升级请运行 make upgrade。", err=True)
-        raise SystemExit(1)
+        _stop("数据库已存在，结构升级请运行 make upgrade。")
     init_db(engine)
-    click.echo("数据库已初始化。")
+    ok("数据库已初始化。")
 
 
 @cli.command("serve")
@@ -72,10 +79,10 @@ def serve_cmd(
     if static_dir is not None:
         os.environ["STATIC_DIR"] = str(static_dir.resolve())
 
-    click.echo(f"数据根：{os.environ.get('STORAGE_ROOT', '(默认)')}")
-    click.echo(f"运行时根：{os.environ.get('RUNTIME_ROOT', '(同数据根)')}")
-    click.echo(f"前端：{os.environ.get('STATIC_DIR', '(不托管，交给 nginx)')}")
-    click.echo(f"访问：http://{host}:{port}")
+    info(f"数据根：{os.environ.get('STORAGE_ROOT', '(默认)')}")
+    info(f"运行时根：{os.environ.get('RUNTIME_ROOT', '(同数据根)')}")
+    info(f"前端：{os.environ.get('STATIC_DIR', '(不托管，交给 nginx)')}")
+    info(f"访问：http://{host}:{port}")
     uvicorn.run("backend.asgi:app", host=host, port=port)
 
 
@@ -121,7 +128,7 @@ def build_index_cmd(
     if settings.database_path.is_file():
         version = read_db_version(make_engine(settings))
         if version != LATEST_DB_VERSION:
-            raise click.ClickException(
+            _stop(
                 f"app.db 结构版本为 {version}，当前程序需要 {LATEST_DB_VERSION}；"
                 "请先停止服务并执行 make upgrade。"
             )
@@ -130,43 +137,43 @@ def build_index_cmd(
     target = out_path or settings.game_index_path
     ranking_source = ranking_dir or RANKING_CSV_DIR
     if not target.is_file():
-        raise click.ClickException(
+        _stop(
             f"game.db 尚未初始化：{target}；"
             "请先启动一次服务（或执行 make upgrade）创建空结构。"
         )
     if not game_db_is_current(target):
-        raise click.ClickException(
+        _stop(
             f"game.db 结构版本与当前程序不一致：{target}；"
             "make index 只更新数据，请先停止服务并执行 make upgrade。"
         )
     if not Path(ranking_source).is_dir():
-        raise click.ClickException(
+        _stop(
             f"未找到游戏榜单 CSV 目录：{ranking_source}；"
             "make index 需要同时构建游戏名录与游戏榜单。"
         )
 
-    click.echo(f"读取游戏名录：{source}")
-    click.echo(f"读取游戏榜单目录：{ranking_source}")
+    info(f"读取游戏名录：{source}")
+    info(f"读取游戏榜单目录：{ranking_source}")
 
     try:
         stats = build_index(
             source, target, ranking_dir=ranking_source, strict_ranking=True
         )
     except IndexBuildError as exc:
-        raise click.ClickException(str(exc)) from exc
+        _stop(str(exc))
 
     try:
         sync = refresh_all_flags(settings.database_path, stats.path, strict=True)
     except FlagSyncError as exc:
-        raise click.ClickException(str(exc)) from exc
+        _stop(str(exc))
 
-    click.echo(
+    ok(
         f"已写入 {stats.path}：游戏名录 {stats.rows} 行 / {stats.consoles} 机种，"
         f"游戏榜单 {stats.ranking_rows} 条 / {stats.ranking_consoles} 机种，"
         f"耗时 {stats.seconds:.1f} 秒，文件 {stats.size / 1024 / 1024:.1f} MB。"
     )
     if sync is not None:
-        click.echo(
+        info(
             f"已同步标记：库存表 {sync.games_changed} 行，榜单 {sync.rankings_changed} 行。"
         )
 

@@ -200,6 +200,40 @@ certs/                       # 自签名证书
 - 注释只在需要解释「为什么」时使用，用中文。
 - 前端 4 空格；api 函数命名 `xxxAPI`。
 
+## 脚本输出规范
+
+适用于所有会打印日志的脚本和构建入口：bash、Python、Makefile、Node 等，语言不限。
+本规范从写入之日起约束新的提交；存量脚本、Makefile 与文档不追溯整改，
+批量整改必须由用户手动触发。
+
+状态标签固定为全大写，并按固定颜色输出：
+
+| 标签 | 颜色 | ANSI |
+|---|---|---|
+| `[ OK ]` | 绿色 | 32 |
+| `[FAIL]` | 红色 | 31 |
+| `[WARN]` | 黄色 | 33 |
+| `[INFO]` | 青色 | 36 |
+
+终端输出必须带颜色；输出被管道或重定向时退回纯文本。
+禁止无状态标签的输出。
+
+### 示例
+
+```bash
+printf '\033[32m[ OK ]\033[0m build complete\n'
+printf '\033[31m[FAIL]\033[0m failed to bind port 8080\n'
+printf '\033[33m[WARN]\033[0m config missing, using defaults\n'
+printf '\033[36m[INFO]\033[0m loading config\n'
+```
+
+### 反例
+
+```bash
+echo "服务启动完成"             # ✗ 无状态标签、无颜色
+echo "[ OK ] done"             # ✗ 无颜色
+```
+
 ## 前端约定
 
 - 页面在 `views/`；api 在 `api/*`；唯一 axios 实例是 `utils/request.js`。

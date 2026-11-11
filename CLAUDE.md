@@ -107,6 +107,9 @@ make upgrade     # 升级 app.db 与 game.db 结构（先停服务）
     「升级数据库.cmd」。
     `app.db` 启动只校验 `system_config.db_version`；不匹配就日志报错并永久阻塞，不自动改表。
     `game.db` 启动只在缺失或空文件时建最新的空结构，已有表一律不碰。
+18. **脚本输出规范。** 所有打印日志的脚本与构建入口必须使用固定状态标签
+    `[ OK ]` / `[FAIL]` / `[WARN]` / `[INFO]` 并按颜色输出，全文见
+    [`AGENTS.md`](AGENTS.md) 的「脚本输出规范」。
 
 细节链接：
 

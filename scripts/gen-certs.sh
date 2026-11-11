@@ -21,7 +21,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-die() { printf '错误：%s\n' "$*" >&2; exit 1; }
+# shellcheck source=scripts/log.sh
+. "$REPO_ROOT/scripts/log.sh"
+
+die() { log_fail "$*"; exit 1; }
 
 # 证书目录与文件名写死在仓库里，与 docker-compose.yml / frontend/nginx.conf.template 一致。
 CERTS_DIR="$REPO_ROOT/certs"
@@ -81,7 +84,7 @@ parse_custom_san() {
 }
 
 if [ -f "$CERT_PATH" ] && [ -f "$KEY_PATH" ] && [[ "${FORCE:-}" != "1" ]]; then
-    echo "证书已存在：$CERT_PATH（重新生成：FORCE=1 bash scripts/gen-certs.sh [主机名/IP ...]）"
+    log_info "证书已存在：$CERT_PATH（重新生成：FORCE=1 bash scripts/gen-certs.sh [主机名/IP ...]）"
     exit 0
 fi
 
@@ -109,8 +112,8 @@ openssl req -x509 -newkey rsa:2048 -nodes \
 chmod 644 "$CERT_PATH"
 chmod 600 "$KEY_PATH"
 
-echo "已生成自签名证书（有效期 36500 天，约 100 年）："
-echo "  证书  $CERT_PATH"
-echo "  密钥  $KEY_PATH"
-echo "web 容器里对应 /etc/nginx/certs/$CERT_FILE 与 /etc/nginx/certs/$KEY_FILE。"
-echo "浏览器会提示不受信任（自签名），需手动「继续访问」。"
+log_ok "已生成自签名证书（有效期 36500 天，约 100 年）："
+log_info "证书  $CERT_PATH"
+log_info "密钥  $KEY_PATH"
+log_info "web 容器里对应 /etc/nginx/certs/$CERT_FILE 与 /etc/nginx/certs/$KEY_FILE。"
+log_warn "浏览器会提示不受信任（自签名），需手动「继续访问」。"

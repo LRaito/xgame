@@ -17,6 +17,10 @@ from pathlib import Path
 import pytest
 
 LAUNCHER_PATH = Path(__file__).resolve().parent.parent / "packaging" / "windows" / "launcher.py"
+# 按路径加载时 Python 不会把脚本目录放进 sys.path；包内脚本靠同目录的
+# xgame_console.py 统一输出，这里补上。
+if str(LAUNCHER_PATH.parent) not in sys.path:
+    sys.path.insert(0, str(LAUNCHER_PATH.parent))
 UPGRADE_CMD_PATH = LAUNCHER_PATH.parent / "升级数据库.cmd"
 SMOKE_WIN_PATH = LAUNCHER_PATH.parent / "smoke_win.py"
 BUILD_WIN_DIST_PATH = LAUNCHER_PATH.parent / "build-win-dist.sh"
@@ -233,11 +237,12 @@ def test_make_icon_center_crops_non_square(make_icon, tmp_path):
     assert Image.open(target).info["sizes"]
 
 
-def test_make_icon_warns_when_source_is_missing(make_icon, tmp_path):
+def test_make_icon_warns_when_source_is_missing(make_icon, tmp_path, capsys):
     make_icon.SOURCE = tmp_path / "没有这张图.png"
     with pytest.raises(SystemExit) as excinfo:
         make_icon.main()
-    assert "找不到源图" in str(excinfo.value)
+    assert excinfo.value.code == 1
+    assert "找不到源图" in capsys.readouterr().err
 
 
 # ---------- 包内数据库升级入口 ----------
@@ -299,9 +304,9 @@ def test_upgrade_database_refuses_when_service_holds_mutex(
         launcher.upgrade_database()
 
     assert excinfo.value.code == 1
-    out = capsys.readouterr().out
-    assert "正在运行" in out
-    assert "升级数据库.cmd" in out
+    err = capsys.readouterr().err
+    assert "正在运行" in err
+    assert "升级数据库.cmd" in err
 
 
 def test_upgrade_database_refuses_when_port_is_busy(
@@ -316,9 +321,9 @@ def test_upgrade_database_refuses_when_port_is_busy(
         launcher.upgrade_database()
 
     assert excinfo.value.code == 1
-    out = capsys.readouterr().out
-    assert str(config.port) in out
-    assert "关闭启动窗口" in out
+    err = capsys.readouterr().err
+    assert str(config.port) in err
+    assert "关闭启动窗口" in err
 
 
 def test_upgrade_database_passes_package_roots_and_returns_cli_code(
@@ -362,9 +367,9 @@ def test_upgrade_database_wraps_unexpected_exception(
         launcher.upgrade_database()
 
     assert excinfo.value.code == 1
-    out = capsys.readouterr().out
-    assert "升级数据库时出错" in out
-    assert "磁盘已满" in out
+    err = capsys.readouterr().err
+    assert "升级数据库时出错" in err
+    assert "磁盘已满" in err
 
 
 def test_upgrade_database_warns_about_mounted_sentinel(

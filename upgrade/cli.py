@@ -2,9 +2,9 @@
 
 import argparse
 import os
-import sys
 from pathlib import Path
 
+from backend import console
 from backend.config import DB_FILENAME, DB_SUBDIR
 from upgrade.game_db import GameDbUpgradeError, run_game_upgrade
 from upgrade.runner import UpgradeError, run_upgrade
@@ -39,41 +39,41 @@ def main(argv: list[str] | None = None) -> int:
 
     db_path = _database_path(args)
     game_path = args.game_db or db_path.with_name("game.db")
-    print(f"数据库：{db_path}")
+    console.info(f"数据库：{db_path}")
 
     try:
         result = run_upgrade(db_path, backup=not args.no_backup)
     except UpgradeError as exc:
-        print(f"升级失败：{exc}", file=sys.stderr)
+        console.fail(f"升级失败：{exc}")
         return 1
 
     if result.status == "not-initialized":
-        print("数据库尚未初始化，无需升级；首次启动服务会按最新结构建库。")
+        console.warn("数据库尚未初始化，无需升级；首次启动服务会按最新结构建库。")
     elif result.status == "up-to-date":
-        print("当前已是最新版本，无需升级")
+        console.ok("当前已是最新版本，无需升级")
     else:
         if result.backup_path is not None:
-            print(f"升级前已备份：{result.backup_path}")
+            console.info(f"升级前已备份：{result.backup_path}")
         for version in result.applied:
-            print(f"已升级到结构版本 {version}。")
-        print(f"数据库升级完成，当前版本 {result.to_version}。")
+            console.info(f"已升级到结构版本 {version}。")
+        console.ok(f"数据库升级完成，当前版本 {result.to_version}。")
 
-    print(f"game.db：{game_path}")
+    console.info(f"game.db：{game_path}")
     try:
         game_result = run_game_upgrade(game_path)
     except GameDbUpgradeError as exc:
-        print(f"game.db 升级失败：{exc}", file=sys.stderr)
+        console.fail(f"game.db 升级失败：{exc}")
         return 1
 
     if game_result.status == "created":
-        print(
+        console.ok(
             f"已创建空 game.db 结构（版本 {game_result.to_version}）。"
             "游戏名录、游戏榜单数据与标记请执行 make index。"
         )
     elif game_result.status == "up-to-date":
-        print(f"game.db 结构已是最新（版本 {game_result.to_version}）。")
+        console.ok(f"game.db 结构已是最新（版本 {game_result.to_version}）。")
     else:
-        print(
+        console.ok(
             f"game.db 已升级到结构版本 {game_result.to_version}。"
             "游戏名录、游戏榜单数据与标记请执行 make index 重建。"
         )

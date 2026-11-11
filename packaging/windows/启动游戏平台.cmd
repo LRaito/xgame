@@ -9,7 +9,6 @@ set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 "%~dp0python\python.exe" "%~dp0launcher.py" %*
 if errorlevel 1 (
-    echo.
-    echo XGame did not start. See runtime\last-error.txt and logs\xgame.log under the data folder.
+    powershell -NoProfile -Command "Write-Host '[FAIL] XGame did not start. See runtime\last-error.txt and logs\xgame.log under the data folder.' -ForegroundColor Red"
     pause
 )

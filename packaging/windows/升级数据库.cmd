@@ -8,12 +8,6 @@ set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 "%~dp0python\python.exe" "%~dp0launcher.py" --upgrade-db
 set "RC=%errorlevel%"
-if not "%RC%"=="0" (
-    echo.
-    echo Database upgrade failed with exit code %RC%. Read the messages above.
-) else (
-    echo.
-    echo Database upgrade finished.
-)
+rem Result messages ([ OK ] / [FAIL]) come from launcher.py; keep this file ASCII.
 pause
 exit /b %RC%

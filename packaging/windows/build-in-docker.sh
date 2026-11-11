@@ -22,8 +22,10 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 DOCKERFILE="$HERE/Dockerfile.build"
 
-say() { printf '%s\n' "$*"; }
-die() { printf '%s\n' "$*" >&2; exit 1; }
+# shellcheck source=scripts/log.sh
+. "$REPO/scripts/log.sh"
+
+die() { log_fail "$*"; exit 1; }
 
 command -v docker >/dev/null 2>&1 || die "没找到 docker：Windows 包在容器里构建，请先装好 Docker。"
 
@@ -41,15 +43,16 @@ HASH_INPUTS=(
     "$REPO/frontend/package.json"
     "$REPO/frontend/package-lock.json"
     "$REPO/frontend/scripts/fetch-emulatorjs.mjs"
+    "$REPO/frontend/scripts/console.mjs"
 )
 HASH="$(cat "${HASH_INPUTS[@]}" | sha256sum | cut -c1-12)"
 IMAGE="xgame-winbuild:$HASH"
 
 if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-    say "构建环境镜像已存在，直接复用：$IMAGE"
+    log_info "构建环境镜像已存在，直接复用：$IMAGE"
 else
-    say "构建环境镜像不存在，先建一次：$IMAGE"
-    say "（装工具链 + 下 Windows 运行时/轮子/前端依赖/引擎资产，首次几分钟且要联网，之后就都复用了）"
+    log_info "构建环境镜像不存在，先建一次：$IMAGE"
+    log_info "（装工具链 + 下 Windows 运行时/轮子/前端依赖/引擎资产，首次几分钟且要联网，之后就都复用了）"
     # 构建上下文是仓库根：Dockerfile 要从 frontend/ 里取 package.json、lock 与引擎脚本。
     # 不 COPY 的一律不会进镜像，所以不需要 .dockerignore。
     # --pull=false：不在构建前主动拉取更新的基础镜像（基础镜像按 digest 固定）。
@@ -58,12 +61,11 @@ else
     [ "${WINBUILD_NO_CACHE:-0}" = "1" ] && BUILD_ARGS+=(--no-cache)
     docker build -f "$DOCKERFILE" -t "$IMAGE" "${BUILD_ARGS[@]}" "$REPO"
 fi
-[ "$IMAGE_ONLY" = "1" ] && { say "只建镜像，按 --image-only 退出。"; exit 0; }
+[ "$IMAGE_ONLY" = "1" ] && { log_info "只建镜像，按 --image-only 退出。"; exit 0; }
 
 # 以宿主机用户身份跑，产出的 dist-win/ 与前端产物才不会变成 root 所有（那样宿主机删不掉）。
 # HOME 指向 /tmp：容器里没有这个 uid 的家目录，npm 需要一个可写的家。
-say ""
-say "在容器里组装 Windows 包……"
+log_info "在容器里组装 Windows 包……"
 docker run --rm \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp \
@@ -77,12 +79,10 @@ docker run --rm \
 # 包内自检挪到宿主机上跑：容器里没有 binfmt_misc，执行不了包里那份 Windows 的 python.exe；
 # 而宿主机是 WSL 时可以直接跑（验证 FTS5、依赖、没有混进 gunicorn/uvloop、MSVC 运行库在位）。
 if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ]; then
-    say ""
-    say "在宿主机上补一次包内自检……"
+    log_info "在宿主机上补一次包内自检……"
     ( cd "$REPO/dist-win/xgame" && ./python/python.exe -X utf8 smoke_win.py ) \
         || die "包内自检没通过，先别发这个包。"
 else
-    say ""
-    say "提示：本机不是 WSL（没有 interop），跳过包内自检。"
-    say "     到 Windows 上可以手动跑：xgame\\python\\python.exe smoke_win.py"
+    log_warn "本机不是 WSL（没有 interop），跳过包内自检。"
+    log_info "到 Windows 上可以手动跑：xgame\\python\\python.exe smoke_win.py"
 fi
