@@ -44,7 +44,7 @@
   - 升级代码在根目录 `upgrade/versions/vN.py`，由 `upgrade/runner.py` 逐版本执行；
     每个版本一个事务，迁移 SQL 与 `db_version` 更新一起提交。
   - 只能手动升级：停服务后 Docker/仓库执行 `make upgrade`，Windows 包双击
-    「升级数据库.cmd」。重复执行会提示 `当前已是最新版本，无需升级`。
+    「升级数据库.cmd」。重复执行会提示 `app.db 结构已是最新（版本 N）`。
   - 版本不匹配时服务记录中文错误并永久阻塞，不监听端口。
   - `backend/` 的模型只描述最新结构，不写任何兼容旧库的分支。
   - 详细规格见 [`database-upgrade.md`](modules/database-upgrade.md)。

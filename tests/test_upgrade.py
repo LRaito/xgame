@@ -351,7 +351,7 @@ def test_cli_reports_up_to_date_message(tmp_path, capsys):
     run_upgrade(path, backup=False)
 
     assert main(["--db", str(path), "--no-backup"]) == 0
-    assert "当前已是最新版本，无需升级" in capsys.readouterr().out
+    assert "app.db 结构已是最新" in capsys.readouterr().out
 
 
 def test_version_registry_matches_code_version():

@@ -39,7 +39,7 @@ def main(argv: list[str] | None = None) -> int:
 
     db_path = _database_path(args)
     game_path = args.game_db or db_path.with_name("game.db")
-    console.info(f"数据库：{db_path}")
+    console.info(f"app.db：{db_path}")
 
     try:
         result = run_upgrade(db_path, backup=not args.no_backup)
@@ -48,15 +48,18 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     if result.status == "not-initialized":
-        console.warn("数据库尚未初始化，无需升级；首次启动服务会按最新结构建库。")
+        console.warn(
+            f"app.db 尚未初始化，无需升级；首次启动服务会按最新结构建库"
+            f"（版本 {result.to_version}）。"
+        )
     elif result.status == "up-to-date":
-        console.ok("当前已是最新版本，无需升级")
+        console.ok(f"app.db 结构已是最新（版本 {result.to_version}）。")
     else:
         if result.backup_path is not None:
-            console.info(f"升级前已备份：{result.backup_path}")
+            console.info(f"app.db 升级前已备份：{result.backup_path}")
         for version in result.applied:
-            console.info(f"已升级到结构版本 {version}。")
-        console.ok(f"数据库升级完成，当前版本 {result.to_version}。")
+            console.info(f"app.db 已升级到结构版本 {version}。")
+        console.ok(f"app.db 升级完成，当前版本 {result.to_version}。")
 
     console.info(f"game.db：{game_path}")
     try:
