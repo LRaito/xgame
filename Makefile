@@ -1,4 +1,4 @@
-.PHONY: all build up certs test index win win-image
+.PHONY: all build up certs test index win win-image upgrade
 
 COMPOSE ?= docker compose
 
@@ -72,3 +72,12 @@ index:
 			exit 1; \
 		} || true
 	STORAGE_ROOT=$${STORAGE_HOST_DIR:-./data/storage} python3 -m backend.cli index
+
+# 手动升级 app.db 的结构（<运行时根>/db/app.db）。执行前先停止服务：
+# SQLite 单写者，升级期间不能有 api 在写库。根取值与 compose 一致。
+# 升级代码在 upgrade/，按 system_config.db_version 逐版本执行；已是最新时只提示。
+upgrade:
+	@echo "请先停止服务（docker compose down，或关闭 Windows 启动窗口）。"
+	STORAGE_ROOT=$${STORAGE_HOST_DIR:-./data/storage} \
+	RUNTIME_ROOT=$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}} \
+	python3 -m upgrade $(ARGS)

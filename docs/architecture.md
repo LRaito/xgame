@@ -91,6 +91,7 @@ x 是私人游戏平台，不是对外 SaaS。
 ```
 frontend/     Vue 3 SPA：views / api / components / utils / router
 backend/      FastAPI：auth / games / tools / storage
+upgrade/      app.db 结构升级：按版本隔离的历史兼容代码
 tests/        pytest
 docs/         architecture / data_dict / modules / common / plans
 packaging/    Windows 解压即用包
@@ -214,6 +215,18 @@ scripts/      版本号与证书脚本
 - **代价：** 首次访问多一次解压；解包锁要求 Gunicorn 单进程。
 - **细节：** 见 [`guide-and-h5.md`](modules/guide-and-h5.md)。
 
+### 决策 15：数据库结构版本与运行代码解耦
+
+- **决定：** 运行代码只描述最新结构；历史兼容全部放根目录 `upgrade/versions/`。
+- **版本：** `system_config.db_version` 记录当前结构版本；
+  `backend/system_config.py::LATEST_DB_VERSION` 是代码要求的版本。
+- **升级：** 只能停服后手动执行；Docker/仓库用 `make upgrade`，Windows 包双击
+  「升级数据库.cmd」。运行器逐版本执行，每个版本的 DDL 与版本号在同一事务里提交。
+- **启动：** 全新库按最新结构初始化并写版本；已有库只校验版本，
+  不匹配就记录中文错误并永久阻塞，不监听端口。
+- **原因：** 运行时代码保持纯粹，不会被历史兼容分支污染；升级有明确版本与回退边界。
+- **细节：** 见 [`database-upgrade.md`](modules/database-upgrade.md)。
+
 ## 模块依赖
 
 ```
@@ -274,7 +287,9 @@ frontend views / api/*
 
 ## 数据模型
 
-- 业务库 `app.db`：auth 2 表 + games 8 表，共 10 张。
+- 业务库 `app.db`：auth 2 表 + games 8 表 + shortcuts 1 表 + system_config 1 表，共 12 张。
+- 结构版本记录在 `system_config.db_version`，升级方式见
+  [`database-upgrade.md`](modules/database-upgrade.md)。
 - 文件路径规则：数据根 7 类 + 运行时根 3 类。
 - 表结构、列定义、索引与路径规则见 [`data_dict.md`](data_dict.md)。
 - 模型定义在 `backend/games/models.py` / `backend/auth/models.py`，
@@ -332,6 +347,8 @@ docker compose
 - 不用任何 docker 具名卷。
 - 证书随仓库提交，`make certs` 可重新生成。
 - SQLite 滚动备份：启动一次 + 每小时一次，当月一份，整份重写。
+- 启动先校验 `system_config.db_version`；与代码不匹配就记录错误并永久阻塞，
+  api 不会监听端口，需要用户停服后执行 `make upgrade`。
 - 数据根可整体拷走；运行时根不备份，解包产物自动重建。
 
 开发与 Docker 的差异、备份细节见 [`DEVELOP.md`](../DEVELOP.md) 与

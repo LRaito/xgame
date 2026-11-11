@@ -132,6 +132,8 @@
 - 文件不存在或 `schema_version` 不符时整库重建。
 - 已存在且版本一致时，`ensure_ranking_loaded()` 就地补榜单。
 - 手动重建入口是 `make index`；整库重建 + `os.replace()`，不开 WAL。
+- 数据库结构升级入口是宿主机 `make upgrade`：先 `docker compose down`，升级完再 `make all`。
+  服务启动只校验 `system_config.db_version`，不会自动改表；版本不匹配会永久阻塞。
 - `cp .env.example .env` 可选，只放三个键；`make all` 等于 build + up，
   `up` 在 `compose up -d` 之后还会重启 api 与 web 各一次。
 - 浏览器打开 `https://localhost`，点「注册一个」建号。

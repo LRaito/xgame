@@ -39,7 +39,8 @@ pip install -r requirements.txt
 uvicorn backend.asgi:app --reload --port 8910
 ```
 
-后端启动时自动建表，不需要手动跑 `init-db`。
+后端启动时：全新的库会按最新结构自动建表；已有的库只校验结构版本，不自动升级。
+拉取到包含表结构变化的代码后，先停服务，再执行 `make upgrade`。
 
 前端（另开终端）：
 
@@ -123,12 +124,60 @@ mkdir -p "$RUNTIME_HOST_DIR" && touch "$RUNTIME_HOST_DIR/.mounted"
 
 1. `require_mounted()`：按前缀检查哨兵；缺了就拒绝启动。
 2. `ensure_data_dir()`：建 `<运行时根>/db`。
-3. `init_db()`：建缺失的表，并给老表补列。
-4. `backup_database()`：立刻备份一份。
-5. `start_backup_loop()`：起守护线程，每小时再备一次。
-6. `ensure_game_index()`：索引不存在就补建。
+3. `init_db()`：
+   - 全新库：按当前模型建全部表，并写入 `system_config.db_version = 最新版本`。
+   - 已有库：只读 `db_version`，不建表、不补列。
+4. 版本不匹配：记录中文错误并永久阻塞，服务不会监听端口。
+5. `backup_database()`：立刻备份一份。
+6. `start_backup_loop()`：起守护线程，每小时再备一次。
+7. `ensure_game_index()`：索引不存在就补建。
 
-哨兵缺失**一定拦住启动**；备份与补建失败只记 warning，不拦启动。
+哨兵缺失与数据库版本不匹配**一定拦住启动**；备份与补建失败只记 warning，不拦启动。
+
+### 数据库结构升级
+
+`app.db` 的结构版本记录在 `system_config.db_version`。运行代码只认最新结构，
+历史兼容全部在根目录 `upgrade/versions/`，由用户手动执行。
+
+Docker / 仓库路线：
+
+```bash
+docker compose down
+make upgrade
+make all
+```
+
+Windows「解压即用」包：
+
+```text
+关闭启动窗口 → 双击「升级数据库.cmd」→ 重新双击「启动游戏平台.cmd」
+```
+
+- 升级脚本读取 `xgame.ini` 的 `data_dir` / `runtime_dir`，调用 `launcher.py --upgrade-db`。
+- 服务运行中，或因版本不匹配正在阻塞时，脚本拒绝执行并提示先关窗口。
+- 升级前会默认把库备份成 `<运行时根>/db/app.db.bak-v<旧版本>-<时间戳>`。
+- 已是最新时输出 `当前已是最新版本，无需升级`。
+- 失败会回滚当前版本并返回非零码；之前已成功的版本保留，修好后可重跑。
+- 升级时服务必须停止，SQLite 不允许一边写一边重建表。
+- 改过 `xgame.ini` 的用户要把旧配置一起复制到新包，否则脚本会看默认的 `data`。
+
+Docker 路线的 `make upgrade` 在宿主机仓库执行，读取 `.env` 里的
+`RUNTIME_HOST_DIR`（缺失时退回 `STORAGE_HOST_DIR`）。Windows 包的手动兜底：
+
+```bash
+RUNTIME_ROOT=/mnt/d/xgame/data/runtime STORAGE_ROOT=/mnt/d/xgame/data \
+  python3 -m upgrade
+```
+
+#### 增加一个数据库版本
+
+1. 新建 `upgrade/versions/vN.py`，定义 `VERSION = N` 与 `upgrade(conn)`。
+2. 在 `upgrade/versions/__init__.py` 的 `VERSION_MODULES` 末尾登记。
+3. 把 `backend/system_config.py::LATEST_DB_VERSION` 改成 N。
+4. 补升级测试，并更新 [`docs/modules/database-upgrade.md`](docs/modules/database-upgrade.md)。
+
+版本模块只写显式 SQL，不 import 当前模型，也不自行 commit / rollback。
+详细规则见 [`docs/modules/database-upgrade.md`](docs/modules/database-upgrade.md)。
 
 ## 证书
 
@@ -247,6 +296,10 @@ Docker 可能先于 WSL 发行版起来，bind 把空目录挂进了容器。
 
 **api 起不来，日志里一串「Booting worker」。**
 看 worker 抛的异常（常见是数据目录不可写）。
+
+**服务不监听端口，日志提示「数据库结构版本 … 低于/高于当前程序需要的 …」。**
+数据库结构与代码不匹配，服务已按设计永久阻塞。Docker 停服务后执行 `make upgrade`，
+再启动；Windows 包关闭启动窗口后双击「升级数据库.cmd」。不要尝试让服务自动改表。
 注意 `--workers 1` 是必须的，多进程会撞 SQLite 写锁。
 
 **端口被占用，web 容器起不来。**

@@ -33,6 +33,7 @@ REQUIRED_MODULES = [
     "backend.static_site",
     "backend.games.search_index",
     "backend.asgi",
+    "upgrade.cli",
 ]
 FORBIDDEN_MODULES = ["gunicorn", "uvloop"]
 

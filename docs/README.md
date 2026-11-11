@@ -38,6 +38,7 @@
 | [`modules/platform-chronicle.md`](modules/platform-chronicle.md) | 机型简史：36 个类型的介绍页、图片与来源 |
 | [`modules/delivery-docker.md`](modules/delivery-docker.md) | 镜像、compose、bind、备份、哨兵 |
 | [`modules/delivery-windows.md`](modules/delivery-windows.md) | Windows 包构建、启动器、编码、升级 |
+| [`modules/database-upgrade.md`](modules/database-upgrade.md) | 结构版本、upgrade 目录、make upgrade、启动阻塞 |
 
 ## 共享能力
 

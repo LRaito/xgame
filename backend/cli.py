@@ -3,7 +3,7 @@ from pathlib import Path
 import click
 
 from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, get_settings
-from backend.database import ensure_data_dir, init_db, make_engine
+from backend.database import ensure_data_dir, has_business_tables, init_db, make_engine
 
 
 @click.group()
@@ -13,10 +13,13 @@ def cli() -> None:
 
 @cli.command("init-db")
 def init_db_cmd() -> None:
-    """创建数据库表。"""
+    """初始化一个全新的数据库；已有库请用 make upgrade 升级。"""
     settings = get_settings()
     ensure_data_dir(settings)
     engine = make_engine(settings)
+    if has_business_tables(engine):
+        click.echo("数据库已存在，结构升级请运行 make upgrade。", err=True)
+        raise SystemExit(1)
     init_db(engine)
     click.echo("数据库已初始化。")
 

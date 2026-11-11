@@ -8,8 +8,8 @@
 3. **等它就绪**再打开浏览器，并打印本机与局域网两个地址。
 
 配置文件是旁边的 `xgame.ini`（没有就用默认值建一份）。整个包不写注册表、不装服务、
-不碰系统目录，删掉文件夹就算卸载。**包里没有任何自动升级的代码**：升级是手动的
-（关窗口 → 解压新包 → 把 data 目录搬过去），步骤见 README.md 与 说明.txt。
+不碰系统目录，删掉文件夹就算卸载。**包里没有自动升级代码**：手动升级有两个入口——
+换新包并搬 `data`，或停服后双击「升级数据库.cmd」（本文件的 `--upgrade-db` 动作）。
 
 这个文件在包里位于 `xgame/launcher.py`，与 `backend/`、`web/`、`python/` 同级。
 """
@@ -30,6 +30,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
+from typing import NoReturn
 
 ROOT = Path(__file__).resolve().parent
 INI_PATH = ROOT / "xgame.ini"
@@ -424,6 +425,73 @@ def serve(config: Config) -> int:
     return 0
 
 
+# ---------- 数据库结构升级 ----------
+
+
+def _upgrade_cli_main(argv: list[str]) -> int:
+    """延迟导入升级工具：普通启动不该为 SQLModel / 后端配置付导入代价。"""
+    from upgrade.cli import main as upgrade_main
+
+    return upgrade_main(argv)
+
+
+def upgrade_error(message: str) -> NoReturn:
+    """升级入口的失败出口。
+
+    不复用 fatal()：那是「启动失败」专用的，会写 runtime/last-error.txt；
+    升级失败或拒绝升级不该覆盖上一次启动故障的原因。
+    """
+    logger.error("数据库升级失败：%s", message)
+    say(f"\n[升级失败] {message}")
+    raise SystemExit(1)
+
+
+def upgrade_database() -> int:
+    """「升级数据库.cmd」的入口：停服检查 → 调升级 CLI → 透传退出码。"""
+    config = load_config()
+
+    # 服务因版本不匹配阻塞时不会监听端口，但仍持有这个命名互斥体：先查它。
+    instance = SingleInstance(f"Local\\xgame-port-{config.port}")
+    if not instance.acquire():
+        upgrade_error(
+            "XGame 正在运行（或正在等待数据库升级）。\n"
+            "请先关闭「启动游戏平台.cmd」窗口，再双击「升级数据库.cmd」。"
+        )
+
+    if port_in_use(config.host, config.port):
+        upgrade_error(
+            f"端口 {config.port} 上已经有服务在运行。\n"
+            "请先关闭启动窗口（或占用该端口的程序），再双击「升级数据库.cmd」。"
+        )
+
+    # 只警告不拒绝：.mounted 是人工创建的，Docker 停掉后仍会留着。
+    if (config.data_dir / ".mounted").exists():
+        say("注意：数据目录里有 .mounted 哨兵，可能还在被 Docker/WSL 路线共用。")
+        say("      升级前请确认那边已经停止服务，否则会写坏数据库。")
+
+    say(f"数据目录：{config.data_dir}")
+    say(f"运行时目录：{config.runtime_dir}")
+    say("升级期间请不要关闭这个窗口。")
+
+    try:
+        code = _upgrade_cli_main(
+            [
+                "--storage-root",
+                str(config.data_dir),
+                "--runtime-root",
+                str(config.runtime_dir),
+            ]
+        )
+    except Exception as exc:  # noqa: BLE001 - 双击入口只给一条看得懂的中文
+        logger.exception("数据库升级失败")
+        upgrade_error(f"升级数据库时出错：{exc}")
+
+    if code == 0:
+        # 0 也可能是「已是最新」或「尚未初始化」，不能统一说「升级完成」
+        say("现在可以双击「启动游戏平台.cmd」启动。")
+    return code
+
+
 # ---------- 入口 ----------
 
 QUIET = False
@@ -458,6 +526,7 @@ _ACTIONS = {
     "--create-shortcut": "create-shortcut",
     "--toggle-autostart": "toggle-autostart",
     "--unlock": "unlock",
+    "--upgrade-db": "upgrade-db",
 }
 
 _USAGE = "可用参数：" + " / ".join([*_ACTIONS, "--quiet", "--no-browser"])
@@ -488,6 +557,8 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
     if options["action"]:
+        if options["action"] == "upgrade-db":
+            return upgrade_database()
         # 快捷方式 / 开机自启 / 解除锁定：建 .lnk 要用 PowerShell，逻辑在 winops.py
         import winops
 

@@ -51,14 +51,16 @@ Windows 的 `python.exe`；宿主机不是 WSL 就跳过。
 ```
 python/                  python-build-standalone 的可重定位 CPython 3.12（含 MSVC 运行库）
 backend/                 后端源码（含 search/catalog 名录与 search/rankings 榜单）
+upgrade/                 数据库结构升级工具（包内副本，供「升级数据库.cmd」调用）
 web/                     前端构建产物（vite dist）
-launcher.py              启动器：自检 → 起 uvicorn → 开浏览器
+launcher.py              启动器：自检 → 起 uvicorn → 开浏览器；也负责数据库升级动作
 winops.py                桌面快捷方式 / 开机自启 / 解除 MOTW 锁定
 smoke_win.py             自检脚本（构建后由宿主机跑一遍）
 xgame.ico                快捷方式图标（由 make_icon.py 从 xgame.png 生成，不进构建流程）
 xgame.ini                数据目录、监听地址、端口、是否开浏览器
 version.txt              构建版本号（启动横幅上显示）
 启动游戏平台.cmd          双击入口
+升级数据库.cmd            停服后双击，升级 data/runtime/db/app.db 的结构
 允许局域网访问.bat + allow-lan.ps1   防火墙放行（只放行这个包的 python.exe）
 创建桌面快捷方式.bat / 设置开机自启.bat / 解除锁定.bat
 说明.txt                 给最终用户看的说明
@@ -95,7 +97,16 @@ make_icon.py / xgame.png  从源图生成 xgame.ico（换图标 = 替换 xgame.p
 
 升级是手动的：关窗口 → 解压新包到新目录 → 搬 `data`。
 
-- 没有自动升级代码。
+- 没有自动升级代码；换包不会自动改数据库结构。
+- 新版本改了数据库结构时，搬完 `data` 后先双击「升级数据库.cmd」，再启动服务。
+- 脚本读取 `xgame.ini` 的 `data_dir` / `runtime_dir`，先确认服务没在运行，再调用
+  `python -m upgrade`；升级前默认备份为 `app.db.bak-v<旧版本>-<时间戳>`。
+- 服务运行中，或因版本不匹配正在阻塞时（不监听端口），脚本会拒绝执行并提示先关窗口。
+- 已是最新时输出 `当前已是最新版本，无需升级`；未启动过服务时提示尚未初始化。
+- 失败会保留窗口输出；修好后可重新双击。
+- 改过 `xgame.ini` 的用户要把旧配置一起复制到新包，否则脚本会看默认的 `data`。
+- 手动兜底：在包根执行
+  `python\python.exe -m upgrade --storage-root data --runtime-root data\runtime`。
 - 停止服务 = 关掉控制台窗口；硬杀不会坏库。
 - 桌面快捷方式与开机自启要重新跑一次对应的 `.bat`。
 

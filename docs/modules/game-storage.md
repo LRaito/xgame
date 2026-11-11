@@ -121,7 +121,7 @@
 - 写入路径共两条：管理页编辑弹框，与「美化封面」的同一次 assets 调用。
 - 编辑弹框里 `None` = 不改、空串 = 清空；前端用文字单选。
 - 前端镜像 `frontend/src/constants/coverStyles.js` 的 `coverTypesFor()`，顺序必须一致。
-- 老库由 `backend/database.py` 的 `_ensure_columns()` 启动时补可空列。
+- 老库的 `cover_type` 列由 `upgrade/versions/v1.py` 补齐；运行代码不写兼容分支。
 
 ### 游戏名、描述与 CRC32
 

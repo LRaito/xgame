@@ -4,7 +4,8 @@
 
 **准确性约定：** 以代码为准，本文件只是索引。
 
-- SQLite 结构源头：`backend/*/models.py`（SQLModel `table=True`）。
+- SQLite 结构源头：`backend/*/models.py` 与 `backend/system_config.py`
+  （SQLModel `table=True`）。
 - 文件路径规则源头：`backend/games/paths.py`。
 - 业务行为与边界见 [``](README.md)。
 
@@ -28,15 +29,25 @@
 
 类型映射：`str(max_length=n)` → `VARCHAR(n)`；无长度 `str` → `VARCHAR`；
 `int` → `INTEGER`；`float` → `FLOAT`；`datetime` → `DATETIME`；
-整型主键即自增 `INTEGER PRIMARY KEY`。
+整型主键即自增 `INTEGER PRIMARY KEY`；`games.id` 与 `system_config.id` 用显式
+`INTEGER PRIMARY KEY AUTOINCREMENT`，编号不复用。
 
 ## SQLite 结构
 
 - 库路径写死为 `<运行时根>/db/app.db`。
-- `create_app()` 启动时 `init_db()` 建全部表。
-- 没有迁移框架：
-  - 新列由 `backend/database.py` 的 `_ensure_columns()` 补。
-  - 已删除的表由 `_drop_tables()` 清理。
+- 启动时 `init_db()` 只做两件事：
+  - 全新库（除 `system_config` 外没有业务表）按当前模型建全部表，并写入
+    `system_config.db_version = LATEST_DB_VERSION`。
+  - 已有库只读 `system_config.db_version`，不建表、不补列、不改结构。
+- 结构版本与升级：
+  - 当前代码要求的最新版本是 `backend/system_config.py::LATEST_DB_VERSION`。
+  - 升级代码在根目录 `upgrade/versions/vN.py`，由 `upgrade/runner.py` 逐版本执行；
+    每个版本一个事务，迁移 SQL 与 `db_version` 更新一起提交。
+  - 只能手动升级：停服务后 Docker/仓库执行 `make upgrade`，Windows 包双击
+    「升级数据库.cmd」。重复执行会提示 `当前已是最新版本，无需升级`。
+  - 版本不匹配时服务记录中文错误并永久阻塞，不监听端口。
+  - `backend/` 的模型只描述最新结构，不写任何兼容旧库的分支。
+  - 详细规格见 [`database-upgrade.md`](modules/database-upgrade.md)。
 - 数据根下的 `game.db` 是独立派生库，见文末「游戏发现索引」。
 
 ### 表索引
@@ -54,9 +65,10 @@
 | 9 | `game_recent_plays` | 同上 | 最近游玩 |
 | 10 | `game_user_stats` | 同上 | 游玩时长与进度 |
 | 11 | `user_shortcuts` | `backend/shortcuts/models.py` | 按账号保存的快捷键覆盖配置 |
+| 12 | `system_config` | `backend/system_config.py` | 平台级键值配置（含结构版本） |
 
 > `game_h5_files` 已删除：H5 改成「zip 存数据根、按需解到运行时根」，不再有清单表。
-> 老库里的空表由启动时的 `_drop_tables()` 清掉。
+> 老库里的空表由 `upgrade/versions/v1.py` 清掉。
 
 ### auth — 账号
 
@@ -96,13 +108,28 @@
 - 键位格式见 [`frontend.md`](modules/frontend.md) 的「快捷键」。
 - 动作清单与默认值只在前端 `frontend/src/constants/shortcuts.js` 维护。
 
+### system — 系统配置
+
+**`system_config`**
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | INTEGER | PK `AUTOINCREMENT` | |
+| key | VARCHAR(255) | NOT NULL, UNIQUE | 配置键 |
+| value | VARCHAR(1024) | NOT NULL | 配置值，按字符串存 |
+
+- 当前只有一项：`key = db_version`，`value` 是 `app.db` 的结构版本整数文本。
+- 键唯一索引：`ix_system_config_key`。
+- 结构版本与升级流程见本文「SQLite 结构」与
+  [`database-upgrade.md`](modules/database-upgrade.md)。
+
 ### games — 游戏中心
 
 **`games`**
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| id | INTEGER | PK 自增 | 路由 `{game_id}`；与磁盘目录无关 |
+| id | INTEGER | PK `AUTOINCREMENT` | 路由 `{game_id}`；与磁盘目录无关；删除后编号不复用 |
 | name | VARCHAR(255) | NOT NULL, 唯一 `(game_type, name)` | 合法的 Windows / 网盘文件名 |
 | cartridge_id | VARCHAR(64) | NOT NULL, 唯一 | 大写；见 [`game-storage.md`](modules/game-storage.md) |
 | cover_type | VARCHAR(20) | NULL | 封面样式 id；见 [`game-storage.md`](modules/game-storage.md) |

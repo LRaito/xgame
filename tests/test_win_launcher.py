@@ -10,11 +10,16 @@ import importlib.util
 import os
 import re
 import subprocess
+import sys
+import types
 from pathlib import Path
 
 import pytest
 
 LAUNCHER_PATH = Path(__file__).resolve().parent.parent / "packaging" / "windows" / "launcher.py"
+UPGRADE_CMD_PATH = LAUNCHER_PATH.parent / "升级数据库.cmd"
+SMOKE_WIN_PATH = LAUNCHER_PATH.parent / "smoke_win.py"
+BUILD_WIN_DIST_PATH = LAUNCHER_PATH.parent / "build-win-dist.sh"
 
 
 @pytest.fixture(scope="module")
@@ -233,3 +238,174 @@ def test_make_icon_warns_when_source_is_missing(make_icon, tmp_path):
     with pytest.raises(SystemExit) as excinfo:
         make_icon.main()
     assert "找不到源图" in str(excinfo.value)
+
+
+# ---------- 包内数据库升级入口 ----------
+
+
+def _config(launcher, tmp_path):
+    parser = configparser.ConfigParser()
+    parser.read_dict(
+        {
+            "xgame": {
+                "data_dir": str(tmp_path / "data"),
+                "runtime_dir": str(tmp_path / "runtime"),
+            }
+        }
+    )
+    return launcher.Config(parser)
+
+
+class _FreeInstance:
+    def __init__(self, _name):
+        pass
+
+    def acquire(self):
+        return True
+
+
+class _HeldInstance:
+    def __init__(self, _name):
+        pass
+
+    def acquire(self):
+        return False
+
+
+def test_parse_args_maps_upgrade_db(launcher):
+    assert launcher.parse_args(["--upgrade-db"])["action"] == "upgrade-db"
+    assert "--upgrade-db" in launcher._USAGE
+
+
+def test_main_dispatches_upgrade_db_without_winops(launcher, monkeypatch):
+    monkeypatch.setattr(launcher, "upgrade_database", lambda: 7)
+    fake_winops = types.ModuleType("winops")
+    fake_winops.run_action = lambda *_args: pytest.fail("升级动作不应经过 winops")
+    monkeypatch.setitem(sys.modules, "winops", fake_winops)
+
+    assert launcher.main(["--upgrade-db"]) == 7
+
+
+def test_upgrade_database_refuses_when_service_holds_mutex(
+    launcher, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(launcher, "load_config", lambda: _config(launcher, tmp_path))
+    monkeypatch.setattr(launcher, "SingleInstance", _HeldInstance)
+    monkeypatch.setattr(
+        launcher, "port_in_use", lambda *_args: pytest.fail("互斥体已占用，不应再查端口")
+    )
+
+    with pytest.raises(SystemExit) as excinfo:
+        launcher.upgrade_database()
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "正在运行" in out
+    assert "升级数据库.cmd" in out
+
+
+def test_upgrade_database_refuses_when_port_is_busy(
+    launcher, tmp_path, monkeypatch, capsys
+):
+    config = _config(launcher, tmp_path)
+    monkeypatch.setattr(launcher, "load_config", lambda: config)
+    monkeypatch.setattr(launcher, "SingleInstance", _FreeInstance)
+    monkeypatch.setattr(launcher, "port_in_use", lambda _host, _port: True)
+
+    with pytest.raises(SystemExit) as excinfo:
+        launcher.upgrade_database()
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert str(config.port) in out
+    assert "关闭启动窗口" in out
+
+
+def test_upgrade_database_passes_package_roots_and_returns_cli_code(
+    launcher, tmp_path, monkeypatch
+):
+    config = _config(launcher, tmp_path)
+    monkeypatch.setattr(launcher, "load_config", lambda: config)
+    monkeypatch.setattr(launcher, "SingleInstance", _FreeInstance)
+    monkeypatch.setattr(launcher, "port_in_use", lambda _host, _port: False)
+    calls = []
+    monkeypatch.setattr(
+        launcher,
+        "_upgrade_cli_main",
+        lambda argv: calls.append(argv) or 1,
+    )
+
+    assert launcher.upgrade_database() == 1
+    assert calls == [
+        [
+            "--storage-root",
+            str(config.data_dir),
+            "--runtime-root",
+            str(config.runtime_dir),
+        ]
+    ]
+
+
+def test_upgrade_database_wraps_unexpected_exception(
+    launcher, tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(launcher, "load_config", lambda: _config(launcher, tmp_path))
+    monkeypatch.setattr(launcher, "SingleInstance", _FreeInstance)
+    monkeypatch.setattr(launcher, "port_in_use", lambda _host, _port: False)
+
+    def boom(_argv):
+        raise RuntimeError("磁盘已满")
+
+    monkeypatch.setattr(launcher, "_upgrade_cli_main", boom)
+
+    with pytest.raises(SystemExit) as excinfo:
+        launcher.upgrade_database()
+
+    assert excinfo.value.code == 1
+    out = capsys.readouterr().out
+    assert "升级数据库时出错" in out
+    assert "磁盘已满" in out
+
+
+def test_upgrade_database_warns_about_mounted_sentinel(
+    launcher, tmp_path, monkeypatch, capsys
+):
+    config = _config(launcher, tmp_path)
+    config.data_dir.mkdir(parents=True)
+    (config.data_dir / ".mounted").touch()
+    monkeypatch.setattr(launcher, "load_config", lambda: config)
+    monkeypatch.setattr(launcher, "SingleInstance", _FreeInstance)
+    monkeypatch.setattr(launcher, "port_in_use", lambda _host, _port: False)
+    monkeypatch.setattr(launcher, "_upgrade_cli_main", lambda _argv: 0)
+
+    assert launcher.upgrade_database() == 0
+    out = capsys.readouterr().out
+    assert ".mounted" in out
+    assert "Docker/WSL" in out
+
+
+def test_upgrade_cmd_is_ascii_lf_without_bom():
+    raw = UPGRADE_CMD_PATH.read_bytes()
+    assert not raw.startswith(b"\xef\xbb\xbf")
+    assert b"\r\n" not in raw
+    text = raw.decode("ascii")
+    assert "chcp 65001" in text
+    assert 'cd /d "%~dp0"' in text
+    assert "launcher.py" in text
+    assert "--upgrade-db" in text
+    assert "pause" in text
+
+
+def test_smoke_requires_upgrade_cli():
+    spec = importlib.util.spec_from_file_location("xgame_smoke", SMOKE_WIN_PATH)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    assert "upgrade.cli" in module.REQUIRED_MODULES
+
+
+def test_build_script_ships_upgrade_tool():
+    text = BUILD_WIN_DIST_PATH.read_text(encoding="utf-8")
+    assert "$REPO/upgrade" in text
+    assert "upgrade/versions/v1.py" in text
+    assert "升级数据库.cmd" in text

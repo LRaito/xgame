@@ -115,7 +115,9 @@ backend/
   __init__.py                # create_app()
   asgi.py                    # 生产 ASGI 入口
   config.py                  # 配置（全部写死）
-  database.py                # 引擎、建表、补列
+  database.py                # 引擎、全新库建表、结构版本校验
+  system_config.py           # 通用系统配置表 + 当前结构版本常量
+  startup_guard.py           # 版本不匹配时永久阻塞启动
   backup.py                  # SQLite 滚动备份
   mount_guard.py             # 根目录哨兵检查
   static_site.py             # 可选：后端托管前端 dist
@@ -137,6 +139,8 @@ backend/
   search/catalog/            # 检索名录 CSV
   search/rankings/           # 榜单 CSV
 tests/                       # pytest
+upgrade/                     # app.db 结构升级（唯一允许兼容代码的地方）
+  versions/vN.py             # 按版本隔离，自包含 sqlite3 与显式 SQL
 packaging/windows/           # Windows 解压即用包
 docs/                        # architecture / data_dict / modules / common / plans
 scripts/version.sh           # 版本号唯一出处
@@ -166,6 +170,15 @@ certs/                       # 自签名证书
 8. **SQLite 路径。** 写死为 `<运行时根>/db/app.db`，没有 `DATABASE_URL` 可配；
    备份写在数据根的 `db/` 里。
 9. **Gunicorn。** 必须 `--workers 1 --threads 8`；单进程避免 SQLite 写冲突。
+10. **数据库只维护最新结构。** `backend/` 的模型、建表与业务代码只描述当前结构，
+    禁止写补列、补索引、删旧表、重建表等兼容旧库的逻辑。
+    - 任何表 / 列 / 索引变化都必须新增 `upgrade/versions/vN.py`，版本号连续递增，
+      并同步递增 `backend/system_config.py::LATEST_DB_VERSION`。
+    - 版本模块只依赖标准库 `sqlite3` 与显式 SQL，不 import `backend` / SQLModel /
+      SQLAlchemy；事务由 `upgrade/runner.py` 负责，版本模块不得 commit / rollback。
+    - 升级只能手动执行：停服务后 Docker/仓库路线用 `make upgrade`，
+      Windows 包双击「升级数据库.cmd」。服务启动只校验
+      `system_config.db_version`，不自动改表；不匹配就记录中文错误并永久阻塞。
 
 ## 代码风格
 
@@ -219,6 +232,8 @@ python3 -m pytest  # 只跑后端
 - 最低覆盖范围：账号与锁定、存储读写与越界、游戏入库与卡带 ID、H5/攻略、
   云端存档、截图与图集、模拟器设置、最近游玩、游玩统计、检索与榜单、
   静态站、请求上限、Windows 启动器。
+- 数据库升级必须覆盖：逐版本执行、失败不推进版本、v1 升级后与全新库 schema 一致、
+  启动版本不匹配时阻塞。
 - 每个功能的详细测试要点见对应 `docs/modules/*.md` 的「测试要点」。
 
 ## 新增功能 / 工具
@@ -247,6 +262,7 @@ python3 -m pytest  # 只跑后端
 | H5 与攻略 | [`guide-and-h5.md`](docs/modules/guide-and-h5.md) |
 | 游戏发现 | [`game-discover.md`](docs/modules/game-discover.md) |
 | 前端框架与交互 | [`frontend.md`](docs/modules/frontend.md) |
+| 数据库结构版本与升级 | [`database-upgrade.md`](docs/modules/database-upgrade.md) |
 | HTTP 端点 | [`api.md`](docs/common/http-api.md) |
 | Docker | [`delivery-docker.md`](docs/modules/delivery-docker.md) |
 | Windows 包 | [`delivery-windows.md`](docs/modules/delivery-windows.md) |

@@ -75,6 +75,9 @@ class Game(SQLModel, table=True):
     __table_args__ = (
         Index("uq_games_game_type_name", "game_type", "name", unique=True),
         Index("uq_games_cartridge_id", "cartridge_id", unique=True),
+        # 显式 AUTOINCREMENT：删除最大 id 后也不复用编号。id 会出现在播放页路由与
+        # 截图/存档等表的 game_id 里，复用会让旧链接指向另一盘游戏。
+        {"sqlite_autoincrement": True},
     )
 
     id: int | None = Field(default=None, primary_key=True)

@@ -10,6 +10,7 @@ from backend.backup import backup_database, start_backup_loop
 from backend.config import LOG_FORMAT, SECRET_KEY, settings_from_overrides
 from backend.csrf import CSRFMiddleware
 from backend.database import ensure_data_dir, init_db, make_engine
+from backend.errors import DatabaseVersionError
 from backend.games.gallery_router import router as game_gallery_router
 from backend.games.ranking_router import router as game_ranking_router
 from backend.games.router import router as games_router
@@ -26,6 +27,7 @@ from backend.mount_guard import require_mounted
 from backend.session_middleware import ModifiedOnlySessionMiddleware
 from backend.request_limit import RequestBodyLimitMiddleware
 from backend.shortcuts.router import router as user_shortcuts_router
+from backend.startup_guard import block_forever
 from backend.storage.local import LocalStorage
 from backend.tools.router import router as tools_router
 
@@ -43,7 +45,13 @@ def create_app(test_config: dict | None = None) -> FastAPI:
 
     ensure_data_dir(settings)
     engine = make_engine(settings)
-    init_db(engine)
+    try:
+        init_db(engine)
+    except DatabaseVersionError as exc:
+        # 已有库的结构版本与代码不匹配：不自动改表，也不放行服务。
+        # 记一条中文错误后永久阻塞，进程不监听端口（见 backend/startup_guard.py）。
+        logger.error("%s 服务不会启动。", exc)
+        block_forever()
     # 启动先备一次，之后由守护线程每小时再备一次（当月只有一份 <YYYY-MM>.db，每次都整份重写）
     backup_database(settings)
     start_backup_loop(settings)

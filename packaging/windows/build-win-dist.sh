@@ -37,6 +37,19 @@ FE_BUILD="${FE_BUILD_DIR:-/tmp/xgame-fe}"
 say() { printf '%s\n' "$*"; }
 step() { printf '\n== %s\n' "$*"; }
 
+# 拷贝 Python 源码目录，排除解释器缓存；rsync 不可用时用 cp + find。
+copy_python_tree() {
+    local src="$1" dest="$2"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' "$src/" "$dest/"
+    else
+        rm -rf "$dest"
+        cp -a "$src" "$dest"
+        find "$dest" -name '__pycache__' -type d -prune -exec rm -rf {} +
+        find "$dest" -name '*.pyc' -delete
+    fi
+}
+
 for tool in curl python3; do
     command -v "$tool" >/dev/null 2>&1 || { say "缺少命令：$tool"; exit 1; }
 done
@@ -155,20 +168,21 @@ rm -rf "$PKG/python/Lib/site-packages/bin"
 
 # ---------- 4. 后端与包内脚本 ----------
 step "4/6 后端与启动脚本"
-if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' "$REPO/backend/" "$PKG/backend/"
-else
-    cp -a "$REPO/backend" "$PKG/backend"
-    find "$PKG/backend" -name '__pycache__' -type d -prune -exec rm -rf {} +
-    find "$PKG/backend" -name '*.pyc' -delete
-fi
+copy_python_tree "$REPO/backend" "$PKG/backend"
 test -d "$PKG/backend/search/catalog" || { say "！backend/search/catalog 没带上，检索索引建不出来"; exit 1; }
 # 榜单是可选数据：还没整理好时只提示，不拦构建（包里的榜单页会显示「榜单尚未加载」）
 test -d "$PKG/backend/search/rankings" \
     || say "提示：backend/search/rankings 没带上，这个包的游戏榜单是空的。"
 
+# 结构升级工具随包走：停服后双击「升级数据库.cmd」即可原地升级，不必回仓库/WSL。
+copy_python_tree "$REPO/upgrade" "$PKG/upgrade"
+test -f "$PKG/upgrade/versions/v1.py" || {
+    say "！upgrade/versions/v1.py 没带上，包内升级会失败"
+    exit 1
+}
+
 for name in launcher.py winops.py smoke_win.py allow-lan.ps1 xgame.ico \
-            启动游戏平台.cmd 允许局域网访问.bat \
+            启动游戏平台.cmd 升级数据库.cmd 允许局域网访问.bat \
             创建桌面快捷方式.bat 设置开机自启.bat 解除锁定.bat 说明.txt; do
     cp -a "$HERE/$name" "$PKG/$name"
 done

@@ -34,7 +34,7 @@
 后端（开发）：
 
 ```bash
-python -m backend.cli init-db
+python -m backend.cli init-db   # 只用于初始化全新库；已有库请用 make upgrade
 uvicorn backend.asgi:app --reload --port 8910
 ```
 
@@ -52,6 +52,7 @@ npm run dev
 make test        # pytest + 前端 lint
 make win         # Windows 解压即用包
 make index       # 重建游戏发现索引
+make upgrade     # 手动升级 app.db 结构（先停服务）
 ```
 
 - 平时只跑改动涉及的用例，全量 `make test` 由用户定期执行。
@@ -98,6 +99,11 @@ make index       # 重建游戏发现索引
     Redis/PostgreSQL/Celery；Windows 包不做自动升级。
 16. **通用组件统一。** 按钮、分段、下拉、分页、弹窗、空状态优先复用 `components/common/`；
     页面不手写原生 `<button>` 或重复控件样式；颜色、尺寸、焦点只用 `styles/index.css` 的 token。
+17. **数据库只维护最新结构。** `backend/` 不写兼容旧库的补列、补索引、删表、重建逻辑；
+    结构变化必须新增 `upgrade/versions/vN.py` 并递增 `LATEST_DB_VERSION`。
+    升级只由用户停止服务后手动执行：Docker/仓库用 `make upgrade`，Windows 包双击
+    「升级数据库.cmd」。启动只校验 `system_config.db_version`；
+    不匹配就日志报错并永久阻塞，不自动改表。
 
 细节链接：
 
@@ -109,6 +115,7 @@ make index       # 重建游戏发现索引
 - 存档 / 设置 / 统计 → [`game-saves-stats.md`](docs/modules/game-saves-stats.md)
 - H5 / 攻略 → [`guide-and-h5.md`](docs/modules/guide-and-h5.md)
 - 游戏发现 → [`game-discover.md`](docs/modules/game-discover.md)
+- 数据库结构版本与升级 → [`database-upgrade.md`](docs/modules/database-upgrade.md)
 - 账号与会话 → [`auth.md`](docs/modules/auth.md)
 - Docker → [`delivery-docker.md`](docs/modules/delivery-docker.md)
 - Windows 包 → [`delivery-windows.md`](docs/modules/delivery-windows.md)
@@ -118,6 +125,7 @@ make index       # 重建游戏发现索引
 ```
 frontend/        Vue 3 SPA
 backend/         FastAPI API（auth / shortcuts / games / tools / storage）
+upgrade/         app.db 结构升级（只由 make upgrade 执行）
 docs/            architecture.md / data_dict.md / modules / common / plans
 packaging/       windows/
 tests/           pytest
