@@ -59,9 +59,9 @@ win:
 win-image:
 	bash packaging/windows/build-in-docker.sh --image-only
 
-# 构建「游戏检索」与「游戏榜单」用的索引库（<运行时根>/db/game.db）。可重复执行，直接覆盖旧文件。
-# 服务启动时若发现索引不存在，会自动补建一次；榜单目录变化时启动也会就地补一次。
-# 这个 target 用于手动重建/更新（换了名录或榜单目录之后）。
+# 全量构建「游戏名录」「游戏榜单」与卡带映射，并同步两个库的库存/榜单标记。
+# 必须先执行 make upgrade（app.db/game.db 结构就位）；执行前建议停止 api（会写 app.db）。
+# 服务启动只建空的 game.db 结构，不写数据；这个 target 是游戏名录/榜单数据的唯一入口。
 # 运行时根取自 .env 的 RUNTIME_HOST_DIR，缺失时退回 STORAGE_HOST_DIR；与容器挂的是同一个宿主目录。
 index:
 	@root="$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}}"; \

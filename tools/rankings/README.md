@@ -52,7 +52,7 @@ python tools/rankings/fill_data.py apply suggestions.json --write
 
 ## 补 `backend/search/catalog/` 的中文名
 
-catalog 是检索名录，格式是两列 `中文名,英文名`。空缺的中文名可以用同一个工具补：
+catalog 是游戏名录，格式是两列 `中文名,英文名`。空缺的中文名可以用同一个工具补：
 
 ```bash
 # 1. 从同文件其他地区版本、榜单、旧版 ranking.csv、其他 catalog 文件自动补

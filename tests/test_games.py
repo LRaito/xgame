@@ -68,7 +68,7 @@ def _files(storage_root) -> set[str]:
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file()
-        # db/ 里是备份与检索索引，不属于游戏素材
+        # db/ 里是备份与游戏发现索引，不属于游戏素材
         and p.relative_to(root).parts[0] != DB_SUBDIR
     }
 
@@ -520,6 +520,52 @@ def test_manage_search_and_filter(logged_in_games):
     assert len(typed.json()["data"]["items"]) == 2
 
 
+def _insert_game(app, name, cartridge_id, *, in_ranking=False, game_type="flash"):
+    with Session(app.state.engine) as session:
+        session.add(
+            Game(
+                name=name,
+                cartridge_id=cartridge_id,
+                game_type=game_type,
+                in_ranking=in_ranking,
+            )
+        )
+        session.commit()
+
+
+def test_manage_filter_by_in_ranking(app, logged_in_games):
+    _insert_game(app, "榜单内", "RANK-IN", in_ranking=True)
+    _insert_game(app, "榜单外", "RANK-OUT", in_ranking=False)
+
+    inside = logged_in_games.get(
+        "/api/games/manage", params={"in_ranking": "true"}
+    ).json()["data"]
+    assert inside["total"] == 1
+    assert [item["name"] for item in inside["items"]] == ["榜单内"]
+    assert inside["items"][0]["in_ranking"] is True
+
+    outside = logged_in_games.get(
+        "/api/games/manage", params={"in_ranking": "false"}
+    ).json()["data"]
+    assert outside["total"] == 1
+    assert [item["name"] for item in outside["items"]] == ["榜单外"]
+
+    all_rows = logged_in_games.get("/api/games/manage").json()["data"]
+    assert all_rows["total"] == 2
+
+
+def test_manage_search_escapes_like_wildcards(app, logged_in_games):
+    _insert_game(app, "100%完成", "LIKE-PCT")
+    _insert_game(app, "100X完成", "LIKE-X")
+
+    data = logged_in_games.get(
+        "/api/games/manage", params={"q": "%"}
+    ).json()["data"]
+
+    assert data["total"] == 1
+    assert [item["name"] for item in data["items"]] == ["100%完成"]
+
+
 def test_manage_list_is_paged(logged_in_games):
     """管理列表服务端分页：默认每页 5 条，载荷是 {total, page, page_size, items}。"""
     for name in ("n06", "n02", "n09", "n04", "n01", "n08", "n03", "n10", "n05", "n07"):
@@ -576,7 +622,7 @@ def test_manage_pagination_params_are_clamped(logged_in_games):
 
 
 def test_manage_page_beyond_range_returns_empty_items(logged_in_games):
-    """页码越界不是错误：items 空、total 照给（与检索页同一口径），页码收敛交给前端。"""
+    """页码越界不是错误：items 空、total 照给（与游戏名录页同一口径），页码收敛交给前端。"""
     for name in ("a", "b", "c"):
         _create_game(logged_in_games, name, "a.swf")
 

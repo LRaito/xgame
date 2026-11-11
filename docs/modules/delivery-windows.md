@@ -137,6 +137,12 @@
 - 桌面快捷方式与开机自启指向旧路径，升级后要重跑那两个 `.bat`。
 - 新版本改了数据库结构时，搬完 `data` 后双击「升级数据库.cmd」，完成后再启动。
 - 脚本读取 `xgame.ini` 的 `data_dir` / `runtime_dir`，升级前默认备份 `app.db`。
+- 升级同时迁移 app.db 与 game.db 结构（game.db 不读 CSV）。
+- 榜单数据与库存/榜单标记仍要人工构建：在包根先设两个根，再执行 index：
+  `set STORAGE_ROOT=<包>\data`、`set RUNTIME_ROOT=<包>\data\runtime`、
+  `python\python.exe -m backend.cli index`。
+- 服务启动只建空的 game.db 结构，不写游戏名录/榜单数据；没有数据时页面提示执行 make index。
+- 同一卡带 ID 出现在多行榜单时，升级的映射迁移与 index 都会报错，需先修 CSV。
 - 服务运行中，或因版本不匹配正在阻塞时，脚本拒绝执行并提示先关窗口。
 - 已是最新时输出 `当前已是最新版本，无需升级`。
 - 改过 `xgame.ini` 的用户要把旧配置一起复制到新包。

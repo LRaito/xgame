@@ -9,7 +9,7 @@
 - ORM 用 SQLModel + SQLite。
 - 两条交付路线：Docker（正式运行）与 Windows「解压即用」包。
 - 两条路数据格式一致，但**不能同时打开同一份数据目录**。
-- 三块功能：游戏中心、游戏管理、游戏发现。
+- 主要功能：游戏中心、库存管理、游戏发现；另有按键管理与机型简史。
 - 账号开放注册，只用于隔离各人的模拟器配置、存档、截图与统计。
 
 ## 先读哪份文档
@@ -51,8 +51,8 @@ npm run dev
 ```bash
 make test        # pytest + 前端 lint
 make win         # Windows 解压即用包
-make index       # 重建游戏发现索引
-make upgrade     # 手动升级 app.db 结构（先停服务）
+make index       # 构建游戏名录与游戏榜单
+make upgrade     # 升级 app.db 与 game.db 结构（先停服务）
 ```
 
 - 平时只跑改动涉及的用例，全量 `make test` 由用户定期执行。
@@ -65,7 +65,7 @@ make upgrade     # 手动升级 app.db 结构（先停服务）
 - 前端分层：`views/` → `api/*` → `utils/request.js` → FastAPI。
 - 响应信封：成功 `{ok:true,data}`；失败 `{ok:false,message:"中文"}`。
 - 配置写死在 `backend/config.py`；`.env` 只有三个键，由 compose 与 Makefile 读取。
-- 数据分两个根：数据根放原始素材，运行时根放 SQLite 与解包产物。
+- 数据分两个根：数据根放原始素材，运行时根放 app.db、game.db 与解包产物。
 - 全站需登录，唯一业务例外是 H5 资源接口。
 - 详细设计见 [`docs/architecture.md`](docs/architecture.md)。
 
@@ -99,11 +99,14 @@ make upgrade     # 手动升级 app.db 结构（先停服务）
     Redis/PostgreSQL/Celery；Windows 包不做自动升级。
 16. **通用组件统一。** 按钮、分段、下拉、分页、弹窗、空状态优先复用 `components/common/`；
     页面不手写原生 `<button>` 或重复控件样式；颜色、尺寸、焦点只用 `styles/index.css` 的 token。
-17. **数据库只维护最新结构。** `backend/` 不写兼容旧库的补列、补索引、删表、重建逻辑；
-    结构变化必须新增 `upgrade/versions/vN.py` 并递增 `LATEST_DB_VERSION`。
+17. **数据库只维护最新结构。** `backend/` 不写兼容旧库的补列、补索引、删表、重建逻辑。
+    `app.db` 结构变化必须新增 `upgrade/versions/vN.py` 并递增 `LATEST_DB_VERSION`；
+    `game.db` 榜单结构变化必须新增 `upgrade/game_versions/vN.py` 并递增
+    `RANKING_SCHEMA_VERSION`（游戏名录结构版本不做原地迁移，删库重启后再由 `make index` 重建）。
     升级只由用户停止服务后手动执行：Docker/仓库用 `make upgrade`，Windows 包双击
-    「升级数据库.cmd」。启动只校验 `system_config.db_version`；
-    不匹配就日志报错并永久阻塞，不自动改表。
+    「升级数据库.cmd」。
+    `app.db` 启动只校验 `system_config.db_version`；不匹配就日志报错并永久阻塞，不自动改表。
+    `game.db` 启动只在缺失或空文件时建最新的空结构，已有表一律不碰。
 
 细节链接：
 
@@ -124,8 +127,8 @@ make upgrade     # 手动升级 app.db 结构（先停服务）
 
 ```
 frontend/        Vue 3 SPA
-backend/         FastAPI API（auth / shortcuts / games / tools / storage）
-upgrade/         app.db 结构升级（只由 make upgrade 执行）
+backend/         FastAPI API（auth / shortcuts / games / search / tools / storage）
+upgrade/         app.db / game.db 结构升级（只由 make upgrade 执行）
 docs/            architecture.md / data_dict.md / modules / common / plans
 packaging/       windows/
 tests/           pytest

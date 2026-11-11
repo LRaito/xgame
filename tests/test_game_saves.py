@@ -24,7 +24,7 @@ def _files(storage_root) -> set[str]:
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file()
-        # db/ 里是备份与检索索引，不属于游戏素材
+        # db/ 里是备份与游戏发现索引，不属于游戏素材
         and p.relative_to(root).parts[0] != DB_SUBDIR
     }
 

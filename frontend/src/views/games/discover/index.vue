@@ -6,10 +6,10 @@
             class="game-discover__tabs"
             :options="TABS"
             size="lg"
-            aria-label="游戏检索或榜单"
+            aria-label="游戏名录或榜单"
         />
 
-        <!-- 游戏检索 -->
+        <!-- 游戏名录 -->
         <section v-show="activeTab === 'search'" class="game-discover__panel">
             <div class="game-discover__toolbar">
                 <app-type-select
@@ -114,21 +114,14 @@
                     @clear="onRankingKeywordClear"
                 />
 
-                <!-- 已入库比例，同时是「只看已入库」的开关：单击按下，榜单就只留命中库存的行，再点一下恢复。
-                     计数由后端返回；分页后不再用当前页行数当分母。 -->
-                <app-button
-                    v-if="rankingStockTotal && !rankingLoading"
-                    class="game-discover__stock"
-                    variant="secondary"
-                    size="sm"
-                    :pressed="rankingInLibraryOnly"
-                    @click="toggleInLibraryOnly"
-                >
-                    <span class="game-discover__stock-label">已入库</span>
-                    <span class="game-discover__stock-value">
-                        {{ rankingLinkedCount }} / {{ rankingStockTotal }}
-                    </span>
-                </app-button>
+                <app-select
+                    v-model="rankingLibrary"
+                    class="game-discover__library"
+                    placeholder="库存类型"
+                    clearable
+                    :options="rankingLibraryOptions"
+                    @change="rankingNow"
+                />
             </div>
 
             <div
@@ -240,7 +233,7 @@
                 <app-empty v-else :description="rankingEmptyDescription" />
             </div>
 
-            <!-- 与检索区同款的分页条；翻页由后端重新取一页。
+            <!-- 与名录区同款的分页条；翻页由后端重新取一页。
                  键盘翻页同样只在榜单标签亮着时开着（同页两个分页条，监听都挂在 window 上） -->
             <app-pagination
                 v-model:page="rankingPage"
@@ -268,7 +261,7 @@ import { useAdaptiveRows } from "@/utils/adaptiveRows";
 import { noticeAction } from "@/utils/confirm";
 
 const TABS = [
-    { label: "游戏检索", value: "search" },
+    { label: "游戏名录", value: "search" },
     { label: "游戏榜单", value: "ranking" },
 ];
 // 行高固定、行数自适应（见 utils/adaptiveRows.js）：行高 40px 与游戏管理一致，
@@ -288,7 +281,7 @@ const route = useRoute();
 const router = useRouter();
 
 /**
- * 标签状态完全由 URL 驱动：?tab=ranking 是榜单，其余（含缺失/非法值）是检索。
+ * 标签状态完全由 URL 驱动：?tab=ranking 是榜单，其余（含缺失/非法值）是名录。
  * 切换用 replace，避免来回点标签堆一长串历史。
  */
 const activeTab = computed({
@@ -305,13 +298,13 @@ const activeTab = computed({
 });
 
 // --------------------------------------------------------------------------
-// 游戏检索
+// 游戏名录
 // --------------------------------------------------------------------------
 
 const keyword = ref("");
 const searchConsole = ref("");
 const searchConsoles = ref([]);
-// 检索机种下拉：「全部」+ 后端机种；组件负责输入时的不区分大小写过滤
+// 名录机种下拉：「全部」+ 后端机种；组件负责输入时的不区分大小写过滤
 const searchTypeOptions = computed(() => [
     { value: "", label: "全部游戏类型" },
     ...searchConsoles.value.map((item) => ({ value: item.id, label: item.name })),
@@ -334,7 +327,7 @@ const searchEmptyDescription = computed(() => {
         return "检索失败，请稍后重试。";
     }
     if (!searchIndexed.value) {
-        return "尚未构建游戏索引。请在项目根目录执行一次 make index，然后刷新本页。";
+        return "尚未构建游戏名录。请在项目根目录执行一次 make index，然后刷新本页。";
     }
     return "没有匹配的游戏。";
 });
@@ -348,7 +341,7 @@ const rankingWrapHeight = computed(
     () => `${TABLE_EXTRA + rankingPageSize.value * ROW_HEIGHT}px`
 );
 
-// 检索区每页行数自适应。窗口尺寸变化导致行数变了就重新取当前页（页码交给请求自身收敛）
+// 名录区每页行数自适应。窗口尺寸变化导致行数变了就重新取当前页（页码交给请求自身收敛）
 const searchWrapEl = ref(null);
 const { rows: pageSize, measure: measureSearchRows } = useAdaptiveRows(
     {
@@ -485,15 +478,17 @@ const rankingConsole = ref("");
 // 当前页的榜单行（后端分页；不再整份取回）
 const rankingItems = ref([]);
 const rankingPage = ref(1);
-// 「已入库」按钮按下时只看命中库存的行（由后端过滤）
-const rankingInLibraryOnly = ref(false);
+// 库存类型："" = 全部；"in" = 库存之内；"out" = 库存之外
+const rankingLibrary = ref("");
+const rankingLibraryOptions = [
+    { value: "in", label: "库存之内" },
+    { value: "out", label: "库存之外" },
+];
 // 榜单搜索词走后端，输入防抖 300ms
 const rankingKeyword = ref("");
-// 后端返回的四个计数：分页总数、关键词命中数、该机种总数、该机种已入库数
+// 后端返回的计数：分页总数、关键词命中数
 const rankingPageTotal = ref(0);
 const rankingMatchedTotal = ref(0);
-const rankingStockTotal = ref(0);
-const rankingLinkedCount = ref(0);
 const rankingLoading = ref(false);
 const rankingIndexed = ref(true);
 const rankingAvailable = ref(true);
@@ -503,7 +498,7 @@ const rankingError = ref(false);
 let rankingLoaded = false;
 let rankingSeq = 0;
 let rankingKeywordTimer = null;
-// 同检索框：clear 已立即查询，跳过其后的 input 防抖
+// 同名录框：clear 已立即查询，跳过其后的 input 防抖
 let skipRankingKeywordInput = false;
 
 /** 榜单关联到的游戏还没有本体：不进播放页，提示先上传。 */
@@ -511,7 +506,7 @@ function onMissingBodyLink() {
     noticeAction("请先上传游戏本体");
 }
 
-// 每页行数自适应（与检索区同一套行高与开销）。行数变化时重新取当前页。
+// 每页行数自适应（与名录区同一套行高与开销）。行数变化时重新取当前页。
 const rankingWrapEl = ref(null);
 const { rows: rankingPageSize, measure: measureRankingRows } = useAdaptiveRows(
     {
@@ -551,33 +546,34 @@ const rankingEmptyDescription = computed(() => {
         return "榜单加载失败，请稍后重试。";
     }
     if (!rankingIndexed.value) {
-        return "尚未构建游戏索引。请在项目根目录执行一次 make index，然后刷新本页。";
+        return "尚未构建游戏名录与游戏榜单。请在项目根目录执行一次 make index，然后刷新本页。";
     }
     if (!rankingAvailable.value) {
-        return "榜单尚未加载。请检查榜单 CSV 后执行 make index，或重启服务。";
+        return "榜单尚未加载。请检查榜单 CSV 后执行 make index，然后刷新本页。";
     }
     if (!rankingConsoles.value.length) {
         return "榜单暂无数据。";
     }
     const rawKeyword = rankingKeyword.value.trim();
+    const libraryLabel =
+        rankingLibrary.value === "in"
+            ? "库存之内"
+            : rankingLibrary.value === "out"
+                ? "库存之外"
+                : "";
     if (rawKeyword && rankingMatchedTotal.value === 0) {
         return `没有匹配到中英文名含「${rawKeyword}」的游戏。`;
     }
-    if (rawKeyword && rankingInLibraryOnly.value && rankingPageTotal.value === 0) {
-        return `匹配「${rawKeyword}」的游戏都还没入库。`;
+    if (rawKeyword && libraryLabel && rankingPageTotal.value === 0) {
+        return `匹配「${rawKeyword}」的游戏不在所选库存范围内。`;
     }
-    if (rankingInLibraryOnly.value && rankingPageTotal.value === 0) {
+    if (libraryLabel && rankingPageTotal.value === 0) {
         return rankingConsole.value
-            ? "这个类型下还没有已入库的游戏。"
-            : "全机种下还没有已入库的游戏。";
+            ? `这个类型下没有${libraryLabel}的游戏。`
+            : `全机种下没有${libraryLabel}的游戏。`;
     }
     return rankingConsole.value ? "该游戏类型暂无榜单数据。" : "全部类型暂无榜单数据。";
 });
-
-function toggleInLibraryOnly() {
-    rankingInLibraryOnly.value = !rankingInLibraryOnly.value;
-    rankingNow();
-}
 
 /** 条件变化：回到第 1 页并重新请求。 */
 function rankingNow() {
@@ -637,7 +633,12 @@ async function loadRanking() {
         const data = await getGameRankingAPI({
             console: rankingConsole.value || undefined,
             keyword: rankingKeyword.value.trim() || undefined,
-            in_library: rankingInLibraryOnly.value || undefined,
+            in_library:
+                rankingLibrary.value === "in"
+                    ? true
+                    : rankingLibrary.value === "out"
+                        ? false
+                        : undefined,
             page: rankingPage.value,
             page_size: rankingPageSize.value,
         });
@@ -650,8 +651,6 @@ async function loadRanking() {
         rankingPage.value = data.page || 1;
         rankingPageTotal.value = data.total || 0;
         rankingMatchedTotal.value = data.matched_total || 0;
-        rankingStockTotal.value = data.ranking_total || 0;
-        rankingLinkedCount.value = data.linked_total || 0;
         rankingError.value = false;
     } catch {
         if (seq !== rankingSeq) {
@@ -660,8 +659,6 @@ async function loadRanking() {
         rankingItems.value = [];
         rankingPageTotal.value = 0;
         rankingMatchedTotal.value = 0;
-        rankingStockTotal.value = 0;
-        rankingLinkedCount.value = 0;
         rankingError.value = true;
     } finally {
         if (seq === rankingSeq) {
@@ -703,7 +700,7 @@ onMounted(async () => {
 
 <style scoped>
 /* 页面纵向铺满：内容区上下各 28px 内边距，页面根按 100vh−56 占满后再不滚动；
-   可见的那一列（检索/榜单二选一）填满剩余高度，把行数自适应的空间吃满 */
+   可见的那一列（名录/榜单二选一）填满剩余高度，把行数自适应的空间吃满 */
 .game-discover {
     display: flex;
     flex-direction: column;
@@ -736,20 +733,8 @@ onMounted(async () => {
     width: 240px;
 }
 
-/* 「已入库比例」是 AppButton 的开关态：上下居中交给 .el-button 默认的 center。
-   EP 会把 slot 包进一个内层 span，这里再写 align-items: baseline 会把整块文字贴到上边；
-   标签与数字的间距由 __stock-value 的 margin-left 负责。 */
-
-.game-discover__stock-label {
-    letter-spacing: 0.02em;
-}
-
-.game-discover__stock-value {
-    margin-left: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.02em;
+.game-discover__library {
+    width: 160px;
 }
 
 /* 命中平台库存的榜单行：游戏名是真 <a>（router-link 渲染），走全局的主色；
@@ -852,7 +837,7 @@ onMounted(async () => {
     width: 76px;
 }
 
-/* 跨机种榜单才出现的「游戏类型」列；比检索区窄，给中英文名留空间 */
+/* 跨机种榜单才出现的「游戏类型」列；比名录区窄，给中英文名留空间 */
 .game-discover__col-ranking-console {
     width: 150px;
 }

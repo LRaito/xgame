@@ -7,10 +7,10 @@
             class="game-manage__tabs"
             :options="TABS"
             size="lg"
-            aria-label="游戏管理"
+            aria-label="库存管理"
         />
 
-        <!-- 游戏管理 -->
+        <!-- 库存管理 -->
         <section class="game-manage__panel">
             <div class="game-manage__toolbar">
                 <app-type-select
@@ -28,6 +28,14 @@
                     class="game-manage__filter-keyword"
                     @input="onKeywordInput"
                     @clear="onKeywordClear"
+                />
+                <app-select
+                    v-model="filterRanking"
+                    placeholder="榜单类型"
+                    clearable
+                    class="game-manage__filter-ranking"
+                    :options="rankingFilterOptions"
+                    @change="applyFilter"
                 />
                 <div class="game-manage__actions">
                     <app-button variant="secondary" @click="openImport">搬运游戏</app-button>
@@ -94,7 +102,7 @@
                         </tr>
                     </tbody>
                 </table>
-                <app-empty v-else description="暂无游戏，点击「添加游戏」开始录入。" />
+                <app-empty v-else :description="emptyDescription" />
             </div>
 
             <!-- 翻页放在表格下面；只有一页时整块不渲染（AppPagination 自己判，左右键翻页也在它里面） -->
@@ -629,9 +637,9 @@ const ROW_HEIGHT = 40;
 const TABLE_EXTRA = 56;
 const PAGE_SIZE_MAX = 100;
 
-// 顶部标签：现在只有「游戏管理」一个，值与 URL ?tab 对齐（与游戏发现同一套写法），
+// 顶部标签：现在只有「库存管理」一个，值与 URL ?tab 对齐（与游戏发现同一套写法），
 // 以后加标签在这里追加即可
-const TABS = [{ label: "游戏管理", value: "manage" }];
+const TABS = [{ label: "库存管理", value: "manage" }];
 
 const route = useRoute();
 const router = useRouter();
@@ -688,10 +696,21 @@ const typeFilterOptions = computed(() => [
 
 const filterType = ref("");
 const filterKeyword = ref("");
+// 榜单类型："" = 全部；"in" = 榜单之内；"out" = 榜单之外
+const filterRanking = ref("");
+const rankingFilterOptions = [
+    { value: "in", label: "榜单之内" },
+    { value: "out", label: "榜单之外" },
+];
+const emptyDescription = computed(() =>
+    filterType.value || filterKeyword.value.trim() || filterRanking.value
+        ? "当前筛选下没有库存条目。"
+        : "暂无库存条目，点击「添加游戏」开始录入。"
+);
 let keywordTimer = null;
 // Element Plus 点 X 会先 emit clear、再 emit input：clear 已立即查询，跳过随后那次防抖
 let skipKeywordInput = false;
-// 请求序号：防抖 + 快速翻页时，慢的旧响应不能覆盖新结果（同检索页）
+// 请求序号：防抖 + 快速翻页时，慢的旧响应不能覆盖新结果（同游戏名录页）
 let requestSeq = 0;
 
 const formVisible = ref(false);
@@ -1015,6 +1034,11 @@ function listParams() {
     if (filterKeyword.value.trim()) {
         params.q = filterKeyword.value.trim();
     }
+    if (filterRanking.value === "in") {
+        params.in_ranking = true;
+    } else if (filterRanking.value === "out") {
+        params.in_ranking = false;
+    }
     return params;
 }
 
@@ -1028,7 +1052,7 @@ async function reload() {
             return;
         }
         // 删掉本页最后一条后页码会越界：收敛到最后一页再取一次。
-        // （服务端不收敛页码、只返回空 items + 真 total，与检索页同一口径，收敛放前端）
+        // （服务端不收敛页码、只返回空 items + 真 total，与游戏名录页同一口径，收敛放前端）
         const pageCount = Math.max(
             1,
             Math.ceil((data.total || 0) / (data.page_size || pageSize.value))
@@ -2065,6 +2089,10 @@ onBeforeUnmount(() => {
 
 .game-manage__filter-keyword {
     width: 240px;
+}
+
+.game-manage__filter-ranking {
+    width: 160px;
 }
 
 .game-manage__actions {

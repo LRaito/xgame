@@ -1,4 +1,4 @@
-"""「游戏检索」的索引构建与只读接口测试。
+"""「游戏名录」的索引构建与只读接口测试。
 
 用例不读真实名录（4MB / 37 个文件，慢且脆）：在 tmp_path 写几行小 CSV 固件，覆盖真实数据的
 格式边界——UTF-8 带 BOM、CRLF、字段内含逗号要引号、中文为空、整串都是标签、重复三元组。
@@ -11,10 +11,11 @@ import sqlite3
 import pytest
 
 from backend import create_app
-from backend.config import Settings
-from backend.database import ensure_data_dir
-from backend.games import search_index
-from backend.games.search_index import IndexBuildError, build_index, ensure_game_index
+from backend.games.search_index import (
+    IndexBuildError,
+    build_index,
+    game_db_is_current,
+)
 from backend.games.search_service import GameSearchService
 from backend.games.search_text import fts_query, index_text, strip_tags
 
@@ -238,114 +239,39 @@ def test_build_index_reports_unwritable_target(csv_dir, tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 启动时自动补建
+# 启动建空结构，但不构建索引
 # --------------------------------------------------------------------------
 
 
-def _settings(tmp_path, *, testing=False):
-    from backend.config import Settings
-
-    return Settings(TESTING=testing, STORAGE_ROOT=str(tmp_path / "storage"))
-
-
-def test_ensure_game_index_builds_when_missing(csv_dir, tmp_path):
-    # ranking_dir=None：这一组用例只关心检索索引，不读仓库里的真实榜单目录
-    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
-
-    assert stats is not None
-    assert stats.rows == _EXPECTED_ROWS
-    assert (tmp_path / "storage" / "db" / "game.db").is_file()
+def test_built_index_matches_current_structure(built):
+    """make index 产出的库必须能通过下一次执行前的结构校验。"""
+    assert game_db_is_current(built.path)
 
 
-def test_ensure_game_index_writes_to_runtime_root(csv_dir, tmp_path):
-    """两个根分开时，检索索引跟运行时根走，不再落进数据根。"""
-    settings = Settings(
-        TESTING=False,
-        STORAGE_ROOT=str(tmp_path / "storage"),
-        RUNTIME_ROOT=str(tmp_path / "runtime"),
-    )
-    ensure_data_dir(settings)
-
-    stats = ensure_game_index(settings, csv_dir=csv_dir, ranking_dir=None)
-
-    assert stats is not None
-    assert (tmp_path / "runtime" / "db" / "game.db").is_file()
-    assert not (tmp_path / "storage" / "db" / "game.db").exists()
-
-
-def test_ensure_game_index_skips_when_present(csv_dir, tmp_path):
-    """已有索引就跳过：不重建、不覆盖（内容与 mtime 都不变）。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    before = _digest(index_path)
-
-    assert ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None) is None
-    assert _digest(index_path) == before
-
-
-def test_ensure_game_index_rebuilds_on_stale_version(csv_dir, tmp_path):
-    """老库（版本号对不上）会被接口一律判 503，所以启动时直接整库重建，升级不用人工跑 make index。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    with sqlite3.connect(index_path) as conn:
-        conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
-        conn.commit()
-
-    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
-
-    assert stats is not None
-    with sqlite3.connect(index_path) as conn:
-        assert conn.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'"
-        ).fetchone()[0] == "2"
-
-
-def test_ensure_game_index_keeps_old_index_when_rebuild_fails(csv_dir, tmp_path):
-    """重建失败（源 CSV 没了）时不能把好端端的旧库删掉，也不能拦住启动。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_dir=None)
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    with sqlite3.connect(index_path) as conn:
-        conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
-        conn.commit()
-
-    assert ensure_game_index(_settings(tmp_path), csv_dir=tmp_path / "nope") is None
-    assert index_path.is_file()
-
-
-def test_ensure_game_index_skips_when_testing(tmp_path):
-    """测试环境不自动建：否则每个用例都要白建一次 5 万行的索引。"""
-    assert ensure_game_index(_settings(tmp_path, testing=True), csv_dir=tmp_path) is None
-    assert not (tmp_path / "storage" / "db" / "game.db").exists()
-
-
-def test_ensure_game_index_tolerates_missing_csv(tmp_path):
-    """名录被人删掉/挪走时跳过并记一条日志，不建文件、不抛异常。"""
-    assert ensure_game_index(_settings(tmp_path), csv_dir=tmp_path / "nope") is None
-    assert not (tmp_path / "storage" / "db" / "game.db").exists()
-
-
-def test_ensure_game_index_tolerates_broken_csv(tmp_path):
-    """名录坏了也不能拦住服务启动（best-effort）。"""
-    source = tmp_path / "bad"
-    source.mkdir()
-    (source / "坏.csv").write_text("中文名,英文名,多余\n", encoding="utf-8")
-
-    assert ensure_game_index(_settings(tmp_path), csv_dir=source, ranking_dir=None) is None
-    assert not (tmp_path / "storage" / "db" / "game.db").exists()
-
-
-def test_app_startup_builds_missing_index(monkeypatch, csv_dir, tmp_path):
-    """接线：create_app() 起来时确实会自检并补建。"""
-    monkeypatch.setattr(search_index, "SEARCH_CSV_DIR", csv_dir)
-    # 榜单单独测（见 test_game_ranking.py），这里指到一个不存在的文件，避免依赖仓库里的真实榜单
-    monkeypatch.setattr(search_index, "RANKING_CSV_DIR", tmp_path / "rankings")
-
+def test_app_startup_creates_empty_game_db(tmp_path):
+    """启动只建 game.db 的空结构；游戏名录与榜单数据仍只能由 make index 写入。"""
     create_app({"TESTING": False, "STORAGE_ROOT": str(tmp_path / "storage")})
 
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    assert index_path.is_file()
-    with sqlite3.connect(index_path) as conn:
-        assert conn.execute("SELECT count(*) FROM game").fetchone()[0] == _EXPECTED_ROWS
+    path = tmp_path / "storage" / "db" / "game.db"
+    assert path.is_file()
+    conn = sqlite3.connect(path)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert {"console", "game", "game_fts", "meta", "ranking"} <= tables
+        meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+        assert meta["schema_version"] == "2"
+        assert meta["ranking_schema_version"] == "7"
+        assert "ranking_fingerprint" not in meta
+        assert conn.execute("SELECT count(*) FROM game").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM ranking").fetchone()[0] == 0
+    finally:
+        conn.close()
+    assert game_db_is_current(path)
 
 
 # --------------------------------------------------------------------------
@@ -375,7 +301,7 @@ def test_dedupe_only_exact_triples(built, logged_in):
 
 
 # --------------------------------------------------------------------------
-# 检索
+# 游戏名录
 # --------------------------------------------------------------------------
 
 

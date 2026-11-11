@@ -16,7 +16,7 @@ from backend.games.ranking_router import router as game_ranking_router
 from backend.games.router import router as games_router
 from backend.games.save_router import router as game_saves_router
 from backend.games.screenshot_router import router as game_screenshots_router
-from backend.games.search_index import ensure_game_index
+from backend.games.search_index import ensure_empty_game_db
 from backend.games.search_router import router as game_search_router
 from backend.games.settings_router import router as game_settings_router
 from backend.games.stats_router import router as game_stats_router
@@ -52,11 +52,16 @@ def create_app(test_config: dict | None = None) -> FastAPI:
         # 记一条中文错误后永久阻塞，进程不监听端口（见 backend/startup_guard.py）。
         logger.error("%s 服务不会启动。", exc)
         block_forever()
+    # game.db 不属于 app.db 的版本链：启动只在新项目（不存在/空文件）时建一份最新的空结构，
+    # 已有表的库一律不碰。结构升级走 make upgrade，数据与标记走 make index。
+    if not settings.TESTING:
+        try:
+            ensure_empty_game_db(settings.game_index_path)
+        except Exception as exc:  # noqa: BLE001 - 空结构初始化失败不能拦住库存/存档功能
+            logger.warning("初始化 game.db 空结构失败：%s", exc)
     # 启动先备一次，之后由守护线程每小时再备一次（当月只有一份 app.db.<YYYY-MM>，每次都整份重写）
     backup_database(settings)
     start_backup_loop(settings)
-    # 启动时检查一次游戏检索索引：没有就自动补建（已有则跳过；建不出来只记 warning，不拦启动）
-    ensure_game_index(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -113,7 +118,7 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     # 路由的第二段字面量只有 cover/play/h5/guide/guide.pdf，且 `/api/games` 下没有单段 `/{game_id}`。
     # 以后若给 games_router 加一条单段动态路由，这里就会撞车。
     app.include_router(game_search_router)
-    # 榜单与检索共用同一个只读库（game.db），只是读另一张表，所以也挂在这条前缀下
+    # 榜单与游戏名录共用同一个只读库（game.db），只是读另一张表，所以也挂在这条前缀下
     app.include_router(game_ranking_router)
     app.include_router(game_saves_router)
     app.include_router(game_screenshots_router)

@@ -33,7 +33,7 @@
 | [`modules/game-assets.md`](modules/game-assets.md) | 截图、图集、封面美化、素材几何 |
 | [`modules/game-saves-stats.md`](modules/game-saves-stats.md) | 云端存档、设置同步、最近游玩、统计 |
 | [`modules/guide-and-h5.md`](modules/guide-and-h5.md) | H5 与攻略包的校验、解包、读取 |
-| [`modules/game-discover.md`](modules/game-discover.md) | 检索索引、FTS、SQL、榜单、库存关联 |
+| [`modules/game-discover.md`](modules/game-discover.md) | 游戏名录索引、FTS、SQL、游戏榜单、库存/榜单标记 |
 | [`modules/frontend.md`](modules/frontend.md) | 路由、api 层、组件、界面交互 |
 | [`modules/platform-chronicle.md`](modules/platform-chronicle.md) | 机型简史：36 个类型的介绍页、图片与来源 |
 | [`modules/delivery-docker.md`](modules/delivery-docker.md) | 镜像、compose、bind、备份、哨兵 |

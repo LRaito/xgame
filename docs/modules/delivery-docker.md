@@ -37,11 +37,11 @@
 - `STORAGE_HOST_DIR` 是数据根，bind 到容器 `/data`。
 - `RUNTIME_HOST_DIR` 是运行时根，bind 到容器 `/runtime`。
 - 数据根放游戏文件与月度备份。
-- 运行时根放 SQLite 业务库、检索索引与 H5/攻略解包产物。
+- 运行时根放 SQLite 业务库、游戏发现索引与 H5/攻略解包产物。
 - 不建 `.env` 时两个根都退回 `./data/storage`。
 - `.env.example` 的默认值是 `./data/storage` 与 `./data/runtime`。
 - SQLite 固定为 `<运行时根>/db/app.db`，没有 `DATABASE_URL`。
-- 检索索引在 `<运行时根>/db/game.db`。
+- 游戏发现索引（游戏名录与游戏榜单）在 `<运行时根>/db/game.db`。
 - 月度备份在 `<数据根>/db/app.db.<YYYY-MM>`。
 - 证书随仓库提交在 `certs/`，只读挂到 `/etc/nginx/certs`。
 - `.env` 只有三个键：`STORAGE_HOST_DIR`、`RUNTIME_HOST_DIR`、`WEB_HTTPS_PORT`。
@@ -128,11 +128,12 @@
 
 **索引与命令。**
 
-- 启动时 `ensure_game_index()` 自动补建索引。
-- 文件不存在或 `schema_version` 不符时整库重建。
-- 已存在且版本一致时，`ensure_ranking_loaded()` 就地补榜单。
-- 手动重建入口是 `make index`；整库重建 + `os.replace()`，不开 WAL。
+- 服务启动只建空的 game.db 结构，不写游戏名录/榜单数据、不重载、不改已有结构。
+- 游戏名录/游戏榜单数据只能人工执行 `make index`：整库重写 + `os.replace()`，不开 WAL；
+  执行前要求 game.db 已是当前结构，缺失/过旧会提示先 `make upgrade`。
+  同时全量同步两个库的库存/榜单标记，建议先停 api。
 - 数据库结构升级入口是宿主机 `make upgrade`：先 `docker compose down`，升级完再 `make all`。
+  它迁移 app.db 与 game.db 结构，但不构建游戏名录/榜单数据；之后还需 `make index`。
   服务启动只校验 `system_config.db_version`，不会自动改表；版本不匹配会永久阻塞。
 - `cp .env.example .env` 可选，只放三个键；`make all` 等于 build + up，
   `up` 在 `compose up -d` 之后还会重启 api 与 web 各一次。

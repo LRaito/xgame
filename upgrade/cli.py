@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from backend.config import DB_FILENAME, DB_SUBDIR
+from upgrade.game_db import GameDbUpgradeError, run_game_upgrade
 from upgrade.runner import UpgradeError, run_upgrade
 
 
@@ -25,9 +26,10 @@ def _database_path(args: argparse.Namespace) -> Path:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m upgrade",
-        description="按版本逐级升级 app.db 的结构。执行前请先停止服务。",
+        description="升级 app.db 与 game.db 的结构。执行前请先停止服务。",
     )
     parser.add_argument("--db", type=Path, help="直接指定 app.db 路径。")
+    parser.add_argument("--game-db", type=Path, help="直接指定 game.db 路径。")
     parser.add_argument("--runtime-root", type=Path, help="运行时根目录。")
     parser.add_argument("--storage-root", type=Path, help="数据根目录（未配运行时根时使用）。")
     parser.add_argument(
@@ -36,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     db_path = _database_path(args)
+    game_path = args.game_db or db_path.with_name("game.db")
     print(f"数据库：{db_path}")
 
     try:
@@ -46,14 +49,32 @@ def main(argv: list[str] | None = None) -> int:
 
     if result.status == "not-initialized":
         print("数据库尚未初始化，无需升级；首次启动服务会按最新结构建库。")
-        return 0
-    if result.status == "up-to-date":
+    elif result.status == "up-to-date":
         print("当前已是最新版本，无需升级")
-        return 0
+    else:
+        if result.backup_path is not None:
+            print(f"升级前已备份：{result.backup_path}")
+        for version in result.applied:
+            print(f"已升级到结构版本 {version}。")
+        print(f"数据库升级完成，当前版本 {result.to_version}。")
 
-    if result.backup_path is not None:
-        print(f"升级前已备份：{result.backup_path}")
-    for version in result.applied:
-        print(f"已升级到结构版本 {version}。")
-    print(f"数据库升级完成，当前版本 {result.to_version}。")
+    print(f"game.db：{game_path}")
+    try:
+        game_result = run_game_upgrade(game_path)
+    except GameDbUpgradeError as exc:
+        print(f"game.db 升级失败：{exc}", file=sys.stderr)
+        return 1
+
+    if game_result.status == "created":
+        print(
+            f"已创建空 game.db 结构（版本 {game_result.to_version}）。"
+            "游戏名录、游戏榜单数据与标记请执行 make index。"
+        )
+    elif game_result.status == "up-to-date":
+        print(f"game.db 结构已是最新（版本 {game_result.to_version}）。")
+    else:
+        print(
+            f"game.db 已升级到结构版本 {game_result.to_version}。"
+            "游戏名录、游戏榜单数据与标记请执行 make index 重建。"
+        )
     return 0

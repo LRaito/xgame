@@ -1,7 +1,7 @@
 """游戏榜单的只读查询。
 
 数据是 `backend/games/search_index.py` 写进 `<运行时根>/db/game.db` 的 `ranking` 表
-（`make index` 构建、服务启动时就地补载）。**这里只读**：每个请求开一条 `mode=ro` 的短连接，
+（只能由 `make index` 构建）。**这里只读**：每个请求开一条 `mode=ro` 的短连接，
 从不建文件、从不写。榜单没加载（老库、或 CSV 目录还没到位）是正常状态，返回
 `has_ranking: false` 而不是报错。
 """
@@ -35,8 +35,9 @@ class RankingItem:
     en: str
     platform: str
     cartridge_ids: tuple[str, ...]
-    # 该行是否关联到平台库存里的游戏（关联在**请求期**做，见 GameRankingService._attach_links）。
-    # 命中的是哪一个卡带ID 由关联规则决定，这里只留结果：游戏 id、播放页路径与是否有本体。
+    # 是否命中库存；由 make index 全量对账、增删改游戏时增量维护，查询直接按它过滤
+    in_library: bool = False
+    # 该行是否关联到平台库存里的游戏；只对当前页做关联，结果用于渲染播放链接
     game_id: int | None = None
     path: str | None = None
     # 无本体的关联行仍显示为链接样式，但前端点击时提示先上传本体（不进播放页）
@@ -62,8 +63,6 @@ class RankingPage:
     page_size: int
     total: int  # 已应用 keyword + in_library，分页用
     matched_total: int  # 已应用 keyword，未应用 in_library
-    ranking_total: int  # 只按 console 过滤
-    linked_total: int  # 只按 console 过滤后，命中库存的行数
 
 
 @dataclass(frozen=True)
@@ -73,8 +72,8 @@ class RankingConsoles:
     consoles: list[RankingConsole]
 
 
-# 一次库存关联查询最多带多少个卡带 ID。单个机种最多 100 行 × 2 个 ID = 200；
-# 跨机种（全部机种）会有 6000+ 个，必须分批，避开 SQLite 的宿主参数上限（老版本是 999）。
+# 一次库存关联查询最多带多少个卡带 ID。现在只关联当前页（≤100 行 × 2 个 ID），
+# 500 是给调用方留的上限，避免以后分页上限调整时撞 SQLite 宿主参数上限。
 _CARTRIDGE_LOOKUP_CHUNK = 500
 
 
@@ -119,16 +118,17 @@ class GameRankingService:
         page: int = 1,
         page_size: int = PAGE_SIZE_DEFAULT,
         keyword: str = "",
-        in_library: bool = False,
+        in_library: bool | None = None,
     ) -> RankingPage:
-        """取榜单的一页。`console` 为空时跨机种；关键词与已入库过滤都在服务端做。"""
+        """取榜单的一页。筛选、计数、分页全部在 SQL 侧完成。
+
+        `in_library=None` = 全部；True = 库存之内；False = 库存之外。
+        """
         page = max(1, int(page or 1))
         page_size = max(1, min(int(page_size or PAGE_SIZE_DEFAULT), PAGE_SIZE_MAX))
 
         def empty(indexed: bool, has_ranking: bool, chosen: str | None) -> RankingPage:
-            return RankingPage(
-                indexed, has_ranking, chosen, [], 1, page_size, 0, 0, 0, 0
-            )
+            return RankingPage(indexed, has_ranking, chosen, [], 1, page_size, 0, 0)
 
         if not self.is_indexed():
             return empty(False, False, None)
@@ -138,14 +138,7 @@ class GameRankingService:
             if not _ranking_ready(conn):
                 return empty(True, False, None)
             try:
-                if not requested:
-                    # 跨机种：评分全局降序；同分按自增 id 稳定排序。
-                    rows = conn.execute(
-                        "SELECT platform, score, zh, en, cartridge_ids FROM ranking "
-                        "ORDER BY score DESC, id"
-                    ).fetchall()
-                    items = [_to_item(row[1:], platform=row[0]) for row in rows]
-                else:
+                if requested:
                     platforms = [
                         row[0]
                         for row in conn.execute("SELECT DISTINCT platform FROM ranking")
@@ -154,52 +147,67 @@ class GameRankingService:
                         return empty(True, True, None)
                     chosen = _match_platform(platforms, requested)
                     if chosen is None:
-                        # 机种不在榜单里：回显请求值 + 空列表，与检索页的过滤语义一致
+                        # 机种不在榜单里：回显请求值 + 空列表，与游戏名录页的过滤语义一致
                         return empty(True, True, requested)
-                    items = [
-                        _to_item(row, platform=chosen)
-                        for row in conn.execute(
-                            "SELECT score, zh, en, cartridge_ids FROM ranking "
-                            "WHERE platform = ? ORDER BY score DESC, id",
-                            (chosen,),
-                        ).fetchall()
-                    ]
+
+                conditions: list[str] = []
+                params: list[object] = []
+                if chosen:
+                    conditions.append("platform = ?")
+                    params.append(chosen)
+                needle = (keyword or "").strip()
+                if needle:
+                    pattern = _like_pattern(needle)
+                    conditions.append("(zh LIKE ? ESCAPE '\\' OR en LIKE ? ESCAPE '\\')")
+                    params.extend([pattern, pattern])
+
+                base_conditions = list(conditions)
+                base_params = list(params)
+                if in_library is not None:
+                    conditions.append("in_library = ?")
+                    params.append(1 if in_library else 0)
+
+                where_sql = " WHERE " + " AND ".join(conditions) if conditions else ""
+                base_where_sql = (
+                    " WHERE " + " AND ".join(base_conditions)
+                    if base_conditions
+                    else ""
+                )
+                total = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM ranking" + where_sql, params
+                    ).fetchone()[0]
+                )
+                matched_total = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM ranking" + base_where_sql, base_params
+                    ).fetchone()[0]
+                )
+                pages = max(1, (total + page_size - 1) // page_size)
+                page = min(page, pages)
+                offset = (page - 1) * page_size
+                rows = conn.execute(
+                    "SELECT platform, score, zh, en, cartridge_ids, in_library "
+                    "FROM ranking"
+                    + where_sql
+                    + " ORDER BY score DESC, id LIMIT ? OFFSET ?",
+                    [*params, page_size, offset],
+                ).fetchall()
+                items = [_to_item(row) for row in rows]
             except sqlite3.Error as exc:
                 raise _broken(exc) from exc
 
-        # 关联放在 with 之外：先关掉只读库的连接，再去查平台库存的 app.db。
-        # 计数与「只看已入库」需要整份结果，所以先关联全部行，再在内存里过滤。
-        linked = self._attach_links(items)
-        ranking_total = len(linked)
-        linked_total = sum(1 for item in linked if item.path)
-
-        needle = (keyword or "").strip().casefold()
-        if needle:
-            matched = [
-                item
-                for item in linked
-                if needle in item.zh.casefold() or needle in item.en.casefold()
-            ]
-        else:
-            matched = linked
-        matched_total = len(matched)
-
-        filtered = [item for item in matched if item.path] if in_library else matched
-        total = len(filtered)
-        pages = max(1, (total + page_size - 1) // page_size)
-        page = min(page, pages)
-        offset = (page - 1) * page_size
+        # 只关联当前页（≤100 行）：库存标记已经负责筛选/计数，这里只补播放链接。
+        items = self._attach_links(items)
         return RankingPage(
             True,
             True,
             chosen,
-            filtered[offset : offset + page_size],
+            items,
             page,
             page_size,
             total,
             matched_total,
-            ranking_total,
-            linked_total,
         )
 
     def _attach_links(self, items: list[RankingItem]) -> list[RankingItem]:
@@ -253,7 +261,7 @@ class GameRankingService:
             conn = sqlite3.connect(f"{self._db_path.as_uri()}?mode=ro", uri=True)
         except sqlite3.Error as exc:
             logger.warning("打开游戏榜单索引失败：%s", exc)
-            raise IndexUnavailableError("游戏检索索引无法打开，请重新执行 make index 构建。") from exc
+            raise IndexUnavailableError("游戏名录索引无法打开，请重新执行 make index 构建。") from exc
         try:
             conn.execute("PRAGMA query_only = 1")
             yield conn
@@ -276,11 +284,15 @@ def _ranking_ready(conn: sqlite3.Connection) -> bool:
         table = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ranking'"
         ).fetchone()
+        mapping = conn.execute(
+            "SELECT 1 FROM sqlite_master "
+            "WHERE type = 'table' AND name = 'ranking_cartridges'"
+        ).fetchone()
     except sqlite3.Error as exc:
         raise _broken(exc) from exc
     if version and version[0] != RANKING_SCHEMA_VERSION:
         raise IndexUnavailableError("游戏榜单索引版本过旧，请重新执行 make index 构建。")
-    return bool(version and fingerprint and table)
+    return bool(version and fingerprint and table and mapping)
 
 
 def _match_platform(platforms: list[str], requested: str) -> str | None:
@@ -303,8 +315,8 @@ def _to_console(platform: str, raw_console: str) -> RankingConsole:
     )
 
 
-def _to_item(row: tuple, platform: str) -> RankingItem:
-    score, zh, en, ids_text = row
+def _to_item(row: tuple) -> RankingItem:
+    platform, score, zh, en, ids_text, in_library = row
     try:
         ids = json.loads(ids_text)
     except (TypeError, ValueError) as exc:
@@ -317,7 +329,16 @@ def _to_item(row: tuple, platform: str) -> RankingItem:
         en=str(en),
         platform=platform,
         cartridge_ids=tuple(str(item) for item in ids),
+        in_library=bool(in_library),
     )
+
+
+def _like_pattern(text: str) -> str:
+    """把关键词转成 LIKE 字面量：`%` / `_` / `\\` 不当通配符。"""
+    escaped = (
+        text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped}%"
 
 
 def _broken(exc: Exception) -> IndexUnavailableError:

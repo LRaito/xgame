@@ -4,8 +4,8 @@
 是否执行某个版本完全由 ``system_config.db_version`` 决定，不靠幂等代码。
 """
 
-from upgrade.versions import v1
+from upgrade.versions import v1, v2
 
-VERSION_MODULES = (v1,)
+VERSION_MODULES = (v1, v2)
 
 MIGRATIONS = {module.VERSION: module.upgrade for module in VERSION_MODULES}

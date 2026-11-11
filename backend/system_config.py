@@ -12,7 +12,7 @@ DB_VERSION_KEY = "db_version"
 
 # 当前代码要求的 app.db 结构版本。每次结构变化加 1，并在 upgrade/versions 里
 # 新增一个同号模块；服务启动只校验这个值，不自动改表。
-LATEST_DB_VERSION = 1
+LATEST_DB_VERSION = 2
 
 
 class SystemConfig(SQLModel, table=True):

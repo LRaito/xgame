@@ -83,11 +83,11 @@
 `.zip` 的候选是 `h5` / `dos` / `arcade`，`extension_candidates[".zip"]` 会返回三项；
 不传 `body_game_type` 时后端仍按历史默认落 `h5`。
 
-### 游戏管理与入库
+### 库存管理与入库
 
 | 方法 | 路径 | 登录 | 用途 / 关键字段 |
 |---|---|---|---|
-| GET | `/api/games/manage` | 需登录 | 服务端分页：`page` / `page_size` / `game_type` / `q` |
+| GET | `/api/games/manage` | 需登录 | 服务端分页：`page` / `page_size` / `game_type` / `q` / `in_ranking`（true=榜单之内，false=榜单之外，省略=全部） |
 | GET | `/api/games/manage/{id}` | 需登录 | 管理详情，含 CRC32、创建与更新时间 |
 | POST | `/api/games/manage` | 需登录 | multipart 新建：`name` / `cartridge_id` / `description` / 本体四选一（`file`、`body_url`、`upload_id`、`upload_ids`）/ 封面二选一（`cover`、`cover_url`）/ `body_game_type` |
 | POST | `/api/games/uploads` | 需登录 | 开分片会话：body `{filename, size, game_type?}`，返回 `{upload_id, chunk_size, total_chunks}` |
@@ -151,17 +151,18 @@
 | GET | `/api/games/gallery/{id}/image` | 需登录 | 图集图片 inline；共享但不匿名开放 |
 | PUT / DELETE | `/api/games/gallery/{id}` | 需登录 | 改描述（≤15 字）/ 删除 |
 
-### 游戏发现（检索与榜单）
+### 游戏发现（游戏名录与游戏榜单）
 
 | 方法 | 路径 | 登录 | 用途 / 关键字段 |
 |---|---|---|---|
 | GET | `/api/games/search` | 需登录 | `q` / `console_id` / `page` / `page_size`，服务端分页 |
 | GET | `/api/games/search/consoles` | 需登录 | 机种下拉 `{id, name, platform_id}`，同名已合并 |
-| GET | `/api/games/search/ranking` | 需登录 | `console` / `keyword` / `in_library` / `page` / `page_size`，服务端分页；省略 console 则跨机种并按评分全局降序；item 含 `score` / `zh` / `en` / `platform` |
+| GET | `/api/games/search/ranking` | 需登录 | `console` / `keyword` / `in_library` / `page` / `page_size`，服务端分页；省略 console 则跨机种并按评分全局降序；`in_library` 三态：省略=全部，true=库存之内，false=库存之外；item 含 `score` / `zh` / `en` / `platform` / `in_library` |
 | GET | `/api/games/search/ranking/consoles` | 需登录 | 榜单机种 `{platform, label, playable}` |
 
-- 榜单响应顶层含 `page` / `page_size` / `total` / `matched_total` / `ranking_total` / `linked_total`；
-  item 不含 rank，名次由前端按分页位置计算。
+- 榜单响应顶层含 `page` / `page_size` / `total` / `matched_total`；
+  不再返回 `ranking_total` / `linked_total`。
+- item 不含 rank，名次由前端按分页位置计算。
 
 ## 边界与错误
 

@@ -1,4 +1,4 @@
-"""游戏检索接口（只读）。
+"""游戏名录接口（只读）。
 
 数据源是 `make index` 构建的独立只读库 `<运行时根>/db/game.db`，与平台自己的 `games` 表无关。
 两条路径都在 `/api/games/search` 下，都是 GET（自动免 CSRF），都要登录。
@@ -23,7 +23,7 @@ def game_search(
     page: int = Query(1),
     page_size: int = Query(PAGE_SIZE_DEFAULT),
 ):
-    """在名录里检索一页。索引还没构建时返回 `indexed: false` + 空列表（不是错误）。"""
+    """在游戏名录里查一页。索引还没构建时返回 `indexed: false` + 空列表（不是错误）。"""
     try:
         result = service.search(q=q, console_id=console_id, page=page, page_size=page_size)
     except IndexUnavailableError as exc:

@@ -451,9 +451,9 @@ export async function fetchCloudSaveFileBase64(id, fileId) {
 }
 
 /**
- * 游戏检索：在外部中英文名录索引里搜一页（服务端分页 + 机种过滤）。
+ * 游戏名录：在外部中英文名录里搜一页（服务端分页 + 机种过滤）。
  * 数据来自独立只读库，由项目根目录的 `make index` 构建。
- * 请求带 notShowError：检索是高频操作，失败由页面内联提示，不弹全局 Message。
+ * 请求带 notShowError：名录检索是高频操作，失败由页面内联提示，不弹全局 Message。
  */
 export function searchGamesAPI(params) {
     return request({
@@ -464,14 +464,14 @@ export function searchGamesAPI(params) {
     });
 }
 
-/** 游戏检索的机种下拉候选项（按源文件顺序）。 */
+/** 游戏名录的机种下拉候选项（按源文件顺序）。 */
 export function listSearchConsolesAPI() {
     return request({ url: "/api/games/search/consoles", method: "get" });
 }
 
 /**
  * 游戏榜单的机种下拉候选项（只列榜单里出现过的机种）与默认机种。
- * 数据与检索同一个只读库，见后端 ranking_router.py。
+ * 数据与游戏名录同一个只读库，见后端 ranking_router.py。
  */
 export function listRankingConsolesAPI() {
     return request({
@@ -481,7 +481,7 @@ export function listRankingConsolesAPI() {
     });
 }
 
-/** 游戏榜单：取某个机种的整份榜单（不分页）。失败由页面内联提示，不弹全局 Message。 */
+/** 游戏榜单：服务端分页；失败由页面内联提示，不弹全局 Message。 */
 export function getGameRankingAPI(params) {
     return request({
         url: "/api/games/search/ranking",

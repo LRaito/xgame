@@ -99,6 +99,10 @@ make_icon.py / xgame.png  从源图生成 xgame.ico（换图标 = 替换 xgame.p
 
 - 没有自动升级代码；换包不会自动改数据库结构。
 - 新版本改了数据库结构时，搬完 `data` 后先双击「升级数据库.cmd」，再启动服务。
+- 升级只迁移结构；游戏名录、游戏榜单与标记仍需人工构建：
+  在包根设 `STORAGE_ROOT` / `RUNTIME_ROOT` 后执行 `python\python.exe -m backend.cli index`。
+- 服务启动只建空的 game.db 结构，不写游戏名录/榜单数据。
+- 同一卡带 ID 出现在多行榜单时，升级的映射迁移与 index 都会报错，需先修 CSV。
 - 脚本读取 `xgame.ini` 的 `data_dir` / `runtime_dir`，先确认服务没在运行，再调用
   `python -m upgrade`；升级前默认备份为 `app.db.bak-v<旧版本>-<时间戳>`。
 - 服务运行中，或因版本不匹配正在阻塞时（不监听端口），脚本会拒绝执行并提示先关窗口。

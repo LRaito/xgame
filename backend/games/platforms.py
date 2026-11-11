@@ -2,8 +2,8 @@
 
 同一个平台在项目里原本有三套写法，互相看不出是同一个东西：
 
-- **游戏管理**用 `game_type`（`nes` / `segaMD` / …，同时是磁盘目录名）；
-- **游戏检索**用名录 CSV 的文件名（`nes.csv`、`segaMD.csv`、`gb.csv`、`gbc.csv` …），
+- **库存管理**用 `game_type`（`nes` / `segaMD` / …，同时是磁盘目录名）；
+- **游戏名录**用名录 CSV 的文件名（`nes.csv`、`segaMD.csv`、`gb.csv`、`gbc.csv` …），
   文件名经 `SEARCH_CSV_CONSOLE_NAMES` 还原成中文长名（`任天堂FC`、`世嘉MD`、`任天堂GB` …）；
 - **游戏榜单**用 `backend/search/rankings/` 下的文件名，stem 就是机种 id（`nes.csv`、`segaMD.csv` …）。
 
@@ -48,7 +48,7 @@ class BiosSpec:
 class Platform:
     """一个机种。
 
-    `aliases` 是外部名录里出现过的各种写法（含检索 CSV 的实际取值），
+    `aliases` 是外部名录里出现过的各种写法（含名录 CSV 的实际取值），
     用于把 `console` 那一列的自由文本解析回机种；匹配时忽略大小写与所有空白。
     """
 
@@ -456,7 +456,7 @@ PLATFORM_BY_ID: dict[str, Platform] = {platform.id: platform for platform in PLA
 def normalize_name(raw: str) -> str:
     """名字的比较口径：去掉**所有**空白再转小写。
 
-    外部名录的写法很不统一（榜单写 `SEGA CD`、检索写 `世嘉cd游戏`；`SFC - Sufami Turbo`
+    外部名录的写法很不统一（榜单写 `SEGA CD`、游戏名录写 `世嘉cd游戏`；`SFC - Sufami Turbo`
     里那个连字符两侧还有空格），所以按「去空白 + casefold」比，多一个空格少一个空格都能命中。
     """
     return "".join((raw or "").split()).casefold()
@@ -514,9 +514,9 @@ def resolve_platform(raw: str) -> Platform | None:
     return PLATFORM_BY_ALIAS.get(normalize_name(raw))
 
 
-# 游戏检索名录 CSV 的「文件名 stem → 机种原始名」。
+# 游戏名录 CSV 的「文件名 stem → 机种原始名」。
 #
-# 检索 CSV 现在只有 `中文名,英文名` 两列（首行表头），机种身份由文件名决定。这里刻意映射回旧版第一列的
+# 名录 CSV 现在只有 `中文名,英文名` 两列（首行表头），机种身份由文件名决定。这里刻意映射回旧版第一列的
 # 中文写法（而不是映射成 `platform.id`）：去重键仍是 `(机种原始名, 中文, 英文)`，
 # `console.raw_names` 与未收录机种的显示名（`世嘉 dc`、`索尼 PS2`）因此与旧数据完全一致。
 # `ps2-jp` / `ps2-us` 必须共用 `索尼PS2`，否则两份文件之间的同款游戏不会被跨文件去重。

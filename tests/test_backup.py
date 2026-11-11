@@ -61,7 +61,7 @@ def test_database_path_follows_runtime_root(tmp_path):
 
     assert settings.runtime_root == runtime
     assert settings.database_path == runtime / "db" / "app.db"
-    # 备份目录仍在数据根里；检索索引跟运行时根走
+    # 备份目录仍在数据根里；游戏发现索引跟运行时根走
     assert settings.backup_dir == tmp_path / "storage" / "db"
     assert settings.game_index_path == runtime / "db" / "game.db"
 

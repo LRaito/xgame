@@ -136,7 +136,7 @@ def test_v1_upgrades_legacy_database(tmp_path):
     assert result.status == "upgraded"
     assert result.from_version == 0
     assert result.to_version == LATEST_DB_VERSION
-    assert result.applied == (1,)
+    assert result.applied == (1, 2)
     assert _read_version(path) == str(LATEST_DB_VERSION)
 
     conn = sqlite3.connect(path)
@@ -156,7 +156,14 @@ def test_v1_upgrades_legacy_database(tmp_path):
         assert "AUTOINCREMENT" in games_sql.upper()
 
         game_columns = {row[1] for row in conn.execute("PRAGMA table_info(games)")}
-        assert {"cover_type", "guide_kind"} <= game_columns
+        assert {"cover_type", "guide_kind", "in_ranking"} <= game_columns
+        assert conn.execute(
+            "SELECT in_ranking FROM games WHERE id = 7"
+        ).fetchone()[0] == 0
+        game_indexes = {
+            row[1] for row in conn.execute("PRAGMA index_list(games)")
+        }
+        assert {"ix_games_in_ranking", "ix_games_in_ranking_updated"} <= game_indexes
 
         snapshot_columns = {
             row[1] for row in conn.execute("PRAGMA table_info(game_cloud_snapshots)")

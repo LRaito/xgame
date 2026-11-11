@@ -19,7 +19,7 @@ def list_tools() -> list[ToolSpec]:
         ),
         ToolSpec(
             id="games-manage",
-            name="游戏管理",
+            name="库存管理",
             description="上传与管理 Flash / 主机游戏本体、封面与元数据。",
             path="/games/manage",
         ),

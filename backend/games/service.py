@@ -19,7 +19,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from backend.errors import NotFoundError, StorageError, ValidationError
-from backend.games import archive, body_bundle, importer, paths, remote
+from backend.games import archive, body_bundle, importer, paths, ranking_flags, remote
+from backend.games.cartridge import normalize_cartridge_id
 from backend.games.archive import (
     guess_asset_mime,
     normalize_guide_path,
@@ -131,7 +132,7 @@ RECENT_LIMIT_DEFAULT = 20
 RECENT_LIMIT_MAX = 50
 
 # 管理列表一页多少条（前端分页条每页 5 行，与 views/games/manage 的 PAGE_SIZE 一致），
-# 上限防手改 query。检索那套在 search_service.py 里另有一组同款常量。
+# 上限防手改 query。游戏名录那套在 search_service.py 里另有一组同款常量。
 MANAGE_PAGE_SIZE_DEFAULT = 5
 MANAGE_PAGE_SIZE_MAX = 100
 
@@ -394,15 +395,12 @@ _WINDOWS_RESERVED_NAMES = archive.WINDOWS_RESERVED_NAMES
 _CARTRIDGE_ID_RE = re.compile(CARTRIDGE_ID_PATTERN)
 
 
-def normalize_cartridge_id(raw: str) -> str:
-    """卡带ID 的**比对归一**：去首尾空白 + 转大写。只归一，不校验、不抛异常。
-
-    落库（`validate_cartridge_id`）与榜单关联（`map_for_cartridge_ids`）共用它，
-    保证「库里存的大写」与「拿来比对的大写」永远是同一行代码。
-    外面来的文本（榜单 CSV 的卡带 ID 列）可能有空格、小写、甚至根本不是合法卡带ID，
-    所以这里**绝不能**换成 `validate_cartridge_id()`——它会 raise，把只读的榜单接口打挂。
-    """
-    return (raw or "").strip().upper()
+def _like_pattern(text: str) -> str:
+    """把用户输入转成 LIKE 字面量：`%` / `_` / `\\` 不当通配符。"""
+    escaped = (
+        text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped}%"
 
 
 def validate_cartridge_id(raw: str) -> str:
@@ -544,6 +542,8 @@ class GameItem:
     updated_at: datetime
     # ""（没有攻略）/ "zip"（静态站点）/ "pdf"
     guide_kind: str = ""
+    # 是否命中 game.db 的榜单（由 make index 全量对账、增删改增量维护）
+    in_ranking: bool = False
 
     @property
     def path(self) -> str:
@@ -591,12 +591,21 @@ def _manage_order_clauses() -> tuple:
 
 class GameService:
     def __init__(
-        self, session: Session, storage: StorageBackend, runtime_storage: StorageBackend
+        self,
+        session: Session,
+        storage: StorageBackend,
+        runtime_storage: StorageBackend,
+        *,
+        game_index_path: Path | None = None,
+        database_path: Path | None = None,
     ) -> None:
         self._session = session
         self._storage = storage  # 数据根：本体/封面/图集/两个 zip
         self._runtime_storage = runtime_storage  # 运行时根：H5 与攻略的解包产物
         self._assets = RuntimeAssets(storage, runtime_storage)
+        # 生产环境注入两个库路径；直接构造（老测试）不传就跳过榜单标记同步
+        self._game_index_path = game_index_path
+        self._database_path = database_path
 
     def _storage_root(self) -> str | None:
         """数据根的绝对路径，只用来算 Windows 的完整路径长度（见 `archive.ensure_path_fits`）。
@@ -606,6 +615,26 @@ class GameService:
         """
         root = getattr(self._storage, "root", None)
         return str(root) if root is not None else None
+
+    def _ranking_ids_for(self, raw_ids: Sequence[str]) -> dict[str, int]:
+        """查映射表；game.db 缺失/过旧时返回空，不阻断游戏操作。"""
+        if self._game_index_path is None:
+            return {}
+        try:
+            return ranking_flags.read_ranking_ids(self._game_index_path, raw_ids) or {}
+        except Exception as exc:  # noqa: BLE001 - 标记是派生数据，失败只记日志
+            logger.warning("读取榜单标记失败（不影响游戏操作）：%s", exc)
+            return {}
+
+    def _refresh_ranking_flags(self, raw_ids: Sequence[str]) -> None:
+        if self._game_index_path is None or self._database_path is None:
+            return
+        try:
+            ranking_flags.refresh_ranking_flags(
+                self._database_path, self._game_index_path, raw_ids
+            )
+        except Exception as exc:  # noqa: BLE001 - 标记失败不影响主操作
+            logger.warning("同步榜单库存标记失败（不影响游戏操作）：%s", exc)
 
     def list_center(self) -> list[GameItem]:
         """游戏中心列表：包含尚未上传本体的条目（前端据此弹「请先上传游戏本体」）。"""
@@ -702,6 +731,7 @@ class GameService:
         *,
         game_type: str | None = None,
         keyword: str | None = None,
+        in_ranking: bool | None = None,
         page: int = 1,
         page_size: int = MANAGE_PAGE_SIZE_DEFAULT,
     ) -> ManagePage:
@@ -710,7 +740,7 @@ class GameService:
         越界参数在这里收敛而不是靠 Query(ge=, le=)：参数校验失败走 FastAPI 的 422，
         会绕开本仓库统一的 {ok, message} 错误信封（同 list_recent 与 search_service 的处理）。
 
-        页码越界**不算错误**：items 空、total 照给，页码收敛交给前端（与检索页同一口径）。
+        页码越界**不算错误**：items 空、total 照给，页码收敛交给前端（与游戏名录页同一口径）。
         """
         page = max(1, int(page or 1))
         page_size = max(1, min(int(page_size or MANAGE_PAGE_SIZE_DEFAULT), MANAGE_PAGE_SIZE_MAX))
@@ -718,10 +748,13 @@ class GameService:
         filters = []
         if game_type:
             filters.append(col(Game.game_type) == game_type)
+        if in_ranking is not None:
+            filters.append(col(Game.in_ranking) == in_ranking)
         if keyword:
-            pattern = f"%{keyword.strip()}%"
+            pattern = _like_pattern(keyword.strip())
             filters.append(
-                (col(Game.name).like(pattern)) | (col(Game.description).like(pattern))
+                (col(Game.name).like(pattern, escape="\\"))
+                | (col(Game.description).like(pattern, escape="\\"))
             )
 
         # 总数单独查一条：带上同一套 where，否则 total 会变成全表数
@@ -925,6 +958,7 @@ class GameService:
         description = validate_description(description)
         self._ensure_name_free(game_type, name)
         now = datetime.now(timezone.utc)
+        ranking_ids = self._ranking_ids_for([cartridge_id])
         row = Game(
             name=name,
             cartridge_id=cartridge_id,
@@ -932,10 +966,12 @@ class GameService:
             game_type=game_type,
             created_at=now,
             updated_at=now,
+            in_ranking=bool(ranking_ids),
         )
         self._session.add(row)
         self._session.commit()
         self._session.refresh(row)
+        self._refresh_ranking_flags([cartridge_id])
         try:
             if bundle is not None:
                 self._commit_staged_bundle(row, bundle)
@@ -1000,8 +1036,10 @@ class GameService:
 
         moves = self._plan_cartridge_rename(row, new_id)
         old_id = row.cartridge_id
+        new_ranking_ids = self._ranking_ids_for([new_id])
         done = self._move_dirs_for_rename(moves)
         row.cartridge_id = new_id
+        row.in_ranking = bool(new_ranking_ids)
         row.updated_at = datetime.now(timezone.utc)
         self._session.add(row)
         try:
@@ -1012,6 +1050,7 @@ class GameService:
             self._rollback_dirs_for_rename(done)
             raise ValidationError(f"卡带 ID「{new_id}」已经被占用，换一个吧。") from None
         self._session.refresh(row)
+        self._refresh_ranking_flags([old_id, new_id])
         # 解包产物按卡带ID 分目录，改完名旧的那份作废（下次访问自动重新解包）。
         # 数据根那棵树已经被 move_tree 搬走了，这里只管运行时根。
         self._assets.drop_tree(paths.game_dir(row.game_type, old_id))
@@ -1266,6 +1305,7 @@ class GameService:
         row = self._session.get(Game, game_id)
         if row is None:
             raise NotFoundError("游戏不存在。")
+        old_cartridge_id = row.cartridge_id
         recent_rows = self._recent_rows(row.id)
         stat_rows = self._stat_rows(row.id)
         snapshot_rows = self._snapshot_rows(row.id)
@@ -1302,6 +1342,7 @@ class GameService:
             self._session.delete(stat)
         self._session.delete(row)
         self._session.commit()
+        self._refresh_ranking_flags([old_cartridge_id])
         for directory in save_dirs | image_dirs:
             self._safe_remove_tree(directory)
 
@@ -2139,6 +2180,7 @@ class GameService:
             created_at=row.created_at,
             updated_at=row.updated_at,
             guide_kind=row.guide_kind,
+            in_ranking=row.in_ranking,
         )
 
 

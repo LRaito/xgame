@@ -51,8 +51,10 @@
 功能边界：
 
 - 游戏中心：Flash、HTML5、8/16/32/64-bit 主机 ROM、PSP、DOS 与街机。
-- 游戏管理：上传 / 直链 / 搬运、卡带 ID 与元数据、攻略。
-- 游戏发现：外部名录的只读检索与按机种榜单。
+- 库存管理：上传 / 直链 / 搬运、卡带 ID 与元数据、攻略。
+- 游戏发现：外部游戏名录的只读检索与按机种榜单。
+- 按键管理：按账号保存自定义快捷键。
+- 机型简史：静态展示各机种的介绍与代表机型。
 - 账号：开放注册，只隔离模拟器配置、存档、截图与统计。
 
 明确不做：
@@ -103,7 +105,7 @@ frontend/                    # Vue 3 SPA
   src/store/                 # Pinia：app / auth / gameTypes / shortcuts
   src/api/                   # 按业务域导出 xxxAPI
   src/utils/request.js       # axios 实例 + 拦截器
-  src/views/                 # login / games / shortcuts
+  src/views/                 # login / games / shortcuts / platforms
   src/components/common/     # 跨模块 UI 组件
   src/components/games/      # 游戏专用组件
   src/constants/             # 展示层镜像
@@ -125,22 +127,25 @@ backend/
   entrypoint.sh              # api 容器入口
   auth/                      # 账号
   shortcuts/                 # 用户快捷键配置
-  games/                     # 游戏中心与管理
+  games/                     # 游戏中心、库存与发现
     paths.py                 # 磁盘路径规则
     save_*                   # 云端存档
     screenshot_* / gallery_* # 截图 / 图集
     settings_* / stats_*     # 模拟器设置 / 游玩统计
-    search_* / ranking_*     # 检索 / 榜单
+    search_* / ranking_*     # 游戏名录 / 榜单
     importer.py / remote.py  # 搬运 / 网络上传
   tools/                     # 工具注册表
   storage/                   # 跨模块存储
     types.py / local.py      # 协议 / LocalStorage
     access.py                # 流式下载响应
-  search/catalog/            # 检索名录 CSV
+  search/catalog/            # 游戏名录 CSV
   search/rankings/           # 榜单 CSV
 tests/                       # pytest
-upgrade/                     # app.db 结构升级（唯一允许兼容代码的地方）
-  versions/vN.py             # 按版本隔离，自包含 sqlite3 与显式 SQL
+upgrade/                     # app.db / game.db 结构升级（唯一允许兼容代码的地方）
+  versions/vN.py             # app.db：按版本隔离，自包含 sqlite3 与显式 SQL
+  game_versions/vN.py        # game.db：只补结构/映射，不读 CSV
+  runner.py                  # app.db 迁移运行器
+  game_db.py                 # game.db 迁移运行器
 packaging/windows/           # Windows 解压即用包
 docs/                        # architecture / data_dict / modules / common / plans
 scripts/version.sh           # 版本号唯一出处
@@ -167,18 +172,23 @@ certs/                       # 自签名证书
    - `.env` 由 docker compose 与 Makefile 读取，后端不读这个文件。
    - 两个 `*_HOST_DIR` 由 compose 作为环境变量传进容器，仅供哨兵前缀判断。
    - 根目录不存在会自动创建，storage 永远可用，没有「未配置」开关。
-8. **SQLite 路径。** 写死为 `<运行时根>/db/app.db`，没有 `DATABASE_URL` 可配；
-   备份写在数据根的 `db/` 里。
+8. **SQLite 路径。** `app.db` 写死为 `<运行时根>/db/app.db`，发现索引 `game.db` 同在
+   `<运行时根>/db/`；没有 `DATABASE_URL` 可配。备份写在数据根的 `db/` 里。
 9. **Gunicorn。** 必须 `--workers 1 --threads 8`；单进程避免 SQLite 写冲突。
 10. **数据库只维护最新结构。** `backend/` 的模型、建表与业务代码只描述当前结构，
     禁止写补列、补索引、删旧表、重建表等兼容旧库的逻辑。
-    - 任何表 / 列 / 索引变化都必须新增 `upgrade/versions/vN.py`，版本号连续递增，
+    - `app.db` 的表 / 列 / 索引变化必须新增 `upgrade/versions/vN.py`，版本号连续递增，
       并同步递增 `backend/system_config.py::LATEST_DB_VERSION`。
-    - 版本模块只依赖标准库 `sqlite3` 与显式 SQL，不 import `backend` / SQLModel /
-      SQLAlchemy；事务由 `upgrade/runner.py` 负责，版本模块不得 commit / rollback。
+    - `game.db` 榜单结构变化必须新增 `upgrade/game_versions/vN.py`，版本号连续递增，
+      并同步递增 `backend/games/search_index.py::RANKING_SCHEMA_VERSION`。
+      游戏名录结构（`SCHEMA_VERSION`）不做原地迁移：删 `game.db` 后重启建空结构，再 `make index`。
+    - 两条链的版本模块都只依赖标准库 `sqlite3` 与显式 SQL，不 import `backend` / SQLModel /
+      SQLAlchemy；事务分别由 `upgrade/runner.py`、`upgrade/game_db.py` 负责，
+      版本模块不得 commit / rollback。
     - 升级只能手动执行：停服务后 Docker/仓库路线用 `make upgrade`，
-      Windows 包双击「升级数据库.cmd」。服务启动只校验
-      `system_config.db_version`，不自动改表；不匹配就记录中文错误并永久阻塞。
+      Windows 包双击「升级数据库.cmd」。服务启动只校验 `system_config.db_version`，
+      不自动改表；不匹配就记录中文错误并永久阻塞。
+      `game.db` 启动只在缺失或空文件时建最新的空结构，已有表一律不碰。
 
 ## 代码风格
 
@@ -230,10 +240,11 @@ python3 -m pytest  # 只跑后端
 - **只改文档（含本文件、`CLAUDE.md`、`docs/`、技能说明）不跑测试。**
 - 测试用临时 SQLite + 临时 `STORAGE_ROOT`，直接打真实文件系统，不 mock 存储层。
 - 最低覆盖范围：账号与锁定、存储读写与越界、游戏入库与卡带 ID、H5/攻略、
-  云端存档、截图与图集、模拟器设置、最近游玩、游玩统计、检索与榜单、
+  云端存档、截图与图集、模拟器设置、最近游玩、游玩统计、游戏名录与游戏榜单、
   静态站、请求上限、Windows 启动器。
-- 数据库升级必须覆盖：逐版本执行、失败不推进版本、v1 升级后与全新库 schema 一致、
-  启动版本不匹配时阻塞。
+- 数据库升级必须覆盖：`app.db` 逐版本执行、失败不推进版本、v1 升级后与全新库 schema 一致、
+  启动版本不匹配时阻塞；`game.db` 结构迁移、重复卡带 ID 回滚、缺失/旧结构拒绝、
+  启动只建空结构且不碰已有库。
 - 每个功能的详细测试要点见对应 `docs/modules/*.md` 的「测试要点」。
 
 ## 新增功能 / 工具
@@ -256,6 +267,7 @@ python3 -m pytest  # 只跑后端
 | 账号、登录、CSRF | [`auth.md`](docs/modules/auth.md) |
 | 存储、卡带 ID、封面类型、导入 | [`game-storage.md`](docs/modules/game-storage.md) |
 | 机种词表 | [`platforms.md`](docs/common/platforms.md) |
+| 机型简史 | [`platform-chronicle.md`](docs/modules/platform-chronicle.md) |
 | 播放器、标题栏、机壳、NDS | [`game-center-playback.md`](docs/modules/game-center-playback.md) |
 | 截图、图集、封面美化 | [`game-assets.md`](docs/modules/game-assets.md) |
 | 存档、设置、最近、统计 | [`game-saves-stats.md`](docs/modules/game-saves-stats.md) |

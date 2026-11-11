@@ -169,7 +169,7 @@ rm -rf "$PKG/python/Lib/site-packages/bin"
 # ---------- 4. 后端与包内脚本 ----------
 step "4/6 后端与启动脚本"
 copy_python_tree "$REPO/backend" "$PKG/backend"
-test -d "$PKG/backend/search/catalog" || { say "！backend/search/catalog 没带上，检索索引建不出来"; exit 1; }
+test -d "$PKG/backend/search/catalog" || { say "！backend/search/catalog 没带上，游戏名录建不出来"; exit 1; }
 # 榜单是可选数据：还没整理好时只提示，不拦构建（包里的榜单页会显示「榜单尚未加载」）
 test -d "$PKG/backend/search/rankings" \
     || say "提示：backend/search/rankings 没带上，这个包的游戏榜单是空的。"

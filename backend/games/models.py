@@ -75,6 +75,7 @@ class Game(SQLModel, table=True):
     __table_args__ = (
         Index("uq_games_game_type_name", "game_type", "name", unique=True),
         Index("uq_games_cartridge_id", "cartridge_id", unique=True),
+        Index("ix_games_in_ranking_updated", "in_ranking", "updated_at", "id"),
         # 显式 AUTOINCREMENT：删除最大 id 后也不复用编号。id 会出现在播放页路由与
         # 截图/存档等表的 game_id 里，复用会让旧链接指向另一盘游戏。
         {"sqlite_autoincrement": True},
@@ -98,6 +99,12 @@ class Game(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+    # 是否出现在 game.db 的榜单里。由 make index 全量对账、新增/改卡带ID/删除时增量维护。
+    in_ranking: bool = Field(
+        default=False,
+        index=True,
+        sa_column_kwargs={"server_default": "0"},
+    )
 
 
 class GameCloudSnapshot(SQLModel, table=True):

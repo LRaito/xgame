@@ -1,4 +1,4 @@
-"""「游戏榜单」的 CSV 解析、构建与启动就地补载测试。
+"""「游戏榜单」的 CSV 解析、构建与筛选测试。
 
 用例不读仓库里的真实榜单 CSV：在 tmp_path 写几个机种文件作为固件，覆盖真实数据的格式边界
 （UTF-8 带 BOM、CRLF、引号内的逗号、可选表头、评分、卡带 ID 分隔符）。
@@ -6,30 +6,26 @@
 
 import csv
 import hashlib
-import os
-import shutil
 import sqlite3
 
 import pytest
 from sqlmodel import Session
 
-from backend import create_app
 from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, Settings
 from backend.games import search_index
 from backend.games.models import Game
 from backend.games.platforms import resolve_platform
-from backend.games.ranking_service import GameRankingService, RankingItem
-from backend.games.service import GameLink, GameService
+from backend.games.ranking_flags import refresh_all_flags
+from backend.games.ranking_service import GameRankingService
+from backend.games.service import GameService
 from backend.games.search_index import (
     RANKING_SCHEMA_VERSION,
     SCHEMA_VERSION,
     RankingCsvError,
     build_index,
-    ensure_game_index,
-    ensure_ranking_loaded,
 )
 
-# 检索名录：只求 build_index 有东西可建，内容与榜单无关
+# 游戏名录：只求 build_index 有东西可建，内容与榜单无关
 _SEARCH_ROWS = [
     ("黄金太阳", "Golden Sun (USA)"),
     ("精灵宝可梦 火红", "Pokemon FireRed (USA)"),
@@ -278,7 +274,7 @@ def test_load_ranking_dir_rejects_non_utf8(tmp_path):
 
 
 def test_ranking_dir_lives_outside_the_search_csv_dir():
-    """榜单目录不能放进 backend/search/catalog/：那个目录会被整目录扫成检索索引。"""
+    """榜单目录不能放进 backend/search/catalog/：那个目录会被整目录扫成游戏名录。"""
     assert RANKING_CSV_DIR.name == "rankings"
     assert SEARCH_CSV_DIR not in RANKING_CSV_DIR.parents
 
@@ -335,21 +331,68 @@ def test_build_index_creates_ranking_score_indexes(csv_dir, ranking_dir, index_p
             row[1]: row[2]
             for row in conn.execute("PRAGMA index_list('ranking')")
         }
-    assert {"uq_ranking_platform_en", "idx_ranking_score", "idx_ranking_platform_score"} <= set(indexes)
+    assert {
+        "uq_ranking_platform_en",
+        "idx_ranking_score",
+        "idx_ranking_platform_score",
+        "idx_ranking_in_library_score",
+        "idx_ranking_platform_in_library_score",
+    } <= set(indexes)
     assert indexes["uq_ranking_platform_en"] == 1
 
 
-def test_ensure_ranking_loaded_recreates_ranking_score_indexes(csv_dir, ranking_dir, index_path):
-    build_index(csv_dir, index_path)
-    ensure_ranking_loaded(index_path, ranking_dir)
+def test_build_index_populates_ranking_cartridges(csv_dir, ranking_dir, index_path):
+    build_index(csv_dir, index_path, ranking_dir=ranking_dir)
 
     with sqlite3.connect(index_path) as conn:
-        indexes = {
-            row[1]: row[2]
-            for row in conn.execute("PRAGMA index_list('ranking')")
-        }
-    assert {"uq_ranking_platform_en", "idx_ranking_score", "idx_ranking_platform_score"} <= set(indexes)
-    assert indexes["uq_ranking_platform_en"] == 1
+        mapping = dict(
+            conn.execute(
+                "SELECT cartridge_id, ranking_id FROM ranking_cartridges"
+            ).fetchall()
+        )
+    assert {"NES-SM", "NES-MT", "GSAE", "ID1", "ID2", "ZELDA", "A1", "A2"} <= set(
+        mapping
+    )
+    assert mapping["ID1"] == mapping["ID2"]
+    assert "查不到编号的游戏" not in mapping
+
+
+def test_build_index_normalizes_mapping_keys(csv_dir, tmp_path, index_path):
+    ranking_dir = tmp_path / "rank-lower"
+    ranking_dir.mkdir()
+    _write_csv(
+        ranking_dir / "nes.csv",
+        [_RANKING_HEADER, ["小写", "Lower", "8", "  abc-1  "]],
+    )
+
+    build_index(csv_dir, index_path, ranking_dir=ranking_dir, strict_ranking=True)
+
+    with sqlite3.connect(index_path) as conn:
+        assert conn.execute(
+            "SELECT cartridge_id FROM ranking_cartridges"
+        ).fetchall() == [("ABC-1",)]
+
+
+def test_build_index_rejects_cross_row_duplicate_cartridge_id(
+    csv_dir, ranking_dir, index_path, tmp_path
+):
+    before = _digest(index_path) if index_path.exists() else None
+    bad = tmp_path / "dup-ranking"
+    bad.mkdir()
+    _write_csv(
+        bad / "nes.csv",
+        [_RANKING_HEADER, ["A", "Game A", "8", "SAME-ID"]],
+    )
+    _write_csv(
+        bad / "gba.csv",
+        [_RANKING_HEADER, ["B", "Game B", "8", "same-id"]],
+    )
+
+    with pytest.raises(RankingCsvError, match="SAME-ID"):
+        build_index(csv_dir, index_path, ranking_dir=bad, strict_ranking=True)
+
+    if before is not None:
+        assert _digest(index_path) == before
 
 
 def test_build_index_without_ranking_leaves_empty_table(csv_dir, index_path):
@@ -395,106 +438,6 @@ def test_build_index_tolerates_missing_ranking_dir(csv_dir, index_path, tmp_path
 
 
 # --------------------------------------------------------------------------
-# 启动就地补载
-# --------------------------------------------------------------------------
-
-
-def test_ensure_ranking_loaded_into_search_only_index(csv_dir, ranking_dir, index_path):
-    build_index(csv_dir, index_path)  # 先造一个只有检索表的库
-
-    stats = ensure_ranking_loaded(index_path, ranking_dir)
-
-    assert stats is not None
-    assert stats.rows == len(_RANKING_ROWS)
-    assert len(_ranking_rows(index_path)) == len(_RANKING_ROWS)
-    # 检索表一点没动，检索版本也没变
-    assert _meta(index_path, "schema_version") == SCHEMA_VERSION
-
-
-def test_ensure_ranking_loaded_is_idempotent(csv_dir, ranking_dir, index_path):
-    """指纹一致时连读写连接都不打开：库文件逐字节与 mtime 都不变。"""
-    build_index(csv_dir, index_path)
-    ensure_ranking_loaded(index_path, ranking_dir)
-    before = _digest(index_path)
-
-    stats = ensure_ranking_loaded(index_path, ranking_dir)
-
-    assert stats is not None
-    assert _digest(index_path) == before
-
-
-def test_ensure_ranking_loaded_reloads_when_content_changes(csv_dir, ranking_dir, index_path):
-    """内容变了但 size + mtime 被人为保留，也要按 SHA-256 重新加载。"""
-    build_index(csv_dir, index_path)
-    ensure_ranking_loaded(index_path, ranking_dir)
-    target = ranking_dir / "gba.csv"
-    stat = target.stat()
-
-    _write_csv(target, [_RANKING_HEADER, ["换了一个中文名", "New Name", "8.5", "ID9"]])
-    os.utime(target, (stat.st_atime, stat.st_mtime))
-
-    ensure_ranking_loaded(index_path, ranking_dir)
-
-    rows = _ranking_rows(index_path)
-    assert ("gba", "gba", 8.5, "换了一个中文名", "New Name", '["ID9"]') in rows
-    # 其它机种文件没动，照常保留
-    assert any(row[0] == "gb" for row in rows)
-
-
-def test_ensure_ranking_loaded_keeps_existing_when_dir_missing(csv_dir, ranking_dir, index_path):
-    build_index(csv_dir, index_path)
-    ensure_ranking_loaded(index_path, ranking_dir)
-    shutil.rmtree(ranking_dir)
-
-    assert ensure_ranking_loaded(index_path, ranking_dir) is None
-    assert len(_ranking_rows(index_path)) == len(_RANKING_ROWS)
-
-
-def test_ensure_ranking_loaded_returns_none_when_db_missing(ranking_dir, tmp_path):
-    assert ensure_ranking_loaded(tmp_path / "nope" / "game.db", ranking_dir) is None
-
-
-def test_ensure_ranking_loaded_degrades_without_write_permission(csv_dir, ranking_dir, index_path):
-    """库文件/目录只读时只记 warning、不抛，库里原来的榜单保持可用。"""
-    build_index(csv_dir, index_path)
-    os.chmod(index_path, 0o444)
-    os.chmod(index_path.parent, 0o555)
-    try:
-        assert ensure_ranking_loaded(index_path, ranking_dir) is None
-    finally:
-        os.chmod(index_path.parent, 0o755)
-
-
-def test_ensure_game_index_loads_ranking_into_existing_index(csv_dir, ranking_dir, tmp_path):
-    settings = _settings(tmp_path)
-    build_index(csv_dir, settings.game_index_path)  # 先造一个只有检索表的库
-
-    assert ensure_game_index(settings, csv_dir=csv_dir, ranking_dir=ranking_dir) is None
-
-    assert len(_ranking_rows(settings.game_index_path)) == len(_RANKING_ROWS)
-
-
-def test_ensure_game_index_skips_ranking_when_testing(csv_dir, ranking_dir, tmp_path):
-    settings = _settings(tmp_path, testing=True)
-
-    assert ensure_game_index(settings, csv_dir=csv_dir, ranking_dir=ranking_dir) is None
-    assert not settings.game_index_path.exists()
-
-
-def test_app_startup_loads_ranking(monkeypatch, csv_dir, ranking_dir, tmp_path):
-    """接线：create_app() 起来时会把榜单 CSV 加载进 game.db。"""
-    monkeypatch.setattr(search_index, "SEARCH_CSV_DIR", csv_dir)
-    monkeypatch.setattr(search_index, "RANKING_CSV_DIR", ranking_dir)
-
-    create_app({"TESTING": False, "STORAGE_ROOT": str(tmp_path / "storage")})
-
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    with sqlite3.connect(index_path) as conn:
-        assert conn.execute("SELECT count(*) FROM game").fetchone()[0] == len(_SEARCH_ROWS)
-    assert len(_ranking_rows(index_path)) == len(_RANKING_ROWS)
-
-
-# --------------------------------------------------------------------------
 # 只读接口
 # --------------------------------------------------------------------------
 
@@ -536,8 +479,6 @@ def test_ranking_missing_index_returns_guidance(logged_in, index_path):
         "page_size": 10,
         "total": 0,
         "matched_total": 0,
-        "ranking_total": 0,
-        "linked_total": 0,
         "items": [],
     }
     # 服务端绝不代建索引
@@ -545,7 +486,7 @@ def test_ranking_missing_index_returns_guidance(logged_in, index_path):
 
 
 def test_ranking_without_ranking_data(app, logged_in, csv_dir, index_path):
-    """只有检索表的库：索引在、榜单没加载，不是错误。"""
+    """只有游戏名录表的库：索引在、榜单没加载，不是错误。"""
     build_index(csv_dir, index_path)
 
     consoles = _get(logged_in, RANKING_CONSOLES_URL)
@@ -557,7 +498,7 @@ def test_ranking_without_ranking_data(app, logged_in, csv_dir, index_path):
     assert page["indexed"] is True
     assert page["has_ranking"] is False
     assert page["items"] == []
-    assert page["total"] == 0 and page["ranking_total"] == 0
+    assert page["total"] == 0 and page["matched_total"] == 0
 
 
 def test_ranking_consoles(ranked, logged_in):
@@ -565,7 +506,7 @@ def test_ranking_consoles(ranked, logged_in):
 
     assert data["indexed"] is True
     assert data["has_ranking"] is True
-    # 机种键 = EmulatorJS 的 system key，展示名与游戏管理/检索共用一套（词表顺序：FC → GB/GBC → GBA）
+    # 机种键 = EmulatorJS 的 system key，展示名与游戏管理/游戏名录共用一套（词表顺序：FC → GB/GBC → GBA）
     assert data["consoles"] == [
         {"platform": "nes", "label": "任天堂 FC", "playable": True},
         {"platform": "gb", "label": "任天堂 GB/GBC", "playable": True},
@@ -610,8 +551,6 @@ def test_ranking_without_console_returns_all_consoles(ranked, logged_in):
     assert page["page_size"] == 10
     assert page["total"] == 8
     assert page["matched_total"] == 8
-    assert page["ranking_total"] == 8
-    assert page["linked_total"] == 0
 
 
 def test_ranking_gba_page(ranked, logged_in):
@@ -661,24 +600,34 @@ def test_ranking_keyword_filters_chinese_and_english(ranked, logged_in):
     assert by_zh["total"] == by_zh["matched_total"] == 1
     assert by_zh["items"][0]["zh"] == "超级马里奥兄弟"
     assert missing["total"] == missing["matched_total"] == 0
-    assert missing["ranking_total"] == 8
+
+
+def test_ranking_keyword_escapes_like_wildcards(ranked, logged_in):
+    """关键词里的 % / _ 按字面匹配，不能当通配符把整份榜单查出来。"""
+    assert _get(logged_in, RANKING_URL, keyword="%")["total"] == 0
+    assert _get(logged_in, RANKING_URL, keyword="_")["total"] == 0
 
 
 def test_ranking_in_library_filters_and_counts(ranked, logged_in, app):
     _make_game(app, "超级马里奥兄弟", "NES-SM")
+    _sync_flags(app, ranked)
 
     page = _get(logged_in, RANKING_URL, in_library="true")
 
     assert page["total"] == 1
     assert page["matched_total"] == 8
-    assert page["ranking_total"] == 8
-    assert page["linked_total"] == 1
     assert page["items"][0]["en"] == "Super Mario Bros."
+    assert page["items"][0]["in_library"] is True
     assert page["items"][0]["path"] is not None
+
+    outside = _get(logged_in, RANKING_URL, in_library="false")
+    assert outside["total"] == 7
+    assert all(item["in_library"] is False for item in outside["items"])
 
 
 def test_ranking_keyword_and_in_library_are_combined(ranked, logged_in, app):
     _make_game(app, "超级马里奥兄弟", "NES-SM")
+    _sync_flags(app, ranked)
 
     page = _get(logged_in, RANKING_URL, keyword="mario", in_library="true")
 
@@ -709,7 +658,7 @@ def test_ranking_unknown_console_returns_empty(ranked, logged_in):
     assert page["has_ranking"] is True
     assert page["console"] == "NOPE"
     assert page["items"] == []
-    assert page["total"] == page["ranking_total"] == 0
+    assert page["total"] == page["matched_total"] == 0
 
 
 def test_ranking_broken_index_returns_503(logged_in, index_path):
@@ -771,6 +720,10 @@ def _make_game(app, name, cartridge_id, *, game_type="nes", game_path=None):
         session.commit()
         session.refresh(row)
         return row.id
+
+
+def _sync_flags(app, index_path):
+    refresh_all_flags(app.state.settings.database_path, index_path, strict=True)
 
 
 def _delete_game(app, game_id):
@@ -872,7 +825,7 @@ def test_ranking_links_games_without_body(ranked, logged_in, app):
 
 
 def test_ranking_unlinks_after_game_deleted(ranked, logged_in, app):
-    """关联是每请求现算的：删掉游戏后下一次请求就没有链接了（不用重建索引）。"""
+    """关联是每请求现算的：删掉游戏后下一次请求就没有链接了（不用执行 make index）。"""
     game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
     assert _get(logged_in, RANKING_URL)["items"][0]["path"] is not None
 
@@ -918,30 +871,17 @@ def test_ranking_service_without_lookup_does_not_link(ranked, csv_dir, ranking_d
     assert all(item.game_id is None and item.path is None for item in page.items)
 
 
-def test_cross_console_cartridge_lookup_is_chunked(tmp_path):
-    """跨机种有 6000+ 个卡带 ID，按 500 个一批查，避免 SQLite 宿主参数超限。"""
+def test_ranking_attaches_links_only_for_current_page(ranked):
+    """分页后只对当前页做库存关联，不再把整个机种的卡带 ID 全查一遍。"""
     calls = []
 
     def lookup(raw_ids):
-        calls.append(len(raw_ids))
-        return {
-            raw_id: GameLink(game_id=index, path=f"/games/play/{index}")
-            for index, raw_id in enumerate(raw_ids, start=1)
-        }
+        calls.append(list(raw_ids))
+        return {}
 
-    service = GameRankingService(tmp_path / "game.db", cartridge_lookup=lookup)
-    items = [
-        RankingItem(
-            score=8.0,
-            zh=f"游戏{index}",
-            en=f"Game {index}",
-            platform="nes",
-            cartridge_ids=(f"ID{index}",),
-        )
-        for index in range(600)
-    ]
+    page = GameRankingService(ranked, cartridge_lookup=lookup).get(
+        None, page=1, page_size=1
+    )
 
-    linked = service._attach_links(items)
-
-    assert calls == [500, 100]
-    assert all(item.path for item in linked)
+    assert len(page.items) == 1
+    assert sum(len(ids) for ids in calls) == 1

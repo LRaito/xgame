@@ -8,7 +8,7 @@
 - id / 别名不冲突；
 - 可玩机种 = `service.GAME_TYPES` 里的机种部分，且顺序一致；
 - 前端 `constants/gameTypes.js` 的 label 与词表逐字一致；
-- 检索名录这一份**真实** CSV 里的每一个机种名都能被解析，或明确落在「未收录」名单里；
+- 游戏名录这一份**真实** CSV 里的每一个机种名都能被解析，或明确落在「未收录」名单里；
   榜单目录的文件名则必须逐个是可玩机种 id——写法变了而词表没跟上时，这两条会红。
 """
 
@@ -453,12 +453,12 @@ def test_frontend_does_not_hardcode_the_type_registry():
 
 
 # --------------------------------------------------------------------------
-# 与真实检索名录 / 榜单目录的一致性
+# 与真实游戏名录 / 榜单目录的一致性
 # --------------------------------------------------------------------------
 
 
 def _search_csv_consoles() -> set[str]:
-    """检索名录的机种名来自文件名映射（CSV 内容不再有机种列）。"""
+    """游戏名录的机种名来自文件名映射（CSV 内容不再有机种列）。"""
     return {
         SEARCH_CSV_CONSOLE_NAMES.get(path.stem, path.stem)
         for path in SEARCH_CSV_DIR.glob("*.csv")
@@ -519,7 +519,7 @@ def test_ranking_files_cover_every_playable_platform():
 
 
 def test_merged_search_consoles_collapse_into_one_registry_platform():
-    """检索侧会把同一机种的多个原始名合并成一项，这里钉住合并后的项数。"""
+    """名录侧会把同一机种的多个原始名合并成一项，这里钉住合并后的项数。"""
     groups = {
         resolve_platform(name).id if resolve_platform(name) else f"raw:{normalize_name(name)}"
         for name in _search_csv_consoles()

@@ -76,8 +76,8 @@
 - 首页即游戏中心，没有单独的导航中心页。
 - 侧栏菜单项与顺序由子路由声明顺序 + `meta.title` 生成。
 - `buildMenuFromRoutes()` 过滤掉没有 `title` 或带 `hiddenInMenu` 的路由。
-- 菜单当前顺序：游戏中心、游戏管理、游戏发现、按键管理、机型简史。
-- `/games/manage` 是游戏管理页。
+- 菜单当前顺序：游戏中心、库存管理、游戏发现、按键管理、机型简史。
+- `/games/manage` 是库存管理页。
 - `/games/discover` 是游戏发现页，详见 `./game-discover.md`。
 - `/shortcuts` 是按键管理页：默认键位与动作清单在前端，用户覆盖存 SQLite。
 - `/platforms` 是机型简史页，`/platforms/:id` 是机型详情页，见 `./platform-chronicle.md`。
@@ -117,7 +117,7 @@
 - 需要新外观先扩 `AppButton` 的 `text` / `tone`，或扩对应的通用组件；不在页面写一次性样式。
 - 颜色、圆角、控件高度、焦点、禁用态只用 `styles/index.css` 的 token，不写死近似色。
 - 普通行内操作按钮用标准 `secondary`；`text` 只用于无框辅助操作（标题栏图标、「清空」等）。
-- `components/common/` 必有：`AppDialog`、`AppButton`、`AppSegmented`、`AppTypeSelect`。
+- `components/common/` 必有：`AppDialog`、`AppButton`、`AppSegmented`、`AppSelect`、`AppTypeSelect`。
 - 还有 `AppPagination`、`AppEmpty`、`CopyButton`、`AppUpdateBanner`。
 - 按钮统一走 `AppButton`。
 - 只有两种类型：`secondary` 白底蓝框、`danger` 白底红框。
@@ -132,8 +132,9 @@
   `--app-color-primary` 画焦点，已有选中深色底的导航项不再叠加焦点环；
   不要留浏览器默认黑色外框。
 - 分段/标签统一走 `AppSegmented`，tone / size 用同一套 token。
-- 游戏类型 / 机种下拉统一走 `AppTypeSelect`：可下拉、可输入过滤，
+- 游戏类型 / 机种下拉统一走 `AppTypeSelect`：可下拉、可输入过滤；
   按 label 或 value 做不区分大小写的子串匹配。
+- 固定 2～3 项的筛选下拉走 `AppSelect`：不强制 `filterable`，清空即全部。
 - `CopyButton` 的 20px 卡带 ID 药丸是可复制数据 chip，不是第三种按钮类型。
 - `AppDialog` 的 `footer-mode` 四值：default/confirm-only/custom/none。
 - 右上角关闭按钮始终存在：只读弹框用 `none`，不再放多余的「关闭」底栏按钮。
@@ -162,8 +163,11 @@
 - 不支持的键、浏览器保留组合、同页重复键都显示中文错误。
 - 页面从 store 读取当前键位，保存后即时刷新。
 
-**游戏管理页。**
+**库存管理页。**
 
+- 工具栏：游戏类型 + 搜索名称/描述 + 榜单类型（榜单之内 / 榜单之外，默认全部）。
+- 榜单类型走 `AppSelect`，改动回第 1 页。
+- 空态按是否有筛选显示「当前筛选下没有库存条目」/「暂无库存条目…」。
 - 添加与编辑共用同一弹框：新建要等填完，编辑改完即存。
 - 新建时本体可选；不传本体时必须从下拉里选游戏类型。
 - 编辑态没有「取消 / 保存」底栏，只留右上角关闭。
@@ -179,7 +183,7 @@
 - 需要说明就写常驻小字，或用「点开才看到」的展开层。
 - 唯一例外是模拟器/引擎自己渲染的按钮。
 - 两个保留项不是悬浮提示：`AppDialog` 的 `title` prop 与 `<iframe title="…">`。
-- 检索/榜单的标签栏是一对普通按钮，不用 `el-radio-group`。
+- 游戏名录/榜单的标签栏是一对普通按钮，不用 `el-radio-group`。
 - 原因是原生 radio 的左右键会抢走分页条的键，详见 `./game-discover.md`。
 - 不用 React、TypeScript、i18n、Bootstrap、Tailwind。
 - 不把 Fernet 密钥放 Pinia store；不做全表列配置。
@@ -208,7 +212,7 @@
 
 ## 相关文档
 
-- [游戏发现（检索与榜单）](./game-discover.md)
+- [游戏发现（游戏名录与游戏榜单）](./game-discover.md)
 - [H5 与攻略包](./guide-and-h5.md)
 - [架构设计](../architecture.md)
 - [编码约定](../../AGENTS.md)

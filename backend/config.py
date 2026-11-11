@@ -46,17 +46,17 @@ WINDOWS_MOUNT_PREFIX = "/mnt"
 DB_SUBDIR = "db"
 DB_FILENAME = "app.db"
 
-# 游戏检索用的索引库，在**运行时根**的 db/ 下（`<运行时根>/db/game.db`）。它是从 CSV 名录派生的只读库：
+# 游戏名录用的索引库，在**运行时根**的 db/ 下（`<运行时根>/db/game.db`）。它是从 CSV 名录派生的只读库：
 # **只有 `make index` 写它**，运行期一律以 mode=ro 打开；也不参与备份（备份只认 DB_FILENAME）。
 GAME_INDEX_FILENAME = "game.db"
 
-# 生成游戏检索索引的 CSV 名录（`中文名,英文名` 两列，首行表头，机种由文件名决定）。这份数据只在仓库/宿主机上存在——
+# 生成游戏名录与游戏榜单的 CSV 名录（`中文名,英文名` 两列，首行表头，机种由文件名决定）。这份数据只在仓库/宿主机上存在——
 # 它随 backend/ 一起进 api 镜像，所以容器里也能在启动时自动补建。
 SEARCH_CSV_DIR = BASE_DIR / "backend" / "search" / "catalog"
 
 # 游戏榜单的 CSV 目录：每个机种一个文件，文件名就是机种 id（`nes.csv`、`segaMD.csv`…），
 # 五列 `序号,中文名,英文名,评分,卡带ID`。它和上面的名录都进同一个 `<运行时根>/db/game.db`，
-# 但**单独一个目录**：上面那个目录会被 build_index 整目录扫成检索索引，五列的榜单混进去会被
+# 但**单独一个目录**：上面那个目录会被 build_index 整目录扫成游戏名录，五列的榜单混进去会被
 # 当成坏行。这份数据同样随 backend/ 进 api 镜像。
 RANKING_CSV_DIR = BASE_DIR / "backend" / "search" / "rankings"
 
@@ -80,7 +80,7 @@ class Settings(BaseSettings):
     # 下一个请求就 401、在登录页来回跳」。
     SESSION_COOKIE_SECURE: bool = True
 
-    # 项目文件根目录：游戏本体/封面/H5 资源/攻略、云端存档、截图、检索索引与备份都在它下面。
+    # 项目文件根目录：游戏本体/封面/H5 资源/攻略、云端存档、截图、游戏发现索引与备份都在它下面。
     # 容器里由 backend/Dockerfile 固定为 /data，宿主目录经 compose 挂到该路径。
     STORAGE_ROOT: str = default_storage_root()
 
@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         # 用 as_posix()：Windows 下 str(Path) 是反斜杠，且路径里出现 `#` `?` `%` 时会被当成
-        # URL 的一部分解析坏掉。检索索引那边（search_service.py）早就用 as_uri() 绕这个坑了，
+        # URL 的一部分解析坏掉。游戏名录索引那边（search_service.py）早就用 as_uri() 绕这个坑了，
         # 这里取同样的原则。
         return f"sqlite:///{self.database_path.as_posix()}"
 
@@ -134,7 +134,7 @@ class Settings(BaseSettings):
 
     @property
     def game_index_path(self) -> Path:
-        """游戏检索索引路径：运行时根/db/game.db。运行期只读，不存在时视为「尚未构建索引」。"""
+        """游戏发现索引路径（游戏名录与游戏榜单）：运行时根/db/game.db。运行期只读，不存在时视为「尚未构建」。"""
         return self.runtime_root / DB_SUBDIR / GAME_INDEX_FILENAME
 
 

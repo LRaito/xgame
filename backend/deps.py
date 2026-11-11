@@ -46,7 +46,14 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 def get_game_service(request: Request, session: DbSession) -> GameService:
     # 两个存储：数据根（素材与两个 zip）与运行时根（H5/攻略的解包产物）
-    return GameService(session, request.app.state.storage, request.app.state.runtime_storage)
+    settings = request.app.state.settings
+    return GameService(
+        session,
+        request.app.state.storage,
+        request.app.state.runtime_storage,
+        game_index_path=settings.game_index_path,
+        database_path=settings.database_path,
+    )
 
 
 GameServiceDep = Annotated[GameService, Depends(get_game_service)]
@@ -112,7 +119,7 @@ ShortcutServiceDep = Annotated[ShortcutService, Depends(get_shortcut_service)]
 
 
 def get_game_search_service(request: Request) -> GameSearchService:
-    # 检索用的是独立只读库（`<运行时根>/db/game.db`），由 make index 构建，这里不碰 SQLite 会话
+    # 游戏名录用的是独立只读库（`<运行时根>/db/game.db`），由 make index 构建，这里不碰 SQLite 会话
     return GameSearchService(request.app.state.settings.game_index_path)
 
 
@@ -120,7 +127,7 @@ GameSearchServiceDep = Annotated[GameSearchService, Depends(get_game_search_serv
 
 
 def get_game_ranking_service(request: Request, games: GameServiceDep) -> GameRankingService:
-    # 榜单与检索共用同一个只读库（`<运行时根>/db/game.db`），只是读另一张表。
+    # 榜单与游戏名录共用同一个只读库（`<运行时根>/db/game.db`），只是读另一张表。
     # 额外把「按卡带ID 找库存游戏」注进去：榜单行要在**请求期**与 `games` 表关联一次
     # （索引库本身刻意不与平台库存联动，见 ranking_service._attach_links）。
     return GameRankingService(

@@ -15,7 +15,7 @@
 |---|---|---|
 | SQLite 业务库 | `<运行时根>/db/app.db` | 全部业务元数据 |
 | SQLite 备份 | `<数据根>/db/app.db.<YYYY-MM>` | 每月一份，整份重写 |
-| SQLite 发现索引 | `<运行时根>/db/game.db` | 检索与榜单的派生只读库 |
+| SQLite 发现索引 | `<运行时根>/db/game.db` | 游戏名录与游戏榜单的派生只读库；缺失时启动建空结构 |
 | 数据根 | `STORAGE_ROOT` | 原始素材，整体备份 |
 | 运行时根 | `RUNTIME_ROOT` | SQLite 业务库、发现索引 + 解包产物 |
 | 哨兵文件 | 每个根下的 `.mounted` | 人工创建；只拦启动 |
@@ -56,7 +56,7 @@
 |---|---|---|---|
 | 1 | `users` | `backend/auth/models.py` | 平台账号 |
 | 2 | `login_attempts` | 同上 | 登录失败计数与锁定 |
-| 3 | `games` | `backend/games/models.py` | 游戏条目 |
+| 3 | `games` | `backend/games/models.py` | 库存条目 |
 | 4 | `game_cloud_snapshots` | 同上 | 云端存档快照 |
 | 5 | `game_cloud_snapshot_files` | 同上 | 快照内的单个存档文件 |
 | 6 | `game_screenshots` | 同上 | 按账号隔离的截图 |
@@ -123,7 +123,7 @@
 - 结构版本与升级流程见本文「SQLite 结构」与
   [`database-upgrade.md`](modules/database-upgrade.md)。
 
-### games — 游戏中心
+### games — 库存表
 
 **`games`**
 
@@ -142,6 +142,7 @@
 | guide_kind | VARCHAR(10) | NOT NULL, 默认 `''` | `''` / `zip` / `pdf` |
 | created_at | DATETIME | NOT NULL | |
 | updated_at | DATETIME | NOT NULL | |
+| in_ranking | BOOLEAN | NOT NULL, 默认 0, 索引 | 是否命中 game.db 榜单；由 make index 全量对账、增删改游戏时增量维护 |
 
 索引：
 
@@ -149,6 +150,8 @@
 - `uq_games_game_type_name`：同类型下游戏名唯一。
 - `ix_games_name`：游戏名普通索引。
 - `ix_games_game_type`：游戏类型普通索引。
+- `ix_games_in_ranking`：榜单归属筛选。
+- `ix_games_in_ranking_updated`：`(in_ranking, updated_at, id)`，筛选后按更新时间分页。
 - 中心列表不按 `game_path` 过滤：无本体条目同样展示，点击时提示先上传本体。
 
 卡带 ID 改名、封面类型、命名规则见 [`game-storage.md`](modules/game-storage.md)。
@@ -339,38 +342,44 @@
 | 项 | 值 |
 |---|---|
 | 路径 | `<运行时根>/db/game.db`（`GAME_INDEX_FILENAME`） |
-| 写入方 | 只有 `backend/games/search_index.py` |
-| 写路径 | `build_index()` 整库重建；`ensure_ranking_loaded()` 就地补榜单 |
+| 写入方 | 启动只建空结构；`backend/games/search_index.py` 构建游戏名录/榜单数据；`backend/games/ranking_flags.py` 运行期只更新标记 |
+| 写路径 | `make index` → `build_index()` 构建游戏名录、游戏榜单；结构只由启动初始化或 `make upgrade` 改变 |
 | 读取方 | `GameSearchService` / `GameRankingService` |
 | 连接 | `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接 |
 | 是否备份 | 不备份；可从 CSV 重建 |
-| 源数据 | 37 个检索 CSV + 34 个机种榜单 CSV |
-| 重建 | 整库重建 + `os.replace`；不开 WAL |
+| 源数据 | 37 个名录 CSV + 34 个机种榜单 CSV |
+| 重建 | `make index` 整库重写数据 + `os.replace`；要求结构已是当前版本，不开 WAL |
 
 ### 表
 
 | 表 | 用途 |
 |---|---|
-| `console` | 检索的统一机种：`id` / `name` / `platform_id` / `raw_names` |
+| `console` | 游戏名录的统一机种：`id` / `name` / `platform_id` / `raw_names` |
 | `game` | 名录一行：`id` / `console_id` / `zh` / `en` / `src` |
 | `game_fts` | FTS5 全文索引，contentless，`zh_uni` / `en_uni` |
-| `ranking` | 榜单一行：`id` / `platform` / `console` / `score` / `zh` / `en` / `cartridge_ids` |
-| `meta` | 键值元信息：检索版本、榜单版本与指纹 |
+| `ranking` | 榜单一行：`id` / `platform` / `console` / `score` / `zh` / `en` / `cartridge_ids` / `in_library` |
+| `ranking_cartridges` | 卡带 ID → `ranking.id` 映射：`cartridge_id` 主键 / `ranking_id` FK |
+| `meta` | 键值元信息：游戏名录版本、榜单版本与指纹 |
 | `idx_game_console` | `game(console_id, en)` 索引 |
 | `idx_console_platform` | `console(platform_id)` 索引 |
 | `uq_ranking_platform_en` | `ranking(platform, en)` 唯一索引，同一机种内英文名唯一 |
 | `idx_ranking_score` | `ranking(score DESC)`，跨机种按评分全局排序 |
 | `idx_ranking_platform_score` | `ranking(platform, score DESC)`，单机种按评分排序 |
+| `idx_ranking_in_library_score` | `ranking(in_library, score DESC)`，库存筛选后排序 |
+| `idx_ranking_platform_in_library_score` | `ranking(platform, in_library, score DESC)` |
+| `idx_ranking_cartridges_ranking` | `ranking_cartridges(ranking_id)`，反向查一行榜单的卡带 ID |
 
 ### 约定
 
 - 机种经 `backend/games/platforms.py` 的词表归一。
-- 检索引擎的机种合并：36 个原始机种 → 32 项。
+- 游戏名录的机种合并：36 个原始机种 → 32 项。
 - `game_fts` 存处理过的文本；`game.zh` / `game.en` 存原文。
 - 索引期与查询期共用 `search_text.py::index_text()`。
-- 按 `(机种原始名, 中文, 英文)` 三元组去重；机种原始名由检索 CSV 文件名映射得到。
-- 榜单版本独立于检索版本；加榜单表不 bump `SCHEMA_VERSION`。
-- 榜单与库存的关联在请求期做，不落库、不进索引、不缓存。
+- 按 `(机种原始名, 中文, 英文)` 三元组去重；机种原始名由名录 CSV 文件名映射得到。
+- 榜单版本独立于游戏名录版本；加榜单表不 bump `SCHEMA_VERSION`。
+- `ranking.in_library` 标记是否命中库存；`games.in_ranking` 标记是否命中榜单。
+- 两个标记由 `make index` 全量对账；新增/改卡带 ID/删除游戏时增量更新。
+- `ranking_cartridges.cartridge_id` 存归一后的大写值，一个卡带 ID 只能映射一行榜单。
 - 榜单 CSV 格式见
   [`backend/search/rankings/README.md`](../backend/search/rankings/README.md)。
 - 详细行为见 [`game-discover.md`](modules/game-discover.md)。

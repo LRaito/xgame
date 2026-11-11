@@ -1,26 +1,26 @@
-"""游戏检索索引与游戏榜单的构建。
+"""游戏名录与游戏榜单的构建。
 
-`make index` 与**服务启动时的自动补建**都走这里的 `build_index()`；服务启动时还会走
-`ensure_ranking_loaded()`，把榜单 CSV 就地补进一个已经存在的库。这个模块是
-`<运行时根>/db/game.db` 的**唯一写入方**；平台运行期的所有读都走
-`search_service.GameSearchService` 与 `ranking_service.GameRankingService`，它们一律以
-`mode=ro` 打开。所以这里可以放心用「整库重建 + 原子替换」这种最简单也最不容易出错的做法，
-不需要增量更新。
+只在 `make index` 时构建数据；服务启动只用 `ensure_empty_game_db()` 建空的当前结构，
+不重载、不重建已有 game.db。这个模块是
+`<运行时根>/db/game.db` 的**构建者**；运行期读走 `search_service.GameSearchService`
+与 `ranking_service.GameRankingService`，它们一律以 `mode=ro` 打开。运行期的
+`ranking.in_library` 标记由 `ranking_flags.py` 用短事务更新，不做整库重建。
+所以这里可以放心用「整库重建 + 原子替换」这种最简单也最不容易出错的做法。
 
 数据源两份，都在 `backend/search/` 下：
 
-- `catalog/` 下的一份份 `中文名,英文名` 两列名录（UTF-8 带 BOM、CRLF、首行表头），构成检索索引；
+- `catalog/` 下的一份份 `中文名,英文名` 两列名录（UTF-8 带 BOM、CRLF、首行表头），构成游戏名录索引；
   机种由文件名经 `platforms.SEARCH_CSV_CONSOLE_NAMES` 推导，不再写在行里；
 - `rankings/` 下每个机种一个四列 CSV（`中文名,英文名,评分,卡带ID`），构成游戏榜单；
   机种由文件名（机种 id）决定。
 
-榜单单独建表、单独一个版本号：它的表结构变化不影响检索的 `schema_version`，补榜单失败也不会
-把检索一起变成「版本过旧」。
+榜单单独建表、单独一个版本号：它的表结构变化不影响游戏名录的 `schema_version`，补榜单失败也不会
+把游戏名录一起变成「版本过旧」。
 
-**机种归一**：检索名录的机种来自文件名映射（`gb.csv` → `任天堂GB`、`gbc.csv` → `任天堂GBC`），
+**机种归一**：游戏名录的机种来自文件名映射（`gb.csv` → `任天堂GB`、`gbc.csv` → `任天堂GBC`），
 榜单机种直接来自文件名（`nes.csv` → 机种 id `nes`），两份数据都用 `backend/games/platforms.py`
-的词表表达同一套机种。检索侧同一个机种的多个原始名（`任天堂GB` + `任天堂GBC`）**在库里就是同一行
-console**，页面的机种下拉天然不会出现两个同名项；检索名录里认不出的机种（Wii、3DS、CD-I…）
+的词表表达同一套机种。名录侧同一个机种的多个原始名（`任天堂GB` + `任天堂GBC`）**在库里就是同一行
+console**，页面的机种下拉天然不会出现两个同名项；游戏名录里认不出的机种（Wii、3DS、CD-I…）
 保留原文、`platform_id` 留空，自成一组，显示名仍按「公司名 + 空格 + 型号」补空格。
 """
 
@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, Settings
+from backend.games.cartridge import normalize_cartridge_id
 from backend.games.platforms import (
     PLATFORM_BY_ID,
     PLATFORMS,
@@ -50,19 +50,20 @@ from backend.games.search_text import index_text
 
 logger = logging.getLogger(__name__)
 
-# 索引结构的版本。改了检索表结构就加一，运行期读到不匹配的版本会直接报「请重新构建」，
+# 索引结构的版本。改了游戏名录表结构就加一，运行期读到不匹配的版本会直接报「请重新构建」，
 # 而不是在旧库上跑出新代码的诡异结果。**榜单表不在这个版本的管理范围内**（见 RANKING_SCHEMA_VERSION）：
-# 往老库里加榜单表是纯新增，不该让已经能用的检索库被判成过旧。
+# 往老库里加榜单表是纯新增，不该让已经能用的游戏名录库被判成过旧。
 # 2：机种归一（console 表加 platform_id / raw_names，同一机种合并成一行）
 SCHEMA_VERSION = "2"
 
-# 榜单表结构的版本，独立于上面的检索版本。
+# 榜单表结构的版本，独立于上面的游戏名录版本。
 # 2：机种归一（ranking 表加 platform 列，主键从 (console, rank) 改成 (platform, rank)）
-# 3：单列 title 拆成 zh / en 两列（与检索页的中文名、英文名对齐）
+# 3：单列 title 拆成 zh / en 两列（与游戏名录的中文名、英文名对齐）
 # 4：增加 score 列（MobyGames 原始 double）
 # 5：增加评分索引（跨机种 score、机种+score）
 # 6：去掉 rank，增加自增 id 与 (platform, en) 唯一索引
-RANKING_SCHEMA_VERSION = "6"
+# 7：增加 in_library 标记与卡带 ID → ranking.id 映射表
+RANKING_SCHEMA_VERSION = "7"
 
 # 建库语句。game_fts 是 contentless（content=''）表：只存倒排索引、不重复存正文，
 # 正文永远从 game 表取——所以 snippet()/highlight() 在它上面恒返回 NULL，高亮必须在前端做。
@@ -108,8 +109,8 @@ CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 # `score` 存 MobyGames 原始 double。`rank` 不再落库。
 # `uq_ranking_platform_en` 保证同一机种内英文名唯一；评分排序走 `_RANKING_INDEXES`。
 #
-# 机种存文本而不是外键到 console 表：榜单的机种未必出现在检索名录里，复用 console 表会污染
-# 检索的机种下拉（两个页面各自维护自己的机种清单，只是**用同一份词表**）。
+# 机种存文本而不是外键到 console 表：榜单的机种未必出现在游戏名录里，复用 console 表会污染
+# 游戏名录的机种下拉（两个页面各自维护自己的机种清单，只是**用同一份词表**）。
 # cartridge_ids 存 JSON 数组文本：每行 0~2 个，读取时 json.loads 即可，不需要子表与 join。
 _RANKING_SCHEMA = """
 CREATE TABLE IF NOT EXISTS ranking(
@@ -119,7 +120,13 @@ CREATE TABLE IF NOT EXISTS ranking(
     score         REAL NOT NULL,
     zh            TEXT NOT NULL,
     en            TEXT NOT NULL,
-    cartridge_ids TEXT NOT NULL
+    cartridge_ids TEXT NOT NULL,
+    in_library    INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS ranking_cartridges(
+    cartridge_id TEXT PRIMARY KEY,
+    ranking_id   INTEGER NOT NULL REFERENCES ranking(id)
 );
 """
 
@@ -129,16 +136,156 @@ _SCHEMA = _SEARCH_SCHEMA + _RANKING_SCHEMA
 # - `(platform, en)` 唯一：数据契约要求同一机种内英文名唯一。
 # - `(score DESC)`：跨机种 `ORDER BY score DESC, id`。`id` 是主键，二级索引自动附带 id。
 # - `(platform, score DESC)`：单机种 `WHERE platform = ? ORDER BY score DESC, id`。
+# - `(in_library, score DESC)` / `(platform, in_library, score DESC)`：库存三态筛选后的排序。
+# - `ranking_id`：反向按榜单行查卡带 ID，供标记重算。
 _RANKING_INDEXES = (
     "CREATE UNIQUE INDEX IF NOT EXISTS uq_ranking_platform_en ON ranking(platform, en)",
     "CREATE INDEX IF NOT EXISTS idx_ranking_score ON ranking(score DESC)",
     "CREATE INDEX IF NOT EXISTS idx_ranking_platform_score ON ranking(platform, score DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ranking_in_library_score ON ranking(in_library, score DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ranking_platform_in_library_score "
+    "ON ranking(platform, in_library, score DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_ranking_cartridges_ranking "
+    "ON ranking_cartridges(ranking_id)",
 )
 
 
 def _create_ranking_indexes(conn: sqlite3.Connection) -> None:
     for statement in _RANKING_INDEXES:
         conn.execute(statement)
+
+
+# 空 game.db 初始化与结构校验：结构只允许由启动初始化或 make upgrade 改变。
+_GAME_DB_TABLES = {
+    "console",
+    "game",
+    "game_fts",
+    "meta",
+    "ranking",
+    "ranking_cartridges",
+}
+_GAME_DB_INDEXES = {
+    "idx_console_platform",
+    "idx_game_console",
+    "uq_ranking_platform_en",
+    "idx_ranking_score",
+    "idx_ranking_platform_score",
+    "idx_ranking_in_library_score",
+    "idx_ranking_platform_in_library_score",
+    "idx_ranking_cartridges_ranking",
+}
+
+
+def _game_db_table_names(path: Path) -> set[str] | None:
+    """只读列出用户表；打不开返回 None。"""
+    try:
+        conn = sqlite3.connect(f"{Path(path).as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return None
+    try:
+        conn.execute("PRAGMA query_only = 1")
+        return {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def ensure_empty_game_db(path: Path) -> bool:
+    """game.db 不存在或没有任何表时，建一份最新的空结构（表/索引/版本，无数据）。
+
+    已有表的库**一律不碰**：旧版本结构由 make upgrade 迁移，数据由 make index 重建。
+    返回是否新建了文件。
+    """
+    path = Path(path)
+    tables = _game_db_table_names(path) if path.is_file() else set()
+    if tables:
+        return False
+    if tables is None:
+        logger.warning("无法读取 game.db，跳过空结构初始化：%s", path)
+        return False
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f"{path.name}.init.tmp")
+    temp.unlink(missing_ok=True)
+    conn = None
+    try:
+        conn = sqlite3.connect(temp)
+        conn.executescript(_SCHEMA)
+        _create_ranking_indexes(conn)
+        _upsert_meta(
+            conn,
+            {
+                "schema_version": SCHEMA_VERSION,
+                "ranking_schema_version": RANKING_SCHEMA_VERSION,
+                "ranking_rows": "0",
+                "ranking_consoles": "0",
+            },
+        )
+        conn.commit()
+        conn.close()
+        conn = None
+        os.chmod(temp, 0o644)
+        os.replace(temp, path)
+        logger.info("已初始化空 game.db 结构：%s（版本 %s）", path, RANKING_SCHEMA_VERSION)
+        return True
+    except Exception:
+        temp.unlink(missing_ok=True)
+        raise
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def game_db_is_current(path: Path) -> bool:
+    """game.db 是否已经是当前结构（make index 只允许在此时更新数据）。"""
+    path = Path(path)
+    if not path.is_file():
+        return False
+    try:
+        conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return False
+    try:
+        conn.execute("PRAGMA query_only = 1")
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master "
+                "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+        }
+        if not _GAME_DB_TABLES <= tables:
+            return False
+        meta = dict(
+            conn.execute("SELECT key, value FROM meta").fetchall()
+        )
+        if meta.get("schema_version") != SCHEMA_VERSION:
+            return False
+        if meta.get("ranking_schema_version") != RANKING_SCHEMA_VERSION:
+            return False
+        ranking_columns = {
+            row[1] for row in conn.execute("PRAGMA table_info(ranking)")
+        }
+        if "in_library" not in ranking_columns:
+            return False
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+            )
+        }
+        return _GAME_DB_INDEXES <= indexes
+    except sqlite3.Error:
+        return False
+    finally:
+        conn.close()
 
 
 # 榜单里同一格最多两个卡带 ID（也可以一个都没有），用这些分隔符分开。**空格不是分隔符**：卡带 ID 里常有空格
@@ -152,7 +299,7 @@ _RANKING_COLUMNS = 4
 _RANKING_OLD_INDEX_HEADERS = {"序号", "排名"}
 # 评分只接受普通十进制写法，落库转 double；负号、科学计数法一律拒绝。
 _RANKING_SCORE_RE = re.compile(r"^\d+(?:\.\d+)?$")
-# 检索名录的表头。真实目录里的 CSV 都带这一行；自定义 `--csv-dir` 可以不带，所以按可选处理：
+# 游戏名录的表头。真实目录里的 CSV 都带这一行；自定义 `--csv-dir` 可以不带，所以按可选处理：
 # 只跳过**第一行**且内容恰好是这两格，避免把恰巧同名的游戏当表头。
 _SEARCH_HEADER = ("中文名", "英文名")
 
@@ -194,67 +341,6 @@ class RankingData:
     source: str
 
 
-@dataclass(frozen=True)
-class RankingLoadStats:
-    rows: int
-    consoles: int
-    fingerprint: str
-
-
-# `ensure_game_index(ranking_dir=...)` 的默认值：区分「没传，用 RANKING_CSV_DIR」与
-# 「显式传 None，本次不处理榜单」——测试要能 monkeypatch 模块常量，也要能关掉榜单。
-_DEFAULT_RANKING = object()
-
-
-def ensure_game_index(
-    settings: Settings,
-    *,
-    csv_dir: Path | None = None,
-    ranking_dir: Path | None | object = _DEFAULT_RANKING,
-) -> BuildStats | None:
-    """启动时补一次索引：**没有才建**，已经存在就跳过；榜单另外就地补一次。
-
-    服务起来后自检一次，用户就不用为了第一次能用检索页去手工跑命令；`make index` 仍然是
-    手动重建/更新索引的入口（换 CSV、改分词规则之后用它覆盖）。
-
-    全程 best-effort，**绝不拦住启动**：建不出来最多是检索页提示「尚未构建索引」、
-    榜单页提示「榜单尚未加载」（例如数据根没有写权限、或 CSV 被人删掉了）。
-    """
-    if settings.TESTING:
-        return None
-
-    if ranking_dir is _DEFAULT_RANKING:
-        ranking_path: Path | None = RANKING_CSV_DIR
-    else:
-        ranking_path = Path(ranking_dir) if ranking_dir else None
-
-    target = settings.game_index_path
-    if target.is_file() and _index_version_matches(target):
-        # 库已经在且版本对得上：只把榜单补进去（源目录没变时这个调用一个字节都不写）
-        _load_ranking_best_effort(target, ranking_path)
-        return None
-    if target.is_file():
-        # 版本对不上 = 老库配新代码，运行期一律 503。这里直接整库重建一次，别让人为了
-        # 升级去手工跑 make index（Docker 与 Windows 包两条路线都不该有这个步骤）。
-        logger.info("游戏检索索引版本与当前代码不符，自动重建：%s", target)
-
-    source = Path(csv_dir) if csv_dir else SEARCH_CSV_DIR
-    if not source.is_dir():
-        logger.info(
-            "没有找到游戏检索的 CSV 名录（%s），跳过自动构建；"
-            "要在容器里用检索，请先在宿主机执行 make index。",
-            source,
-        )
-        return None
-
-    try:
-        # build_index 自己会打一条 INFO（路径 + 行数 + 机种数），这里不重复
-        return build_index(source, target, ranking_dir=ranking_path, strict_ranking=False)
-    except Exception as exc:  # noqa: BLE001 - 建不出来不该拦住服务启动
-        logger.warning("自动构建游戏检索索引失败（不影响启动）：%s", exc)
-        return None
-
-
 def build_index(
     csv_dir: Path,
     out_path: Path,
@@ -262,13 +348,13 @@ def build_index(
     ranking_dir: Path | None = None,
     strict_ranking: bool = False,
 ) -> BuildStats:
-    """读 `csv_dir` 下所有检索 CSV，重建 `out_path`（`<运行时根>/db/game.db`）。
+    """读 `csv_dir` 下所有游戏名录 CSV，构建 `out_path`（`<运行时根>/db/game.db`）的数据。
 
-    可重复执行：每次都从零重建，成功后整体替换旧文件。失败不会留下半成品——
-    临时文件写在同目录、失败即删，旧库原封不动。
-
-    `ranking_dir` 给了就在同一次构建里把榜单也写进去；`strict_ranking=False` 时榜单目录
-    坏了只记 warning（检索照常建），`True`（`make index`）时直接抛错让人看到问题。
+    调用方必须先确认 `out_path` 已是当前结构（CLI 用 `game_db_is_current()` 校验）；
+    这里只写数据、不做结构迁移。写入用同结构的临时库 + 原子替换，可重复执行，
+    失败不会留下半成品。`ranking_dir` 给了就在同一次构建里把榜单也写进去；
+    `strict_ranking=False` 时榜单目录坏了只记 warning（游戏名录照常建），
+    `True`（`make index`）时直接抛错让人看到问题。
     """
     csv_files = sorted(Path(csv_dir).glob("*.csv"), key=_csv_sort_key)
     if not csv_files:
@@ -283,7 +369,7 @@ def build_index(
             except RankingCsvError:
                 if strict_ranking:
                     raise
-                logger.warning("游戏榜单 CSV 解析失败，本次只建检索索引：%s", ranking_path)
+                logger.warning("游戏榜单 CSV 解析失败，本次只建游戏名录：%s", ranking_path)
 
     out_path = Path(out_path)
     temp_path = out_path.with_name(f"{out_path.name}.tmp")
@@ -325,7 +411,7 @@ def build_index(
         ranking_consoles=ranking_consoles,
     )
     logger.info(
-        "游戏检索索引已重建：%s（%d 行 / %d 机种，榜单 %d 条 / %d 机种）",
+        "游戏名录与游戏榜单已重建：%s（名录 %d 行 / %d 机种，榜单 %d 条 / %d 机种）",
         out_path,
         rows,
         consoles,
@@ -335,105 +421,6 @@ def build_index(
     return stats
 
 
-def ensure_ranking_loaded(
-    db_path: Path,
-    ranking_dir: Path,
-    *,
-    strict: bool = False,
-) -> RankingLoadStats | None:
-    """把榜单目录就地补进一个已经存在的 `game.db`（服务启动时调用）。
-
-    幂等：榜单目录里所有 CSV 的 SHA-256 与库里的指纹一致时**连读写连接都不打开**，
-    一个字节都不写。指纹用原始字节算而不是 size+mtime：`touch`、`git checkout`、解压都会
-    改 mtime 但内容没变，而 `cp -p` / 解压工具又会保留 mtime，两者都会误判。
-
-    `strict=False`（启动路径）时任何失败都只记 warning 并返回 `None`，绝不拦住启动；
-    `strict=True` 时抛出 `IndexBuildError`。
-    """
-    db_path = Path(db_path)
-    ranking_dir = Path(ranking_dir)
-    if not db_path.is_file() or not ranking_dir.is_dir():
-        return None
-
-    try:
-        data = _load_ranking_dir(ranking_dir)
-    except RankingCsvError as exc:
-        if strict:
-            raise
-        logger.warning("游戏榜单 CSV 解析失败，跳过加载（不影响启动）：%s", exc)
-        return None
-
-    stats = RankingLoadStats(
-        rows=len(data.rows), consoles=len(data.platforms), fingerprint=data.fingerprint
-    )
-
-    # 第一步：只读预检。指纹一致就到此为止，绝不打开读写连接。
-    conn = None
-    try:
-        conn = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
-        conn.execute("PRAGMA query_only = 1")
-        if not _search_schema_matches(conn):
-            logger.warning("游戏检索索引版本与当前代码不符，跳过榜单就地加载：%s", db_path)
-            return None
-        if _ranking_matches(conn, data.fingerprint):
-            return stats
-    except sqlite3.Error as exc:
-        if strict:
-            raise IndexBuildError(f"读取榜单索引失败：{exc}") from exc
-        logger.warning("读取榜单索引失败，跳过加载（不影响启动）：%s", exc)
-        return None
-    finally:
-        if conn is not None:
-            conn.close()
-
-    # 第二步：就地更新。显式事务 + 事务内二次指纹检查，失败回滚后旧榜单原封不动。
-    conn = None
-    try:
-        conn = sqlite3.connect(db_path)
-        try:
-            # 不开 WAL：WAL 会留 -wal/-shm 伴随文件，而整库重建那条路是 os.replace 主库，
-            # 新库配旧 -wal 必坏。老库万一曾处于 WAL 模式，这里也顺手掰回来。
-            conn.execute("PRAGMA journal_mode = DELETE")
-        except sqlite3.Error:  # pragma: no cover - 只读库在这里失败，下面写入时再报
-            pass
-        conn.execute("BEGIN IMMEDIATE")
-        if _ranking_matches(conn, data.fingerprint):
-            conn.commit()
-            return stats
-        conn.execute("DROP TABLE IF EXISTS ranking")
-        conn.execute(_RANKING_SCHEMA)
-        _create_ranking_indexes(conn)
-        _write_ranking(conn, data)
-        conn.commit()
-    except (sqlite3.Error, OSError) as exc:
-        if conn is not None:
-            try:
-                conn.rollback()
-            except sqlite3.Error:  # pragma: no cover - 回滚都失败就只能记日志
-                pass
-        if strict:
-            raise _ranking_write_error(exc, db_path) from exc
-        logger.warning("%s（不影响启动）", _ranking_write_error(exc, db_path))
-        return None
-    finally:
-        if conn is not None:
-            conn.close()
-
-    logger.info("游戏榜单已加载：%s（%d 条 / %d 机种）", db_path, stats.rows, stats.consoles)
-    return stats
-
-
-def _load_ranking_best_effort(db_path: Path, ranking_dir: Path | None) -> None:
-    """启动路径的包装：任何异常都只记日志，绝不冒泡到 `create_app()`。"""
-    if ranking_dir is None:
-        return
-    if not Path(ranking_dir).is_dir():
-        logger.info("没有找到游戏榜单 CSV 目录（%s），跳过加载。", ranking_dir)
-        return
-    try:
-        ensure_ranking_loaded(db_path, ranking_dir, strict=False)
-    except Exception as exc:  # noqa: BLE001 - 兜底，函数内部已经处理过常见错误
-        logger.warning("加载游戏榜单失败（不影响启动）：%s", exc)
 
 
 def _permission_error(out_path: Path) -> IndexBuildError:
@@ -444,17 +431,6 @@ def _permission_error(out_path: Path) -> IndexBuildError:
         f'    sudo chown -R "$USER" {out_path.parent.parent}\n'
         f"再重新运行 make index。"
     )
-
-
-def _ranking_write_error(exc: Exception, db_path: Path) -> IndexBuildError:
-    """榜单写库失败的统一中文提示：权限问题要给出可照做的命令。"""
-    if isinstance(exc, sqlite3.OperationalError) and "unable to open database" in str(exc):
-        return IndexBuildError(
-            f"没有写入权限，无法把榜单写进 {db_path}\n"
-            f'（该目录多半是 Docker 容器以 root 建的）先执行一次：\n'
-            f'    sudo chown -R "$USER" {db_path.parent.parent}'
-        )
-    return IndexBuildError(f"加载游戏榜单失败：{exc}")
 
 
 def _write_database(
@@ -599,7 +575,7 @@ def _write_consoles(conn: sqlite3.Connection, groups: dict[str, list[str]]) -> d
 
 
 def _console_name_for(csv_file: Path) -> str:
-    """检索 CSV 的机种身份：文件名 stem 经映射表还原；未登记时按 stem 兜底。
+    """游戏名录 CSV 的机种身份：文件名 stem 经映射表还原；未登记时按 stem 兜底。
 
     兜底是为了让 `--csv-dir` 指向自定义目录时仍能用；真实 `backend/search/catalog/` 目录的
     文件名完整性由 `tests/test_platforms.py` 钉住。
@@ -750,11 +726,15 @@ def _load_ranking_dir(ranking_dir: Path) -> RankingData:
 
 
 def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, int]:
-    """把榜单整份写进 `ranking` 表并更新 meta（调用方负责事务与建表）。"""
-    conn.executemany(
-        "INSERT INTO ranking(platform, console, score, zh, en, cartridge_ids) "
-        "VALUES(?, ?, ?, ?, ?, ?)",
-        [
+    """把榜单整份写进 `ranking` 表、重建卡带映射并更新 meta（调用方负责事务与建表）。"""
+    # 一行一行插，拿 lastrowid 建映射；榜单是几千行级，事务内逐条插入可以接受。
+    mapping: dict[str, int] = {}
+    first_seen: dict[str, str] = {}
+    conflicts: list[str] = []
+    for row in data.rows:
+        cursor = conn.execute(
+            "INSERT INTO ranking(platform, console, score, zh, en, cartridge_ids, in_library) "
+            "VALUES(?, ?, ?, ?, ?, ?, 0)",
             (
                 row.platform,
                 row.console,
@@ -762,9 +742,36 @@ def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, in
                 row.zh,
                 row.en,
                 json.dumps(list(row.cartridge_ids), ensure_ascii=False),
+            ),
+        )
+        ranking_id = cursor.lastrowid
+        seen_in_row: set[str] = set()
+        for raw in row.cartridge_ids:
+            normalized = normalize_cartridge_id(raw)
+            if not normalized or normalized in seen_in_row:
+                continue
+            seen_in_row.add(normalized)
+            previous = mapping.get(normalized)
+            if previous is not None and previous != ranking_id:
+                conflicts.append(
+                    f"{normalized}（{first_seen[normalized]} ↔ "
+                    f"{row.platform} / {row.zh or row.en or '未命名'}）"
+                )
+                continue
+            mapping[normalized] = ranking_id
+            first_seen.setdefault(
+                normalized, f"{row.platform} / {row.zh or row.en or '未命名'}"
             )
-            for row in data.rows
-        ],
+
+    if conflicts:
+        raise RankingCsvError(
+            "榜单 CSV 中同一卡带 ID 出现在多行（卡带 ID 必须全局唯一）：\n  "
+            + "\n  ".join(conflicts)
+        )
+
+    conn.executemany(
+        "INSERT INTO ranking_cartridges(cartridge_id, ranking_id) VALUES(?, ?)",
+        list(mapping.items()),
     )
     _upsert_meta(
         conn,
@@ -785,50 +792,4 @@ def _upsert_meta(conn: sqlite3.Connection, values: dict[str, str]) -> None:
         "INSERT INTO meta(key, value) VALUES(?, ?) "
         "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         values.items(),
-    )
-
-
-def _index_version_matches(db_path: Path) -> bool:
-    """库文件里的检索版本与当前代码是否一致。读不出来（坏库、没权限）一律当不一致，
-    让调用方走整库重建那条路——重建失败也只会记 warning。"""
-    try:
-        conn = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True)
-    except sqlite3.Error:  # pragma: no cover - 路径都由代码拼，打不开只可能是环境问题
-        return False
-    try:
-        conn.execute("PRAGMA query_only = 1")
-        return _search_schema_matches(conn)
-    except sqlite3.Error:
-        return False
-    finally:
-        conn.close()
-
-
-def _search_schema_matches(conn: sqlite3.Connection) -> bool:
-    """检索版本与代码一致才允许就地写榜单：不往看不懂的库里写东西。"""
-    try:
-        row = conn.execute("SELECT value FROM meta WHERE key = 'schema_version'").fetchone()
-    except sqlite3.Error:
-        return False
-    return bool(row and row[0] == SCHEMA_VERSION)
-
-
-def _ranking_matches(conn: sqlite3.Connection, fingerprint: str) -> bool:
-    """库里已经装的就是这份 CSV：版本一致、指纹一致、表也在。"""
-    try:
-        version = conn.execute(
-            "SELECT value FROM meta WHERE key = 'ranking_schema_version'"
-        ).fetchone()
-        stored = conn.execute("SELECT value FROM meta WHERE key = 'ranking_fingerprint'").fetchone()
-        table = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ranking'"
-        ).fetchone()
-    except sqlite3.Error:
-        return False
-    return bool(
-        version
-        and version[0] == RANKING_SCHEMA_VERSION
-        and stored
-        and stored[0] == fingerprint
-        and table
     )

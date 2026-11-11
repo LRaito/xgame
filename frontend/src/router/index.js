@@ -27,7 +27,7 @@ const routes = [
                 path: "games/manage",
                 name: "games-manage",
                 component: () => import("@/views/games/manage/index.vue"),
-                meta: { title: "游戏管理" },
+                meta: { title: "库存管理" },
             },
             {
                 path: "games/discover",
@@ -54,7 +54,7 @@ const routes = [
                 meta: { title: "机型介绍", hiddenInMenu: true },
             },
             {
-                // 旧路径（游戏检索）重定向到游戏发现，保留 ?tab=ranking 之类的查询参数。
+                // 旧路径（游戏名录页）重定向到游戏发现，保留 ?tab=ranking 之类的查询参数。
                 // 不设 meta.title，否则会被 buildMenuFromRoutes() 收进侧栏。
                 path: "games/search",
                 redirect: (to) => ({ path: "/games/discover", query: to.query }),

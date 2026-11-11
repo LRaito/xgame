@@ -116,6 +116,7 @@ def _manage_payload(item) -> dict:
         "updated_at": iso(item.updated_at),
         "has_guide": bool(item.guide_kind),
         "guide_kind": item.guide_kind,
+        "in_ranking": item.in_ranking,
     }
 
 
@@ -195,6 +196,7 @@ def games_manage_list(
     service: GameServiceDep,
     game_type: str | None = Query(None),
     q: str | None = Query(None),
+    in_ranking: bool | None = Query(None),
     page: int = Query(1),
     page_size: int = Query(MANAGE_PAGE_SIZE_DEFAULT),
 ):
@@ -202,6 +204,7 @@ def games_manage_list(
     result = service.list_manage(
         game_type=game_type or None,
         keyword=q or None,
+        in_ranking=in_ranking,
         page=page,
         page_size=page_size,
     )
