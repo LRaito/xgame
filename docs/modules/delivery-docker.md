@@ -36,13 +36,13 @@
 - 数据落两个宿主目录，**不使用任何 docker 具名卷**。
 - `STORAGE_HOST_DIR` 是数据根，bind 到容器 `/data`。
 - `RUNTIME_HOST_DIR` 是运行时根，bind 到容器 `/runtime`。
-- 数据根放游戏文件、检索索引与月度备份。
-- 运行时根放 SQLite 库与 H5/攻略解包产物。
+- 数据根放游戏文件与月度备份。
+- 运行时根放 SQLite 业务库、检索索引与 H5/攻略解包产物。
 - 不建 `.env` 时两个根都退回 `./data/storage`。
 - `.env.example` 的默认值是 `./data/storage` 与 `./data/runtime`。
 - SQLite 固定为 `<运行时根>/db/app.db`，没有 `DATABASE_URL`。
-- 检索索引在 `<数据根>/db/game.db`。
-- 月度备份在 `<数据根>/db/<YYYY-MM>.db`。
+- 检索索引在 `<运行时根>/db/game.db`。
+- 月度备份在 `<数据根>/db/app.db.<YYYY-MM>`。
 - 证书随仓库提交在 `certs/`，只读挂到 `/etc/nginx/certs`。
 - `.env` 只有三个键：`STORAGE_HOST_DIR`、`RUNTIME_HOST_DIR`、`WEB_HTTPS_PORT`。
 - 后端不读 `.env`；两个 `*_HOST_DIR` 由 compose 传进容器，只给哨兵判断。
@@ -120,7 +120,7 @@
 
 - `create_app()` 启动时立刻调一次 `backup_database()`。
 - 之后每 `BACKUP_INTERVAL_SECONDS`（1 小时）由守护线程再备一次。
-- 当月只有一份 `<YYYY-MM>.db`，写在数据根 `db/` 里。
+- 当月只有一份 `app.db.<YYYY-MM>`，写在数据根 `db/` 里。
 - 每次整份重写：先写 `.tmp` 再 `os.replace()`。
 - 读的人永远看到完整文件，快照最多落后一小时。
 - 用 `sqlite3` 的 backup API，不拷文件；服务一直在写，裸拷会撕裂。
@@ -141,8 +141,8 @@
 ## 边界与错误
 
 - 缺哨兵：api 容器反复重启，日志里有中文提示与要 `touch` 的宿主路径。
-- 数据根被 Docker 以 root 建过时，宿主机用户可能没有写权限。
-- 此时 `make index` 会提示 `sudo chown -R "$USER" "$STORAGE_HOST_DIR"`。
+- 运行时根被 Docker 以 root 建过时，宿主机用户可能没有写权限。
+- 此时 `make index` 会提示 `sudo chown -R "$USER" "$RUNTIME_HOST_DIR"`。
 - `TESTING` 下跳过哨兵检查与备份线程。
 - 宿主端口被占用时 web 容器直接起不来。
 - 没有对象存储、没有具名卷、没有服务端渲染页面。

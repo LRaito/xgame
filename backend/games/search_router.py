@@ -1,6 +1,6 @@
 """游戏检索接口（只读）。
 
-数据源是 `make index` 构建的独立只读库 `<根路径>/db/game.db`，与平台自己的 `games` 表无关。
+数据源是 `make index` 构建的独立只读库 `<运行时根>/db/game.db`，与平台自己的 `games` 表无关。
 两条路径都在 `/api/games/search` 下，都是 GET（自动免 CSRF），都要登录。
 """
 

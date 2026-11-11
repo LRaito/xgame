@@ -32,7 +32,7 @@
 
 ## 依赖
 
-- `<数据根>/db/game.db` 与 SQLite FTS5。
+- `<运行时根>/db/game.db` 与 SQLite FTS5。
 - `backend/search/catalog/` 的 37 个名录 CSV 与 `backend/search/rankings/` 的 34 个机种榜单 CSV。
 - `make index` 与启动时的自动补建。
 
@@ -49,8 +49,8 @@
 - 榜单数据源是 `backend/search/rankings/`，每个机种一个四列 CSV
   （`中文名,英文名,评分,卡带ID`），机种由文件名（机种 id）决定。
 - 榜单放单独目录；混进 `catalog/` 会被当成坏行。
-- 索引库路径是 `<STORAGE_ROOT>/db/game.db`（`GAME_INDEX_FILENAME`）。
-- 索引在数据根里，与 `app.db` 无外键关系，是独立派生只读库。
+- 索引库路径是 `<RUNTIME_ROOT>/db/game.db`（`GAME_INDEX_FILENAME`）。
+- 索引在运行时根里，与 `app.db` 无外键关系，是独立派生只读库。
 - 索引刻意不参与备份，因为它可从 CSV 完整重建。
 - 检索与榜单 CSV 随 `backend/` 进 api 镜像与 Windows 包；换数据要重建镜像。
 - 表：`console`（统一机种）、`game`（名录行）、`game_fts`（FTS5）与 `ranking`。
@@ -73,7 +73,7 @@
 - 步骤：写同目录 `game.db.tmp` → `chmod 0644` → `os.replace()`。
 - 可重复执行；**不开 WAL**，避免残留 `-wal`/`-shm` 与新主库错配。
 - 重建后不用重启 api：旧连接读旧 inode，新请求自动拿新库。
-- 宿主机与容器写同一个 bind 数据目录，宿主机 `make index` 容器立刻能读到。
+- 宿主机与容器写同一个 bind 运行时目录，宿主机 `make index` 容器立刻能读到。
 - 运行期读经 `GameSearchService` 与 `GameRankingService`。
 - 打开方式是 `Path.as_uri()` + `?mode=ro` + `PRAGMA query_only=1`。
 - 每请求一条短连接，用完即关；运行期绝不写它。

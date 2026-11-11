@@ -1,6 +1,6 @@
 """游戏榜单的只读查询。
 
-数据是 `backend/games/search_index.py` 写进 `<根路径>/db/game.db` 的 `ranking` 表
+数据是 `backend/games/search_index.py` 写进 `<运行时根>/db/game.db` 的 `ranking` 表
 （`make index` 构建、服务启动时就地补载）。**这里只读**：每个请求开一条 `mode=ro` 的短连接，
 从不建文件、从不写。榜单没加载（老库、或 CSV 目录还没到位）是正常状态，返回
 `has_ranking: false` 而不是报错。

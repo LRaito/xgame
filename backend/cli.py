@@ -95,7 +95,7 @@ def build_index_cmd(
     ranking_dir: Path | None,
     skip_ranking: bool,
 ) -> None:
-    """构建游戏检索索引与游戏榜单（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。
+    """构建游戏检索索引与游戏榜单（<运行时根>/db/game.db）。可重复执行，直接覆盖旧文件。
 
     服务启动时发现索引不存在也会自动补建一次（见 search_index.ensure_game_index），
     榜单目录变化时启动也会就地补一次；这个命令是手动重建/更新的入口：换了名录或榜单

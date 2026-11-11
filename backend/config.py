@@ -46,7 +46,7 @@ WINDOWS_MOUNT_PREFIX = "/mnt"
 DB_SUBDIR = "db"
 DB_FILENAME = "app.db"
 
-# 游戏检索用的索引库，在**数据根**的 db/ 下（`<数据根>/db/game.db`）。它是从 CSV 名录派生的只读库：
+# 游戏检索用的索引库，在**运行时根**的 db/ 下（`<运行时根>/db/game.db`）。它是从 CSV 名录派生的只读库：
 # **只有 `make index` 写它**，运行期一律以 mode=ro 打开；也不参与备份（备份只认 DB_FILENAME）。
 GAME_INDEX_FILENAME = "game.db"
 
@@ -55,7 +55,7 @@ GAME_INDEX_FILENAME = "game.db"
 SEARCH_CSV_DIR = BASE_DIR / "backend" / "search" / "catalog"
 
 # 游戏榜单的 CSV 目录：每个机种一个文件，文件名就是机种 id（`nes.csv`、`segaMD.csv`…），
-# 五列 `序号,中文名,英文名,评分,卡带ID`。它和上面的名录都进同一个 `<数据根>/db/game.db`，
+# 五列 `序号,中文名,英文名,评分,卡带ID`。它和上面的名录都进同一个 `<运行时根>/db/game.db`，
 # 但**单独一个目录**：上面那个目录会被 build_index 整目录扫成检索索引，五列的榜单混进去会被
 # 当成坏行。这份数据同样随 backend/ 进 api 镜像。
 RANKING_CSV_DIR = BASE_DIR / "backend" / "search" / "rankings"
@@ -134,8 +134,8 @@ class Settings(BaseSettings):
 
     @property
     def game_index_path(self) -> Path:
-        """游戏检索索引路径：数据根/db/game.db。运行期只读，不存在时视为「尚未构建索引」。"""
-        return Path(self.STORAGE_ROOT) / DB_SUBDIR / GAME_INDEX_FILENAME
+        """游戏检索索引路径：运行时根/db/game.db。运行期只读，不存在时视为「尚未构建索引」。"""
+        return self.runtime_root / DB_SUBDIR / GAME_INDEX_FILENAME
 
 
 @lru_cache

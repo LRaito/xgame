@@ -52,7 +52,7 @@ def create_app(test_config: dict | None = None) -> FastAPI:
         # 记一条中文错误后永久阻塞，进程不监听端口（见 backend/startup_guard.py）。
         logger.error("%s 服务不会启动。", exc)
         block_forever()
-    # 启动先备一次，之后由守护线程每小时再备一次（当月只有一份 <YYYY-MM>.db，每次都整份重写）
+    # 启动先备一次，之后由守护线程每小时再备一次（当月只有一份 app.db.<YYYY-MM>，每次都整份重写）
     backup_database(settings)
     start_backup_loop(settings)
     # 启动时检查一次游戏检索索引：没有就自动补建（已有则跳过；建不出来只记 warning，不拦启动）

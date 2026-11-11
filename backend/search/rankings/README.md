@@ -4,7 +4,7 @@
 四列 `中文名,英文名,评分,卡带ID`，UTF-8（带 BOM）、CRLF。
 
 - **只被建索引读**（`backend/games/search_index.py`，两个入口：服务启动时的自动补建/就地补载与
-  `make index`）。代码不 `import` 这个目录，运行期的榜单接口只读构建好的 `<数据根>/db/game.db`。
+  `make index`）。代码不 `import` 这个目录，运行期的榜单接口只读构建好的 `<运行时根>/db/game.db`。
 - 这个目录**随 `backend/` 一起进 api 镜像与 Windows 包**，所以宿主机上的 `make index` 与
   容器/包里的启动加载都能用到它。
 - 目录里只放数据：不要加 `.py`（没有 `__init__.py` 时 Python 会把它当 namespace package）。

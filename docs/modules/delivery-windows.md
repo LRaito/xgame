@@ -43,7 +43,7 @@
 - 还有 `启动游戏平台.cmd`、`升级数据库.cmd`、`允许局域网访问.bat` 与 `allow-lan.ps1`。
 - `data/` 是数据目录，首次启动自动建。
 - `runtime/` 是包内临时目录，放 `port.txt` 与 `last-error.txt`。
-- 数据库默认在 `data/runtime/db/app.db`；`runtime_dir` 可改。
+- 数据库与发现索引默认在 `data/runtime/db/`（`app.db`、`game.db`）；`runtime_dir` 可改。
 - H5/攻略解包缓存在 `data/runtime/game/...`。
 - 数据目录可以改到包外，用 `xgame.ini` 的 `data_dir` 指绝对路径。
 - `runtime_dir` 不填就跟着 `data_dir` 走。

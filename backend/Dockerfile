@@ -22,7 +22,7 @@ RUN chmod +x backend/entrypoint.sh
 ENV STORAGE_ROOT=/data
 ENV RUNTIME_ROOT=/runtime
 
-# 中国上海时区：日志时间、月度备份文件名（<YYYY-MM>.db）与索引里的时间戳都按本地时间走。
+# 中国上海时区：日志时间、月度备份文件名（app.db.<YYYY-MM>）与索引里的时间戳都按本地时间走。
 # 基础镜像自带 /usr/share/zoneinfo（tzdata），所以只设环境变量 + 指向时区文件即可；
 # 库里的 created_at 等仍是 UTC（代码用 datetime.now(timezone.utc)），不受影响。
 ENV TZ=Asia/Shanghai

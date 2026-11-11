@@ -11,6 +11,8 @@ import sqlite3
 import pytest
 
 from backend import create_app
+from backend.config import Settings
+from backend.database import ensure_data_dir
 from backend.games import search_index
 from backend.games.search_index import IndexBuildError, build_index, ensure_game_index
 from backend.games.search_service import GameSearchService
@@ -75,7 +77,7 @@ def csv_dir(tmp_path):
 
 @pytest.fixture
 def index_path(tmp_path):
-    """建好的索引库路径（与 app 的 STORAGE_ROOT/db/game.db 一致）。"""
+    """建好的索引库路径（与 app 的 RUNTIME_ROOT/db/game.db 一致）。"""
     return tmp_path / "storage" / "db" / "game.db"
 
 
@@ -253,6 +255,22 @@ def test_ensure_game_index_builds_when_missing(csv_dir, tmp_path):
     assert stats is not None
     assert stats.rows == _EXPECTED_ROWS
     assert (tmp_path / "storage" / "db" / "game.db").is_file()
+
+
+def test_ensure_game_index_writes_to_runtime_root(csv_dir, tmp_path):
+    """两个根分开时，检索索引跟运行时根走，不再落进数据根。"""
+    settings = Settings(
+        TESTING=False,
+        STORAGE_ROOT=str(tmp_path / "storage"),
+        RUNTIME_ROOT=str(tmp_path / "runtime"),
+    )
+    ensure_data_dir(settings)
+
+    stats = ensure_game_index(settings, csv_dir=csv_dir, ranking_dir=None)
+
+    assert stats is not None
+    assert (tmp_path / "runtime" / "db" / "game.db").is_file()
+    assert not (tmp_path / "storage" / "db" / "game.db").exists()
 
 
 def test_ensure_game_index_skips_when_present(csv_dir, tmp_path):

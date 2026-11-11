@@ -14,10 +14,10 @@
 | 存储 | 位置 | 用途 |
 |---|---|---|
 | SQLite 业务库 | `<运行时根>/db/app.db` | 全部业务元数据 |
-| SQLite 备份 | `<数据根>/db/<YYYY-MM>.db` | 每月一份，整份重写 |
-| SQLite 发现索引 | `<数据根>/db/game.db` | 检索与榜单的派生只读库 |
+| SQLite 备份 | `<数据根>/db/app.db.<YYYY-MM>` | 每月一份，整份重写 |
+| SQLite 发现索引 | `<运行时根>/db/game.db` | 检索与榜单的派生只读库 |
 | 数据根 | `STORAGE_ROOT` | 原始素材，整体备份 |
-| 运行时根 | `RUNTIME_ROOT` | SQLite 库 + 解包产物 |
+| 运行时根 | `RUNTIME_ROOT` | SQLite 业务库、发现索引 + 解包产物 |
 | 哨兵文件 | 每个根下的 `.mounted` | 人工创建；只拦启动 |
 
 分工原则：
@@ -48,7 +48,7 @@
   - 版本不匹配时服务记录中文错误并永久阻塞，不监听端口。
   - `backend/` 的模型只描述最新结构，不写任何兼容旧库的分支。
   - 详细规格见 [`database-upgrade.md`](modules/database-upgrade.md)。
-- 数据根下的 `game.db` 是独立派生库，见文末「游戏发现索引」。
+- 运行时根下的 `game.db` 是独立派生库，见文末「游戏发现索引」。
 
 ### 表索引
 
@@ -338,7 +338,7 @@
 
 | 项 | 值 |
 |---|---|
-| 路径 | `<数据根>/db/game.db`（`GAME_INDEX_FILENAME`） |
+| 路径 | `<运行时根>/db/game.db`（`GAME_INDEX_FILENAME`） |
 | 写入方 | 只有 `backend/games/search_index.py` |
 | 写路径 | `build_index()` 整库重建；`ensure_ranking_loaded()` 就地补榜单 |
 | 读取方 | `GameSearchService` / `GameRankingService` |

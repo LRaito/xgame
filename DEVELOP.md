@@ -237,7 +237,7 @@ cd frontend && npm run lint
 - `backend/search/catalog/` 下 37 个中英文名录 CSV（检索）。
 - `backend/search/rankings/` 下 34 个机种榜单 CSV（每个机种一个文件，四列：`中文名,英文名,评分,卡带ID`）。
 
-它们构建成一个只读库 `<数据根>/db/game.db`：
+它们构建成一个只读库 `<运行时根>/db/game.db`：
 
 ```bash
 make index
@@ -256,14 +256,14 @@ make index
 
 ### 自动补建失败（PermissionError）
 
-数据目录若被 Docker 以 root 建过，宿主用户可能写不了。
+运行时目录若被 Docker 以 root 建过，宿主用户可能写不了。
 服务照常启动，页面提示「尚未构建索引」/「榜单尚未加载」。
 
 ```bash
-sudo chown -R "$USER" "$STORAGE_HOST_DIR"
+sudo chown -R "$USER" "$RUNTIME_HOST_DIR"
 ```
 
-也可以换一个宿主用户自有的 `STORAGE_HOST_DIR`。
+也可以换一个宿主用户自有的 `RUNTIME_HOST_DIR`。
 
 ### 改了名录、榜单或分词规则之后
 

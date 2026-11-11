@@ -2,7 +2,7 @@
 
 `make index` 与**服务启动时的自动补建**都走这里的 `build_index()`；服务启动时还会走
 `ensure_ranking_loaded()`，把榜单 CSV 就地补进一个已经存在的库。这个模块是
-`<根路径>/db/game.db` 的**唯一写入方**；平台运行期的所有读都走
+`<运行时根>/db/game.db` 的**唯一写入方**；平台运行期的所有读都走
 `search_service.GameSearchService` 与 `ranking_service.GameRankingService`，它们一律以
 `mode=ro` 打开。所以这里可以放心用「整库重建 + 原子替换」这种最简单也最不容易出错的做法，
 不需要增量更新。
@@ -262,7 +262,7 @@ def build_index(
     ranking_dir: Path | None = None,
     strict_ranking: bool = False,
 ) -> BuildStats:
-    """读 `csv_dir` 下所有检索 CSV，重建 `out_path`（`<根路径>/db/game.db`）。
+    """读 `csv_dir` 下所有检索 CSV，重建 `out_path`（`<运行时根>/db/game.db`）。
 
     可重复执行：每次都从零重建，成功后整体替换旧文件。失败不会留下半成品——
     临时文件写在同目录、失败即删，旧库原封不动。

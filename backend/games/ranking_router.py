@@ -1,6 +1,6 @@
 """游戏榜单接口（只读）。
 
-数据源与游戏检索是同一个独立只读库 `<根路径>/db/game.db`（`make index` 构建、服务启动时
+数据源与游戏检索是同一个独立只读库 `<运行时根>/db/game.db`（`make index` 构建、服务启动时
 就地补载），所以路径挂在 `/api/games/search/ranking` 下——既和检索同源，也避免在
 `/api/games` 下新增单段路径与 `games_router` 的 `/{game_id}/…` 撞车。
 两条都是 GET（自动免 CSRF），都要登录。
