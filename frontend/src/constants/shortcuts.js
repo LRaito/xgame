@@ -132,7 +132,7 @@ export const RESERVED_BINDINGS = new Set([
 export const SHORTCUT_PAGES = [
     {
         id: "shortcut-manage",
-        title: "库存管理",
+        title: "游戏管理",
         scope: "manage",
         rows: [
             {

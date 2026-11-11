@@ -7,10 +7,10 @@
             class="game-manage__tabs"
             :options="TABS"
             size="lg"
-            aria-label="库存管理"
+            aria-label="游戏库存"
         />
 
-        <!-- 库存管理 -->
+        <!-- 游戏库存 -->
         <section class="game-manage__panel">
             <div class="game-manage__toolbar">
                 <app-type-select
@@ -637,9 +637,9 @@ const ROW_HEIGHT = 40;
 const TABLE_EXTRA = 56;
 const PAGE_SIZE_MAX = 100;
 
-// 顶部标签：现在只有「库存管理」一个，值与 URL ?tab 对齐（与游戏发现同一套写法），
+// 顶部标签：现在只有「游戏库存」一个，值与 URL ?tab 对齐（与游戏发现同一套写法），
 // 以后加标签在这里追加即可
-const TABS = [{ label: "库存管理", value: "manage" }];
+const TABS = [{ label: "游戏库存", value: "manage" }];
 
 const route = useRoute();
 const router = useRouter();

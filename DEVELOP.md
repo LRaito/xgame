@@ -17,7 +17,7 @@ Vue 3 SPA（`frontend/`）+ FastAPI JSON API（`backend/`），ORM 是 SQLModel�
 主要功能：
 
 - **游戏中心**：Flash 用 Ruffle、HTML5 走沙箱 iframe、主机 ROM 用 EmulatorJS。
-- **库存管理**：上传 / 直链 / 搬运、卡带 ID 与元数据、攻略。
+- **游戏管理**：上传 / 直链 / 搬运、卡带 ID 与元数据、攻略。
 - **游戏发现**：外部游戏名录与按机种榜单。
 - **按键管理**：按账号保存自定义快捷键。
 - **机型简史**：静态展示各机种的介绍与代表机型。

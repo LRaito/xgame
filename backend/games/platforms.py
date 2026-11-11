@@ -2,7 +2,7 @@
 
 同一个平台在项目里原本有三套写法，互相看不出是同一个东西：
 
-- **库存管理**用 `game_type`（`nes` / `segaMD` / …，同时是磁盘目录名）；
+- **游戏管理**用 `game_type`（`nes` / `segaMD` / …，同时是磁盘目录名）；
 - **游戏名录**用名录 CSV 的文件名（`nes.csv`、`segaMD.csv`、`gb.csv`、`gbc.csv` …），
   文件名经 `SEARCH_CSV_CONSOLE_NAMES` 还原成中文长名（`任天堂FC`、`世嘉MD`、`任天堂GB` …）；
 - **游戏榜单**用 `backend/search/rankings/` 下的文件名，stem 就是机种 id（`nes.csv`、`segaMD.csv` …）。

@@ -28,7 +28,7 @@
 黄金的太阳-开启的封印,Golden Sun,8.118504672897197,AGB-AGSE-USA;AGB-AGSJ-JPN
 最终幻想2,Final Fantasy II,8.095327102803738,
 雷曼3,Rayman 3,8.053636363636363,AGB-AYZE-USA
-,The Legend of Zelda: A Link to the Past/Four Swords,8.052443438914027,AGB-AZLE-USA
+塞尔达传说-时空隧道,The Legend of Zelda: A Link to the Past/Four Swords,8.052443438914027,AGB-AZLE-USA
 雷曼,Rayman,8.051058823529411,
 摇滚赛车,Rock n' Roll Racing,8.0325,AGB-A4RE-USA
 旋律天国,Rhythm Tengoku,8.03170731707317,AGB-BRIJ-JPN
@@ -80,7 +80,7 @@ FIFA足球2005,FIFA Soccer 2005,7.7407407407407405,AGB-BF5E-USA
 科拿米精品游戏合集6合一,Konami Collector's Series: Arcade Advanced,7.735897435897436,AGB-AKCE-USA
 超级方块战士II Turbo,Super Puzzle Fighter II Turbo,7.73469387755102,AGB-AZ8E-USA
 我们的太阳2,Boktai 2: Solar Boy Django,7.734343434343434,AGB-U32E-USA
-,Phoenix Wright: Ace Attorney - Justice for All,7.733333333333333,
+逆转裁判2,Phoenix Wright: Ace Attorney - Justice for All,7.733333333333333,
 忍者五人组,Ninja Five-O,7.728813559322034,AGB-ANXE-USA
 超魔界村R,Super Ghouls 'N Ghosts,7.707407407407407,AGB-PAG5E-USA
 洛克人ZERO3,Mega Man Zero 3,7.703636363636364,AGB-BZ3E-USA;AGB-BZ3J-JPN
@@ -140,7 +140,7 @@ GTA职业概念赛车2,GT Advance 2: Rally Racing,7.513333333333334,AGB-AGWE-USA
 麻辣女孩2:杜肯之死,Disney's Kim Possible 2: Drakken's Demise,7.483870967741935,AGB-BKME-USA
 分裂细胞,Tom Clancy's Splinter Cell,7.477666666666666,AGB-AO4E-USA
 波斯王子-时之沙,Prince of Persia: The Sands of Time,7.468387096774193,AGB-BPYE-USA
-,Super Mario Bros.,7.463300970873787,
+超级玛丽兄弟,Super Mario Bros.,7.463300970873787,
 剑齿虎,Sabre Wulf,7.461568627450981,AGB-AWUE-USA
 托尼·霍克地下滑板2,Tony Hawk's Underground 2,7.454545454545454,AGB-B2TE-USA
 电击方块!,Denki Blocks!,7.452,AGB-ADBE-USA;AGB-ADBJ-JPN
@@ -174,7 +174,7 @@ GTA职业概念赛车3,GT Advance 3: Pro Concept Racing,7.4425,AGB-A2GE-USA
 游戏王-永恒斗士之魂,Yu-Gi-Oh!: The Eternal Duelist Soul,7.323157894736841,AGB-AY5E-USA;AGB-AY5J-JPN
 花样溜冰,Aggressive Inline,7.317777777777778,AGB-AILE-USA
 美国冰上曲棍球2002,NHL 2002,7.316666666666666,AGB-ANLE-USA
-,Zoo Keeper,7.311111111111111,
+动物公园管理员,Zoo Keeper,7.311111111111111,
 迪士尼之麻辣女孩3,Disney's Kim Possible 3: Team Possible,7.304347826086956,AGB-BQPE-USA
 圣诞惊魂夜,Tim Burton's The Nightmare Before Christmas: The Pumpkin King,7.303225806451613,AGB-BNCE-USA;AGB-BNCJ-JPN
 摩登原始人,Prehistorik Man,7.297297297297297,AGB-APHE-USA
@@ -240,7 +240,7 @@ FIFA足球2003,FIFA Soccer 2003,7.104,AGB-AFJE-USA
 通灵王1-精神大师,Shaman King: Master of Spirits,7.083333333333333,AGB-BSOE-USA
 银河战机,Phalanx,7.082352941176471,AGB-APXE-USA;AGB-APXJ-JPN
 占士邦007-夜火,007: Nightfire,7.0807692307692305,AGB-A7OE-USA
-,All-Star Baseball 2004,7.08,
+全美明星棒球2004,All-Star Baseball 2004,7.08,
 小淘气-跳跃城堡,Rugrats: Castle Capers,7.078260869565218,AGB-ARGE-USA
 托尼霍克美式滑板,Tony Hawk's American Sk8land,7.077419354838709,AGB-BH9E-USA
 索尼克弹珠派对,Sonic Pinball Party,7.075862068965517,AGB-A3VE-USA;AGB-A86J-JPN
@@ -366,7 +366,7 @@ H牧场是我家,Disney's Home on the Range,6.73157894736842,AGB-BHME-USA
 半兽敌人,CIMA: The Enemy,6.729032258064516,AGB-BCME-USA
 火爆机车赛,Excitebike,6.728125,
 多卡邦怪物猎人,Dokapon: Monster Hunter,6.7272727272727275,AGB-ADQE-USA
-,Ice Climber,6.726315789473684,
+敲冰块,Ice Climber,6.726315789473684,
 雷曼-疯狂兔子,Rayman: Raving Rabbids,6.723076923076923,AGB-BQ3E-USA
 好奇的乔治,Curious George,6.720000000000001,AGB-B3JE-USA
 卡片决斗高手-永恒的传说,Duel Masters Sempai Legends,6.720000000000001,AGB-AA9E-USA
@@ -437,7 +437,7 @@ WWF摔跤之路,WWF Road to WrestleMania,6.547826086956522,AGB-AWFE-USA
 恐龙猎人进化战争,Turok: Evolution,6.487391304347827,AGB-AT4E-USA
 料理鼠王,Disney•Pixar Ratatouille,6.485833333333333,
 吵闹的长耳大野兔,Jazz Jackrabbit,6.4787234042553195,AGB-AJJE-USA
-,"The Chronicles of Narnia: The Lion, the Witch and the Wardrobe",6.475,AGB-B2WE-USA
+纳尼亚传奇编年史,"The Chronicles of Narnia: The Lion, the Witch and the Wardrobe",6.475,AGB-B2WE-USA
 老虎伍兹高尔夫,Tiger Woods PGA Tour Golf,6.472,AGB-AT5E-USA
 ESPN高尔夫总决赛2002,ESPN Final Round Golf 2002,6.462790697674418,AGB-AGRE-USA
 极品飞车-宝石捷之旅,Need for Speed: Porsche Unleashed,6.46,AGB-AZFE-USA
@@ -626,7 +626,7 @@ X传奇限制级战警,xXx,5.608108108108108,AGB-AX3E-USA
 范海辛,Van Helsing,4.83265306122449,AGB-BANE-USA
 大卫·贝克汉姆足球,David Beckham Soccer,4.824999999999999,AGB-ABQE-USA
 荣誉勋章,Medal of Honor: Underground,4.785128205128205,AGB-AUGE-USA
-,Ultimate Mortal Kombat 3,4.739701492537313,
+终极 真人快打3,Ultimate Mortal Kombat 3,4.739701492537313,
 NFL橄榄球闪电大作战2002,NFL Blitz 20-02,4.660645161290322,AGB-ABZE-USA
 防御者,Defender,4.6,AGB-A2FE-USA
 星球大战-猎鹰飞行队,Star Wars: Flight of the Falcon,4.514893617021277,AGB-BSWE-USA

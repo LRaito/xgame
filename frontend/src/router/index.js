@@ -27,7 +27,7 @@ const routes = [
                 path: "games/manage",
                 name: "games-manage",
                 component: () => import("@/views/games/manage/index.vue"),
-                meta: { title: "库存管理" },
+                meta: { title: "游戏管理" },
             },
             {
                 path: "games/discover",

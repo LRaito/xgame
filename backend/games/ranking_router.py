@@ -74,7 +74,7 @@ def game_ranking_consoles(_user: CurrentUser, service: GameRankingServiceDep):
     """机种下拉的候选项（只列榜单 CSV 里出现过的机种）。
 
     每项 `{platform, label, playable}`：`platform` 是统一机种键（请求榜单时原样回传），
-    `label` 是与库存管理/游戏名录共用的统一显示名，`playable` 表示本平台是否已收录该机种。
+    `label` 是与游戏管理/游戏名录共用的统一显示名，`playable` 表示本平台是否已收录该机种。
     页面默认不选中任何类型。
     """
     try:

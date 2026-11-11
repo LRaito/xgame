@@ -37,7 +37,7 @@ up:
 	$(COMPOSE) restart web
 
 # 构建并后台启动
-all: build up
+all: build up upgrade index
 
 # 跑一次测试（后端 pytest + 前端 eslint），都在本机执行、不动 Docker。
 # 用 `python -m pytest` 而不是裸 `pytest`：后者不把仓库根加进 sys.path，会 import 不到 backend。

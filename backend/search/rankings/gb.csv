@@ -30,7 +30,7 @@
 荒岛冒险,Survival Kids,7.955555555555555,DMG-AVKE-USA;DMG-AVKJ-JPN
 宇宙巡航机 - 星际袭击,Gradius: The Interstellar Assault,7.935897435897435,DMG-NE-USA
 桑塔,Shantae,7.924276377217553,CGB-B3AE-USA
-,Pokémon Yellow Version: Special Pikachu Edition,7.902614379084967,
+宝可梦 - 黄,Pokémon Yellow Version: Special Pikachu Edition,7.902614379084967,
 微型机器1+2,Micro Machines 1 and 2: Twin Turbo,7.897297297297297,CGB-AT8E-USA
 怪物总动员,Monster Max,7.894736842105263,
 ,Tomb Raider Starring Lara Croft,7.891757575757575,
@@ -39,7 +39,7 @@
 雷曼,Rayman,7.885000000000001,CGB-AYQE-USA;CGB-BURJ-JPN
 可爱赛车,Wacky Races,7.88,CGB-AW9E-USA
 大金刚大陆2,Donkey Kong Land 2,7.850408163265307,DMG-ADDE-USA
-,Hexcite: The Shapes of Victory,7.8428571428571425,
+六角方块,Hexcite: The Shapes of Victory,7.8428571428571425,
 圣剑传说 - 最终幻想外传,Final Fantasy Adventure,7.832132132132132,DMG-FF-USA-1;DMG-FFJ
 耀西俄罗斯方块,Tetris Attack,7.817021276595744,DMG-AYLE-USA
 疯狂鼹鼠,Mole Mania,7.787878787878788,DMG-AMOE-USA;DMG-AMOJ-JPN
@@ -68,7 +68,7 @@
 ,Hermano,7.672000000000001,
 史努比网球,Snoopy Tennis,7.669767441860466,CGB-BS9E-USA;CGB-BS9J-JPN
 ,Konami GB Collection: Vol.1,7.6689655172413795,DMG-AJIJ-JPN
-,Looney Tunes: Carrot Crazy,7.663888888888888,DMG-ABLE-USA
+兔八哥疯狂卡通,Looney Tunes: Carrot Crazy,7.663888888888888,DMG-ABLE-USA
 大金刚大陆3,Donkey Kong Land III,7.656571428571429,DMG-AD3E-USA;CGB-AD3J-JPN
 弹珠之王,Marble Master,7.652380952380952,
 迪士尼唐老鸭,Disney's Donald Duck: Goin' Quackers,7.648979591836735,
@@ -104,7 +104,7 @@
 微型机器,Micro Machines,7.505428571428571,DMG-H3-USA
 ,Revenge of the 'Gator,7.505026455026456,
 网球,Tennis,7.498630136986301,DMG-TN-USA;DMG-TNA
-,Dragon Warrior Monsters 2: Tara's Adventure,7.4879999999999995,DMG-BQIE-USA
+勇者斗恶龙怪兽篇2 - 塔拉的冒险,Dragon Warrior Monsters 2: Tara's Adventure,7.4879999999999995,DMG-BQIE-USA
 异形战机DX,R-Type DX,7.473584905660378,DMG-AWHE-USA;DMG-ARUJ-JPN
 恶魔城2 - 贝尔蒙多的复仇,Castlevania II: Belmont's Revenge,7.472916666666666,DMG-CW-USA;DMG-CWJ
 口袋赛车2,Top Gear Pocket 2,7.472413793103448,CGB-A33E-USA;CGB-V33J-JPN
@@ -136,10 +136,10 @@
 忍者神龟3,Teenage Mutant Ninja Turtles III: Radical Rescue,7.367999999999999,DMG-K8-USA
 勇者斗恶龙1+2,Dragon Warrior I & II,7.36595744680851,DMG-AEDE-USA;DMG-AEDJ-JPN
 蝙蝠侠 - 电视游戏,Batman: The Animated Series,7.364090909090908,DMG-XM-NOE
-,Snow Bros. Nick & Tom,7.363333333333334,
+雪人兄弟,Snow Bros. Nick & Tom,7.363333333333334,
 ,Kwirk,7.3613333333333335,DMG-AP-FAH
 ,Legend of the River King GB,7.357142857142857,DMG-AFHE-USA
-,Tetris Blast,7.356451612903226,DMG-ASBE-USA
+炸弹俄罗斯方块,Tetris Blast,7.356451612903226,DMG-ASBE-USA
 高尔夫世界,Golf,7.354347826086957,DMG-GO-USA-3;DMG-GOA
 复仇女神,Nemesis,7.352287581699346,DMG-NM-USA;DMG-NMA
 蚯蚓吉姆,Earthworm Jim,7.349242424242425,DMG-AEJE-USA
@@ -156,7 +156,7 @@ WWF超级之星,WWF Superstars,7.33037037037037,DMG-LW-FAH;DMG-LWJ
 俄罗斯方块2,Tetris 2,7.322222222222222,DMG-EH-USA;DMG-EHJ
 洛克人5,Mega Man V,7.320454545454546,DMG-WM-USA;DMG-WMJ-JPN
 彩虹岛,Parasol Stars: The Story of Bubble Bobble III,7.319540229885057,DMG-P6-UKV
-,T2: Terminator 2 - Judgment Day,7.315384615384616,
+终结者2-审判日,T2: Terminator 2 - Judgment Day,7.315384615384616,
 米老鼠赛车美国挑战赛,Mickey's Speedway USA,7.307142857142857,CGB-BSNE-USA
 管道之梦,Pipe Dream,7.296296296296295,DMG-PD-USA;DMG-PDA
 小精灵炮弹对决2000,Faceball 2000,7.295,DMG-FA-USA
@@ -167,7 +167,7 @@ WWF超级之星,WWF Superstars,7.33037037037037,DMG-LW-FAH;DMG-LWJ
 街头霸王2,Street Fighter II,7.274,DMG-ASFE-USA;DMG-ASFJ-JPN
 松鼠库克的口袋冒险,Conker's Pocket Tales,7.268750000000001,DMG-ACRE-USA
 飞毛腿阿兹堤克冒险,Speedy Gonzales,7.264848484848485,DMG-G6-NOE
-,Pac-Man: Special Color Edition,7.246341463414635,DMG-AACE-USA
+吃豆人合集,Pac-Man: Special Color Edition,7.246341463414635,DMG-AACE-USA
 光之神话,Kid Icarus: Of Myths and Monsters,7.245833333333334,DMG-KA-USA
 时间之谜,Hype: The Time Quest,7.245161290322581,CGB-BHQP-EUR
 人类,The Humans,7.2444444444444445,DMG-HU-USA
@@ -180,7 +180,7 @@ F1极致场地赛,F1 Pole Position,7.23159420289855,DMG-F5-USA
 ,Konami GB Collection: Vol.3,7.223809523809523,DMG-AJKJ-JPN
 太空任务,Asteroids,7.221621621621622,DMG-AN-UKV
 高卢奇兵,Astérix,7.220261437908497,DMG-XA-FAH
-,Bomberman GB,7.213421052631579,DMG-AB2E-USA;DMG-EEJ
+炸弹人,Bomberman GB,7.213421052631579,DMG-AB2E-USA;DMG-EEJ
 洛克人 - 威利博士的复仇,Mega Man: Dr. Wily's Revenge,7.209537037037036,DMG-RW-USA-1;DMG-RWA
 唐老鸭冒险2,Disney's DuckTales 2,7.206382978723404,DMG-D7-USA;DMG-Z2J
 忍者蛙,Battletoads,7.204910394265233,DMG-BV-UKV;DMG-BVJ
@@ -211,13 +211,13 @@ V越野赛车'99,V-Rally: Edition 99,7.15,
 翻转方块,Klax,7.132000000000001,DMG-KX-USA;DMG-KLA
 肥瘦双鼠,The Fidgetts,7.125925925925926,DMG-F6-USA;DMG-F6A
 所罗门俱乐部,Solomon's Club,7.125,DMG-SC-USA;DMG-SCJ
-,Kirby's Star Stacker,7.122222222222222,DMG-AKCE-USA
+星之卡比方块,Kirby's Star Stacker,7.122222222222222,DMG-AKCE-USA
 叮当,Dig Dug,7.12051282051282,DMG-DY-USA
 龙之心,DragonHeart,7.117241379310345,DMG-ADHE-USA
 硅谷太空站,Space Station Silicon Valley,7.108,DMG-AV2P-EUR
 精华足球,Elite Soccer,7.106666666666667,DMG-YK-USA
 忍者龙剑传摩天楼决战,Ninja Gaiden Shadow,7.1066666666666665,DMG-NG-USA
-,Maya the Bee & Her Friends,7.0928571428571425,
+小蜜蜂玛雅和她的伙伴们,Maya the Bee & Her Friends,7.0928571428571425,
 外星悍将,Turrican,7.088652482269503,DMG-TQ-USA
 丁丁在西藏,Tintin in Tibet,7.087999999999999,CGB-BT6P-EUU
 泡泡龙2,Bubble Bobble: Part 2,7.0851851851851855,DMG-LX-USA
@@ -236,12 +236,12 @@ Game&Watch合集2,Game & Watch Gallery 2,7.054166666666667,DMG-AGLE-USA
 星之卡比打砖块,Kirby's Block Ball,7.041428571428571,DMG-AKXE-USA;DMG-AKXJ
 百战天虫 - 末日浩劫,Worms: Armageddon,7.03625,CGB-AAOE-USA
 ,The Simpsons: Bart vs. the Juggernauts,7.034959349593496,DMG-JU-NOE
-,Klustar,7.034391534391534,DMG-AKUE-USA
+旋转方块,Klustar,7.034391534391534,DMG-AKUE-USA
 城堡探索,Castle Quest,7.033333333333333,DMG-QH-UKV
 青蛙过街,Frogger,7.029166666666666,DMG-AFGE-USA
 罗伯迪斯冒险记,Spirou: The Robot Invasion,7.027586206896552,
 泡泡小精灵,Bubble Ghost,7.027450980392157,DMG-BG-USA;DMG-BGJ
-,All Star Tennis 2000,7.027272727272727,DMG-AZTP-EUR
+全明星网球2000,All Star Tennis 2000,7.027272727272727,DMG-AZTP-EUR
 雷霆壮志,Days of Thunder,7.027160493827161,DMG-TH-USA
 洛克人X2,Mega Man Xtreme 2,7.013793103448276,CGB-P-B2XE-USA;CGB-BXRJ-JPN
 神探加杰特,Inspector Gadget: Operation Madkactus,7.011353383458647,CGB-BIGE-USA
@@ -255,7 +255,7 @@ Game&Watch合集2,Game & Watch Gallery 2,7.054166666666667,DMG-AGLE-USA
 超级驼背人,Super Hunchback,6.995315315315315,DMG-HN-USA;DMG-HNJ
 史酷比大冒险,Scooby-Doo!: Classic Creep Capers,6.995,CGB-BCCE-USA
 海豹突击队,Navy Seals,6.991869918699186,DMG-NV-USA
-,Bugs Bunny: Crazy Castle 3,6.989473684210527,DMG-AB6E-USA;DMG-AB6J-JPN
+兔八哥 - 疯狂城堡3,Bugs Bunny: Crazy Castle 3,6.989473684210527,DMG-AB6E-USA;DMG-AB6J-JPN
 转转棒,LUCLE,6.985185185185186,DMG-LUA
 原人冒险,Bonk's Adventure,6.982882882882883,DMG-GK-USA
 泡泡龙4,Bust-A-Move 4,6.98,DMG-AA4E-USA
@@ -276,14 +276,14 @@ Game&Watch合集2,Game & Watch Gallery 2,7.054166666666667,DMG-AGLE-USA
 小军人2,Army Men 2,6.939310344827587,CGB-BA2E-USA
 兵蜂彩虹铃当的冒险,Pop'n TwinBee,6.931111111111112,DMG-TD-NOE
 蜘蛛侠,Spider-Man,6.928888888888888,CGB-BSEE-USA;CGB-BSEJ-JPN
-,Power Quest,6.926206896551725,DMG-APQE-USA
+威力传说,Power Quest,6.926206896551725,DMG-APQE-USA
 兰博基尼美国挑战赛,Lamborghini: American Challenge,6.924242424242424,DMG-L7-USA
 旋风狗泰兹,Taz-Mania,6.9231372549019605,
 仓库番,Boxxle,6.921875,DMG-SO-UKV
 相等循环世界,Loopz,6.916666666666667,DMG-LP-USA
 NBA大灌篮,NBA Jam,6.916216216216216,DMG-A8NE-USA
 小魔怪2世界,Gremlins 2: The New Batch,6.9151351351351344,DMG-GR-USA
-,Mickey Mouse: Magic Wands!,6.908333333333334,DMG-I5-USA
+米老鼠 - 魔杖传奇,Mickey Mouse: Magic Wands!,6.908333333333334,DMG-I5-USA
 奥林匹斯之战,The Battle of Olympus,6.905747126436781,DMG-OL-NOE
 空中骑士泰勒熊,Disney's TaleSpin,6.902380952380952,DMG-LS-USA
 FIFA世界足球96,FIFA Soccer 96,6.9023076923076925,DMG-A6SE-USA
@@ -312,7 +312,7 @@ FIFA世界足球96,FIFA Soccer 96,6.9023076923076925,DMG-A6SE-USA
 史努比魔术表演,Snoopy's Magic Show,6.851428571428571,
 瓜瓜龙2,Croc 2,6.846808510638298,CGB-BK2E-USA
 金属手套2,Gauntlet II,6.845238095238095,DMG-G2-ESP
-,International Superstar Soccer,6.844444444444445,DMG-AIGE-USA
+世界足球,International Superstar Soccer,6.844444444444445,DMG-AIGE-USA
 卡通集锦,Animaniacs,6.843902439024391,DMG-ANCE-USA
 生死滑板,Skate or Die: Bad 'N Rad,6.8420289855072465,DMG-SK-USA
 ,David Crane's The Rescue of Princess Blobette Starring A Boy and his Blob,6.841702127659574,
@@ -323,8 +323,8 @@ FIFA世界足球96,FIFA Soccer 96,6.9023076923076925,DMG-A6SE-USA
 星球大战,Star Wars,6.835416666666667,DMG-WS-USA-1
 钻地小子,Mr. Driller,6.833333333333333,CGB-BMDE-USA;CGB-BMDJ-JPN
 信长之野望,Nobunaga's Ambition,6.831884057971014,DMG-NY-USA
-,Wings of Fury,6.8311111111111105,DMG-AFXE-USA
-,Antz,6.830952380952381,DMG-ANXE-USA
+光荣之翼,Wings of Fury,6.8311111111111105,DMG-AFXE-USA
+小蚁雄兵,Antz,6.830952380952381,DMG-ANXE-USA
 泡泡龙,Bubble Bobble,6.830718954248366,DMG-B2-USA;DMG-B2A
 迪士尼102斑点狗-小狗救援,Disney's 102 Dalmatians: Puppies to the Rescue,6.827619047619048,CGB-B99E-USA
 F15攻击鹰,F-15 Strike Eagle,6.826470588235294,DMG-EG-USA
@@ -337,23 +337,23 @@ PC原人复仇记,Bonk's Revenge,6.823333333333333,DMG-RJ-USA
 疯狂橄榄球2000,Madden NFL 2000,6.8125,DMG-AEME-USA
 ,The Dukes of Hazzard: Racing for Home,6.81,CGB-BDCE-USA
 水上摩托,Wave Race,6.808163265306123,DMG-WA-USA
-,Ms. Pac-Man: Special Color Edition,6.806060606060606,DMG-AQCE-USA
+吃豆小姐合集,Ms. Pac-Man: Special Color Edition,6.806060606060606,DMG-AQCE-USA
 F1竞赛世界,F-1 Race,6.805128205128206,DMG-F1-USA;DMG-F1A
 仓库番2,Boxxle II,6.8,DMG-SQ-USA
-,Pocket Bomberman,6.797899159663865,DMG-AKQE-USA;DMG-APOJ-JPN
+口袋炸弹人,Pocket Bomberman,6.797899159663865,DMG-AKQE-USA;DMG-APOJ-JPN
 亚尔的复仇,Yars' Revenge,6.796774193548386,DMG-AYVE-USA
 纳斯卡赛车2000,NASCAR 2000,6.795757575757576,CGB-BN2E-USA
 洛克人2,Mega Man II,6.795321637426901,DMG-W2-USA
-,Top Gear Pocket,6.791666666666667,CGB-VGRE-USA;CGB-VGRJ-JPN
+口袋赛车,Top Gear Pocket,6.791666666666667,CGB-VGRE-USA;CGB-VGRJ-JPN
 圣诞绿精灵,The Grinch,6.7910204081632655,CGB-BGHE-USA
 尼吉尔世界冠军赛车竞赛,Nigel Mansell's World Championship Racing,6.790625,
 迷惑历险,Puzzled,6.785185185185185,CGB-BP3E-USA
 终结者2 - 审判日,Terminator 2: Judgment Day,6.7784313725490195,DMG-TZ-USA
-,World Heroes 2 Jet,6.7764,DMG-AWJE-USA
-,Oddworld Adventures 2,6.775,
+热斗世界英雄2,World Heroes 2 Jet,6.7764,DMG-AWJE-USA
+奇异世界冒险2,Oddworld Adventures 2,6.775,
 狮子王2,Disney's The Lion King: Simba's Mighty Adventure,6.774193548387097,CGB-BLKE-USA
 NHL冰球2000,NHL 2000,6.772222222222222,DMG-ANRE-USA
-,Wizards & Warriors X: Fortress of Fear,6.771794871794872,
+巫师与战士X,Wizards & Warriors X: Fortress of Fear,6.771794871794872,
 拳击王,Knockout Kings,6.7714285714285705,CGB-AXKE-USA
 旅鼠总动员,Lemmings & Oh No! More Lemmings,6.770833333333333,
 魔法大圣,The Pagemaster,6.768,DMG-APME-USA
@@ -366,7 +366,7 @@ NHL冰球2000,NHL 2000,6.772222222222222,DMG-ANRE-USA
 国际空手道,International Karate 2000,6.758823529411765,CGB-BIKP-EUU
 朵拉的冒险,Gold and Glory: The Road to El Dorado,6.757435897435896,CGB-BEDE-USA
 蝙蝠侠 - 小丑归来,Batman: Return of the Joker,6.749166666666666,DMG-B5-ESP;DMG-B5A
-,FIFA 2000,6.746976744186046,DMG-AFOE-USA
+FIFA足球2000,FIFA 2000,6.746976744186046,DMG-AFOE-USA
 爆破大师,Blaster Master Boy,6.745161290322581,DMG-BI-USA
 冲锋坦克,Go! Go! Tank,6.744000000000001,DMG-GT-USA;DMG-GTA
 冒险岛2,Adventure Island II,6.740903954802261,
@@ -375,7 +375,7 @@ Game&Watch合集3,Game & Watch Gallery 3,6.740816326530613,DMG-AGQE-USA;DMG-AGQJ
 猫和老鼠 - 群鼠地狱,Tom and Jerry in Mouse Attacks!,6.73103448275862,CGB-BTQE-USA
 乔丹对伯德斗牛,Jordan vs Bird: One on One,6.729411764705882,DMG-JB-ESP;DMG-JBA
 ,Bill & Ted's Excellent Game Boy Adventure,6.724324324324325,DMG-LB-USA
-,Uno,6.719354838709678,DMG-AUNE-USA
+尤诺纸牌,Uno,6.719354838709678,DMG-AUNE-USA
 ,Disney's Beauty and the Beast: A Board Game Adventure,6.717006802721089,DMG-AVUE-USA
 NBA大灌篮 99,NBA Jam 99,6.716,DMG-AJME-USA
 淘金者世界,Hyper Lode Runner,6.714634146341464,DMG-HL-USA
@@ -385,18 +385,18 @@ WCW摔跤,WCW Mayhem,6.71304347826087,CGB-AYHE-USA
 钢铁之刃冰球,Blades of Steel,6.710833333333333,DMG-UB-USA
 ,The Flintstones: Burgertime in Bedrock,6.708571428571429,CGB-BFSE-USA
 华纳巨星总动员,Looney Tunes,6.691891891891892,DMG-LN-USA
-,Monkey Puncher,6.69,DMG-BSPP-EUR
+打洞猴,Monkey Puncher,6.69,DMG-BSPP-EUR
 星球大战6-绝地大反攻,Super Star Wars: Return of the Jedi,6.684782608695652,DMG-ARJE-USA
 世界重量级拳击锦标赛,Heavyweight Championship Boxing,6.6824,DMG-BX-USA
-,"Daffy Duck: ""Fowl Play""",6.681818181818182,DMG-AD7E-USA
-,International Superstar Soccer 99,6.675675675675675,DMG-AWZE-USA
+达菲鸭 - 致富记,"Daffy Duck: ""Fowl Play""",6.681818181818182,DMG-AD7E-USA
+国际足球明星联赛'99,International Superstar Soccer 99,6.675675675675675,DMG-AWZE-USA
 松鼠鲁滋,Mr. Nutz,6.675609756097561,CGB-ANUE-USA
 强行突破,BreakThru!,6.668181818181818,DMG-ABXE-USA
-,Road Rash II,6.663157894736842,
+暴力摩托2,Road Rash II,6.663157894736842,
 迷宫组曲,Milon's Secret Castle,6.662068965517241,DMG-M8-USA
 方块跳棋,Tesserae,6.661904761904762,DMG-ER-USA
-,Magical Drop III,6.66125,
-,Babe and Friends,6.659663865546218,DMG-AVAE-USA
+魔法气泡III,Magical Drop III,6.66125,
+宝贝猪,Babe and Friends,6.659663865546218,DMG-AVAE-USA
 兔八哥疯狂城堡,The Bugs Bunny Crazy Castle,6.653061224489796,DMG-BB-USA
 食通天国,Mr. Chin's Gourmet Paradise,6.651851851851852,DMG-GP-USA
 皇家杯足球赛2000,UEFA 2000,6.65,
@@ -413,10 +413,10 @@ WCW摔跤,WCW Mayhem,6.71304347826087,CGB-AYHE-USA
 瑜珈汽球,Yogi Bear: Great Balloon Blast,6.627272727272728,CGB-BBXE-USA
 NBA全明星联赛2,NBA All-Star Challenge 2,6.626666666666666,DMG-H2-FAH;DMG-H2A
 龙之尾,Nail 'n Scale,6.618666666666667,DMG-DR-USA
-,Las Vegas Cool Hand,6.6160000000000005,DMG-ACWE-USA
+拉斯维加斯赌圣,Las Vegas Cool Hand,6.6160000000000005,DMG-ACWE-USA
 越野自行车,Mat Hoffman's Pro BMX,6.613793103448276,CGB-B2XE-USA
 加里基钦超级战斗坦克-海湾战争,Garry Kitchen's Super Battletank: War in the Gulf,6.611304347826087,
-,Blaster Master: Enemy Below,6.611111111111111,DMG-AEHE-USA
+超惑星战记,Blaster Master: Enemy Below,6.611111111111111,DMG-AEHE-USA
 瑜珈熊,Yogi Bear's Goldrush,6.609189189189189,
 麦克斯,Max,6.608695652173913,DMG-KV-NOE
 比利包勃钓鱼赛,Billy Bob's Huntin'-n-Fishin',6.6000000000000005,CGB-AHZE-USA
@@ -438,7 +438,7 @@ MTV运动员 - 滑雪,MTV Sports: Pure Ride,6.553846153846154,CGB-BPVE-USA
 ,Arcade Classic 4: Defender/Joust,6.552380952380952,
 神奇企鹅,Amazing Penguin,6.547857142857143,DMG-PN-NOE
 银河武士,Zen: Intergalactic Ninja,6.545454545454546,DMG-ZN-USA
-,Quest for Camelot,6.544625850340137,DMG-ACNE-USA
+卡麦勒传说,Quest for Camelot,6.544625850340137,DMG-ACNE-USA
 皮埃尔勒厨师 - 外出吃午饭,Pierre le Chef is... Out to Lunch,6.54074074074074,DMG-Y5-UKV
 头脑风暴,Brain Bender,6.536666666666667,DMG-BW-USA
 WWF超级之星2,WWF Superstars 2,6.535483870967742,DMG-WX-USA;DMG-WXA
@@ -459,7 +459,7 @@ X战警 - 狼獾,X-Men: Wolverine's Rage,6.528205128205128,CGB-BWOE-USA
 运球高手,Double Dribble,6.50625,
 星球大战前传 - 欧比旺的冒险,Star Wars: Episode I - Obi-Wan's Adventures,6.4975,CGB-BOWE-USA
 恶魔城 - 冒险,Castlevania: The Adventure,6.496608357628767,DMG-CV-USA;DMG-CVJ
-,Zool,6.496428571428572,DMG-ZG-USA
+真宝珠小子,Zool,6.496428571428572,DMG-ZG-USA
 米奇的危险追逐,Mickey's Dangerous Chase,6.496410256410257,
 刀锋战士,Blade,6.4956249999999995,CGB-BLEE-USA
 蝙蝠侠 - 哥谭混沌,Batman: Chaos in Gotham,6.494871794871795,
@@ -471,15 +471,15 @@ X战警 - 狼獾,X-Men: Wolverine's Rage,6.528205128205128,CGB-BWOE-USA
 ,The Simpsons: Bart & the Beanstalk,6.484615384615384,DMG-EK-NOE;DMG-EKA
 麻烦大了,Tonic Trouble,6.475862068965518,CGB-AXTP-EUR
 热血足球,Nintendo World Cup,6.473333333333333,DMG-NC-ESP-1
-,Madden 95,6.463636363636363,DMG-ANLE-USA
-,Speedy Gonzales: Aztec Adventure,6.458064516129032,DMG-ALZE-USA
+麦登橄榄球'95,Madden 95,6.463636363636363,DMG-ANLE-USA
+安得烈鼠历险记,Speedy Gonzales: Aztec Adventure,6.458064516129032,DMG-ALZE-USA
 吃豆小姐,Ms. Pac-Man,6.457692307692308,DMG-N4-USA
 汤姆克兰西的虹之六号,Tom Clancy's Rainbow Six,6.455000000000001,CGB-AR6E-USA
-,Hollywood Pinball,6.452173913043477,DMG-AHNJ-JPN
+好莱坞弹珠台,Hollywood Pinball,6.452173913043477,DMG-AHNJ-JPN
 ,The Jetsons: Robot Panic,6.451851851851852,DMG-JS-USA
 帕拉穆德斯方块,Palamedes,6.445833333333333,DMG-PXA
 夏季奥运'96,Olympic Summer Games,6.445454545454546,DMG-AO9E-USA
-,James Pond 2: Codename: RoboCod,6.441666666666666,
+詹姆斯·庞德2：代号机械鳕鱼,James Pond 2: Codename: RoboCod,6.441666666666666,
 真实的谎言,True Lies,6.438709677419355,DMG-ATLE-USA
 泰山 - 丛林之王,Tarzan: Lord of the Jungle,6.436774193548387,
 超凡蜘蛛侠,The Amazing Spider-Man,6.430801687763713,DMG-SM-ESP-1
@@ -492,7 +492,7 @@ MTV运动员 - 滑板,MTV Sports: Skateboarding featuring Andy Macdonald,6.42727
 ,Arcade Classic 2: Centipede / Millipede,6.4071428571428575,
 扭曲空间 - 外星冒险,Altered Space: A 3-D Alien Adventure,6.406896551724138,DMG-AL-USA;DMG-ALA
 猫和老鼠 - 捕鼠记,Tom and Jerry: Mouse Hunt,6.406666666666668,CGB-BTJE-USA
-,Classic Bubble Bobble,6.402272727272727,DMG-AVWE-USA
+泡泡龙,Classic Bubble Bobble,6.402272727272727,DMG-AVWE-USA
 阿达家族,The Addams Family,6.402,DMG-AF-USA;DMG-AFJ
 创世纪 - 神秘的美,Ultima: Runes of Virtue,6.395698924731183,DMG-UT-USA
 ,Microsoft Puzzle Collection Entertainment Pack,6.394358974358974,
@@ -501,13 +501,13 @@ MTV运动员 - 滑板,MTV Sports: Skateboarding featuring Andy Macdonald,6.42727
 电梯大战 - 机器人版,Dexter's Laboratory: Robot Rampage,6.392307692307692,CGB-BROE-USA
 比尔埃略特的全国汽车挑战赛,Bill Elliott's NASCAR Fast Tracks,6.391570881226054,DMG-EL-USA
 恐龙战队-电影版,Mighty Morphin Power Rangers: The Movie,6.391071428571428,DMG-A2RE-USA
-,Rats!,6.387096774193548,DMG-AVTE-USA
+黑帮鼠,Rats!,6.387096774193548,DMG-AVTE-USA
 战斗舰队,Battleship: The Classic Naval Combat Game,6.381333333333332,
 究极战士,Raging Fighter,6.380800000000001,DMG-OB-NOE
 小原始人,Chuck Rock,6.380645161290323,DMG-QC-USA
 Q伯特,Q*bert,6.37739837398374,CGB-BQTE-USA
 猫女,Catwoman,6.372413793103449,CGB-A3CE-USA
-,Hot Wheels: Stunt Track Driver,6.362962962962963,DMG-AHEE-USA
+风火轮赛车,Hot Wheels: Stunt Track Driver,6.362962962962963,DMG-AHEE-USA
 恐龙猎人2-邪恶之种,Turok 2: Seeds of Evil,6.359999999999999,DMG-A2TE-USA;DMG-A2TJ-JPN
 齿轮工厂,Gear Works,6.359090909090909,DMG-G8-USA
 吉姆亨森的布偶,Jim Henson's Muppets,6.355483870967741,
@@ -517,8 +517,8 @@ Q伯特,Q*bert,6.37739837398374,CGB-BQTE-USA
 异形奥林匹克公元2044,Alien Olympics,6.335714285714286,
 罗宾汉 - 侠盗王子,Robin Hood: Prince of Thieves,6.331182795698925,DMG-RH-USA
 果冻男孩,Jelly Boy,6.325925925925926,DMG-AJBP-UKV
-,Earthworm Jim: Menace 2 the Galaxy,6.324999999999999,DMG-AEBE-USA
-,International Rally,6.3241025641025645,DMG-ARLE-USA
+蚯蚓战士2,Earthworm Jim: Menace 2 the Galaxy,6.324999999999999,DMG-AEBE-USA
+国际拉力,International Rally,6.3241025641025645,DMG-ARLE-USA
 暗影之门,Shadowgate,6.32037037037037,
 闪现,The Flash,6.318181818181818,DMG-EF-USA
 虎胆神偷,Hudson Hawk,6.310344827586207,DMG-HW-USA;DMG-HWJ
@@ -534,22 +534,22 @@ FIFA国际足球赛,FIFA International Soccer,6.291428571428571,DMG-AFSE-USA
 小滚珠,Marble Madness,6.277777777777778,DMG-MB-USA
 无限试驾6,Test Drive 6,6.274705882352941,
 和谐游戏,The Game of Harmony,6.273076923076923,DMG-GH-USA
-,The Simpsons: Night of the Living Treehouse of Horror,6.272077922077923,CGB-BNOE-USA
+辛普森一家,The Simpsons: Night of the Living Treehouse of Horror,6.272077922077923,CGB-BNOE-USA
 波斯王子,Primal Rage,6.27027027027027,DMG-AR9E-USA
 罗兰的诅咒,Rolan's Curse,6.261904761904761,DMG-VE-USA
 红毛精灵,Pumuckls Abenteuer bei den Piraten,6.257142857142857,CGB-AVED-NOE
 鬼屋魔影 - 新恶梦,Alone in the Dark: The New Nightmare,6.254166666666666,CGB-BIDE-USA
 法拉利大赛车,Ferrari Grand Prix Challenge,6.247999999999999,DMG-XP-USA
-,Ronaldo V-Soccer,6.2437499999999995,DMG-AORE-USA
+罗纳尔多足球,Ronaldo V-Soccer,6.2437499999999995,DMG-AORE-USA
 布布的阿斯米世界冒险,Boomer's Adventure in ASMIK World,6.242795698924731,DMG-AS-USA
-,Caterpillar Construction Zone,6.239393939393939,DMG-AR4E-USA
+铲泥车,Caterpillar Construction Zone,6.239393939393939,DMG-AR4E-USA
 ,Midway presents Arcade Hits: Moon Patrol / Spy Hunter,6.234782608695652,
 谁陷害了兔子罗杰,Who Framed Roger Rabbit,6.23237037037037,DMG-RR-USA
 敏捷,Dexterity,6.226376811594202,DMG-FU-USA
 导弹指挥官,Missile Command,6.214814814814815,DMG-MW-USA
 割草者,The Lawnmower Man,6.213793103448276,DMG-LR-NOE
 至尊神探,Dick Tracy,6.213333333333333,DMG-DK-USA
-,Castlevania Legends,6.211190476190477,DMG-ADNE-USA
+恶魔城漆黑前奏曲,Castlevania Legends,6.211190476190477,DMG-ADNE-USA
 速度球2,Speedball 2: Brutal Deluxe,6.203225806451614,DMG-E2-USA
 生死滑板2,Skate or Die: Tour de Thrash,6.195,DMG-KD-USA
 ,The Blues Brothers: Jukebox Adventure,6.192592592592592,DMG-J6-UKV
@@ -582,23 +582,23 @@ WWF冠军之戒,WWF King of the Ring,6.160215053763441,DMG-WP-USA;DMG-WPA
 装甲兵器,Armorines: Project S.W.A.R.M.,6.064864864864865,CGB-AOXE-USA
 反省猴次郎君的大冒险,Spanky's Quest,6.058333333333334,DMG-LM-USA
 兔八哥赛车,Looney Tunes Racing,6.057142857142857,CGB-BLQE-USA
-,Looney Tunes: Twouble!,6.052777777777778,DMG-AYRE-USA
-,NFL Blitz,6.036153846153846,DMG-ABZE-USA
+大野猫与金丝雀,Looney Tunes: Twouble!,6.052777777777778,DMG-AYRE-USA
+橄榄球,NFL Blitz,6.036153846153846,DMG-ABZE-USA
 鬼马小精灵,Casper,6.034814814814815,DMG-ACEE-USA
 兔宝宝历险记 - 疯狂体育,Tiny Toon Adventures: Wacky Sports,6.03125,DMG-ED-USA
-,Evel Knievel,6.027272727272727,DMG-AEVE-USA
+火箭机车,Evel Knievel,6.027272727272727,DMG-AEVE-USA
 平安京异形,Heiankyo Alien,6.026923076923077,DMG-HA-USA
 花样滑雪,Trick Boarder,6.021428571428571,CGB-BTBE-USA
 水晶探索,Crystal Quest,6.012820512820513,DMG-CQ-USA
 ,The Powerpuff Girls: Paint the Townsville Green,6.00695652173913,CGB-BPTE-USA-1
-,Pitfall: Beyond the Jungle,6.006,DMG-AFLE-USA
+比特佛 - 丛林冒险,Pitfall: Beyond the Jungle,6.006,DMG-AFLE-USA
 变身国王,Disney's The Emperor's New Groove,6.001666666666668,CGB-BENE-USA
 爆燃战机 - F-14空战模拟器,Turn and Burn: The F-14 Dogfight Simulator,5.992345679012345,DMG-UR-USA
 特警判官,Judge Dredd,5.988157894736842,DMG-AJDE-USA;DMG-AJDJ-JPN
 星球拯救者,The Adventures of Star Saver,5.983225806451612,DMG-KS-ESP
 ,Itchy & Scratchy in Miniature Golf Madness,5.97741935483871,DMG-YH-USA
 侠盗猎车手2,Grand Theft Auto 2,5.976190476190476,CGB-BGAE-USA
-,Chase H.Q.: Secret Police,5.9750000000000005,DMG-AH9E-USA
+追踪HQ,Chase H.Q.: Secret Police,5.9750000000000005,DMG-AH9E-USA
 小巷世界,Alleyway,5.97471104946833,DMG-AW-USA-1;DMG-AWA
 ,The Punisher: The Ultimate Payback!,5.972,DMG-NS-USA
 迪士尼的恐龙,Disney's Dinosaur,5.970232558139536,CGB-BDNE-USA
@@ -608,12 +608,12 @@ NHL冰上曲棍球'95,NHL 95,5.966666666666667,
 ,Double Dragon 3: The Rosetta Stone,5.955135135135135,
 敏捷指挥官,Commander Keen,5.9523809523809526,CGB-BCBE-USA
 侠盗猎车手,Grand Theft Auto,5.950877192982456,DMG-AOAE-USA
-,Centipede,5.948837209302325,DMG-AC5E-USA
+杀虫战记,Centipede,5.948837209302325,DMG-AC5E-USA
 蜘蛛侠3 - 蜘蛛杀手的入侵,Spider-Man 3: Invasion of the Spider-Slayers,5.946666666666667,DMG-LQ-NOE
 音速狐2,Bubsy II,5.927333333333333,DMG-ABBE-USA
 WWF战斗区域,WWF War Zone,5.925,DMG-AWWE-USA
 异形大战铁血战士,Alien vs Predator: The Last of His Clan,5.914285714285714,DMG-A9-USA;DMG-A9J
-,Men in Black: The Series 2,5.914166666666667,
+黑衣人2,Men in Black: The Series 2,5.914166666666667,
 神秘物质,Mysterium,5.893827160493827,DMG-MY-USA;DMG-MYJ
 狮子王,Disney's The Lion King,5.888888888888889,DMG-ALNE-USA
 蚂蚁赛车,Antz Racing,5.8808333333333325,CGB-BAZE-USA
@@ -627,7 +627,7 @@ WWF战斗区域,WWF War Zone,5.925,DMG-AWWE-USA
 魔宫帝国3,Mortal Kombat 3,5.825,DMG-A3ME-USA
 星际迷航记-继往开来,Star Trek: Generations - Beyond the Nexus,5.820769230769231,DMG-ASTE-USA
 幻想弹珠台,Pinball Fantasies,5.819999999999999,DMG-APFE-USA
-,Sports Illustrated: Golf Classic,5.811764705882354,DMG-AGFE-USA
+体育画报经典高尔夫,Sports Illustrated: Golf Classic,5.811764705882354,DMG-AGFE-USA
 黑鲈鱼 - 路亚钓鱼,Black Bass: Lure Fishing,5.800000000000001,DMG-HP-USA
 迪士尼-皮克斯玩具赛车,Disney•Pixar Toy Story Racer,5.774193548387097,
 技术滑板,Tech Deck Skateboarding,5.751724137931035,CGB-BTUE-USA
@@ -636,7 +636,7 @@ WWF战斗区域,WWF War Zone,5.925,DMG-AWWE-USA
 小鬼当家 - 迷失在纽约,Home Alone 2: Lost in New York,5.731282051282051,DMG-AH-USA
 帽子方块,Hatris,5.728395061728395,DMG-HTA
 沼泽异形,Swamp Thing,5.701333333333333,DMG-WG-NOE
-,Rugrats: Time Travelers,5.693333333333333,DMG-AVME-USA
+顽皮小鬼 - 时间之旅,Rugrats: Time Travelers,5.693333333333333,DMG-AVME-USA
 奥斯丁政权 - 地下王国,Austin Powers: Welcome to My Underground Lair!,5.686111111111111,CGB-BEAE-USA
 蝙蝠侠 - 小丑复仇,Batman Beyond: Return of the Joker,5.67741935483871,CGB-BTKE-USA
 战斗人 - 寻找X基地,Action Man: Search for Base X,5.654285714285714,CGB-BAXE-USA
@@ -648,7 +648,7 @@ WWF战斗区域,WWF War Zone,5.925,DMG-AWWE-USA
 ,Disney·Pixar Buzz Lightyear of Star Command,5.617837837837837,
 顽皮小鬼游乐场,Rugrats in Paris: The Movie,5.592592592592593,CGB-BRPE-USA
 星际迷航25周年纪念,Star Trek: 25th Anniversary,5.589583333333334,DMG-RK-ESP
-,World Cup 98,5.585833333333333,DMG-A8WE-USA
+世界杯'98,World Cup 98,5.585833333333333,DMG-A8WE-USA
 怪兽拆楼2 - 宇宙之旅,Rampage 2: Universal Tour,5.557575757575758,CGB-AUTE-USA
 芭比游戏女孩,Barbie Game Girl,5.539784946236559,DMG-GU-UKV
 环绕越野赛车,Ivan 'Ironman' Stewart's Super Off Road,5.533333333333333,
@@ -664,7 +664,7 @@ WWF战斗区域,WWF War Zone,5.925,DMG-AWWE-USA
 空军Delta,AirForce Delta,5.432258064516129,CGB-BDLE-USA;CGB-BDLJ-JPN
 冬季奥运,Winter Olympic Games: Lillehammer '94,5.426666666666667,
 ,The Powerpuff Girls: Bad Mojo Jojo,5.401176470588235,CGB-BJJE-USA-2
-,Godzilla: The Series,5.32734693877551,DMG-AZIE-USA
+哥斯拉,Godzilla: The Series,5.32734693877551,DMG-AZIE-USA
 棒球,Baseball,5.312083333333334,DMG-BS-USA;DMG-BKJ
 超级追踪,Super Chase H.Q.,5.306666666666667,DMG-Q2-USA
 旧金山大赛车2049,San Francisco Rush 2049,5.3005555555555555,CGB-ASXE-USA
@@ -676,7 +676,7 @@ WWF战斗区域,WWF War Zone,5.925,DMG-AWWE-USA
 致命武器,Lethal Weapon,5.202150537634408,DMG-LT-USA
 狗狗小站,Dogz,5.2,
 ,Carmageddon,5.18108108108108,
-,Game Boy Gallery,5.176923076923077,DMG-AGAJ-JPN
+GB画廊,Game Boy Gallery,5.176923076923077,DMG-AGAJ-JPN
 追踪HQ,Chase H.Q.,5.16439393939394,DMG-HQ-ESP
 卡茨,Catz,5.164000000000001,
 变身战士,Animorphs,5.069655172413793,CGB-BAME-USA
@@ -686,12 +686,12 @@ X战警 - 变种人学院,X-Men: Mutant Academy,5.033684210526315,CGB-BXAE-USA;C
 X战警 - 变种人之战,X-Men: Mutant Wars,5.013937282229965,CGB-BXME-USA
 蒙面侠佐罗,The Mask of Zorro,5.004375,CGB-AZRE-USA
 吸血蝙蝠杀人魔,Buffy the Vampire Slayer,4.943529411764706,CGB-BVSE-USA
-,Star Wars: Yoda Stories,4.885714285714285,
+星球大战 - 尤达篇,Star Wars: Yoda Stories,4.885714285714285,
 疯狂足球,Soccer Mania,4.879012345679013,DMG-SB-USA
 木乃伊2 - 木乃伊归来,The Mummy Returns,4.873571428571428,CGB-B2RE-USA
 魔王摔跤,ECW Hardcore Revolution,4.866666666666666,CGB-BECE-USA
 太空小蜜蜂,Galaga: Destination Earth,4.833076923076923,CGB-BGGE-USA
 ,Titus the Fox: To Marrakech and Back,4.8,DMG-FO-USA
-,Mortal Kombat 4,4.78925925925926,DMG-A4KE-USA
+真人快打4,Mortal Kombat 4,4.78925925925926,DMG-A4KE-USA
 黑超特警组-续作,Men in Black: The Series,4.700888888888889,DMG-AMNE-USA
 史瑞克,Shrek: Fairy Tale Freakdown,4.433976833976834,CGB-BFUE-USA

@@ -448,7 +448,7 @@ const emptyDescription = computed(() => {
     if (activeProgress.value) {
         return "该进度下暂无游戏。";
     }
-    return "暂无游戏，去「库存管理」里添加一个吧。";
+    return "暂无游戏，去「游戏管理」里添加一个吧。";
 });
 
 /* —— 类型侧栏：藏滚动条 + 上下翻页箭头（模式与 SaveTreeView 的存档侧栏一致） —— */

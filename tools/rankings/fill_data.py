@@ -179,7 +179,7 @@ NON_RETAIL = re.compile(
 )
 
 REGION_WORDS = (
-    r"usa|u\.s\.a\.?|us|europe|japan|jpn|jp|world|asia|korea|kor|china|chn|taiwan|"
+    r"usa|u\.s\.a\.?|us|europe|euro|japan|jpn|jp|world|asia|korea|kor|china|chn|taiwan|"
     r"hong kong|australia|aus|brazil|bra|canada|can|germany|france|spain|italy|"
     r"netherlands|sweden|denmark|norway|finland|russia|poland|portugal|mexico|"
     r"argentina|new zealand|south africa|india|singapore|malaysia|thailand|"
@@ -223,12 +223,15 @@ _ZH_PLATFORM_TAG = re.compile(
 _ZH_REGION_TAG = (
     r"美版|日版|欧版|世界版|亚洲版|韩版|中文版|英文版|日文版|汉化版|演示版|试玩版|"
     r"测试版|工程版|修正版|无敌版|盗版|正版|简中|繁中|美欧版|日英版|多语言|日文|英文|"
-    r"非官方版|未授权版|版本\s*[0-9.]+|v[0-9.]+|修正版\s*[0-9]*|"
-    r"巴西|巴西版|加拿大|加拿大版|澳大利亚|澳大利亚版|德国|德国版|法国|法国版|"
+    r"非官方版|未授权版|版本\s*[0-9.]+|v[0-9.]+|修正版\s*[A-Z0-9]*|"
+    r"测试版\s*[A-Z0-9]*|工程版\s*[A-Z0-9]*|体验版|商店演示版|再发行版|"
+    r"巴西|巴西版|加拿大|加拿大版|澳大利亚|澳大利亚版|澳洲版|德国|德国版|法国|法国版|"
     r"意大利|意大利版|西班牙|西班牙版|荷兰|荷兰版|瑞典|瑞典版|丹麦|丹麦版|"
     r"挪威|挪威版|芬兰|芬兰版|俄罗斯|俄罗斯版|波兰|波兰版|葡萄牙|葡萄牙版|"
-    r"墨西哥|墨西哥版|阿根廷|阿根廷版|美|日|欧|韩|中|台|港|"
-    r"法|德|意|西|荷|瑞|丹|挪|芬|俄|波|葡|巴|加|澳|新|需[^()]*系统版本"
+    r"墨西哥|墨西哥版|阿根廷|阿根廷版|韩国版|中国版|台湾版|香港版|神游版|神游|"
+    r"美|日|欧|韩|中|台|港|"
+    r"法|德|意|西|荷|瑞|丹|挪|芬|俄|波|葡|巴|加|澳|新|需[^()]*系统版本|"
+    r"[美日欧韩中台港澳]{2,4}"
 )
 
 # 名录里常见的类型标注，如 `(美)ACT(动作类)`、`(休闲益智)`；展示时去掉。
@@ -245,6 +248,23 @@ _ZH_TRAILING_REGION = re.compile(
     r"\s+(?:美版|日版|欧版|世界版|亚洲版|韩版|中文版|英文版|日文版|汉化版|"
     r"演示版|试玩版|测试版|工程版|修正版|非官方版|未授权版)$"
 )
+
+# 名录里夹在中文名尾部的技术标记，如 `生化危机DS 1G`、`Mick & Mack (1993-05-28)`、
+# `Panic! (RE)`、`地球冒险 (Virtual Console)`。
+_ZH_TRAILING_TECH = re.compile(
+    r"\s*\((?:"
+    r"[0-9]+[GMK]|[0-9]+[GMK](?:[,、 ]+[0-9]+[GMK])+|RE|R|2S|4S|Alt\s*\d+|Rev\s*\d+|"
+    r"Disc\s*\d+|DISC\s*\d+|Game Disc|Omake Disc|"
+    r"光碟\s*\d+|光碟\s*[A-Z]|UMD-Disc\s*\d+|Virtual Console|Wii U Virtual Console|"
+    r"Wii Virtual Console|GameCube Edition|GameCube|PAL|NTSC|Manual|FABT|FINGERS|"
+    r"Hot Mario Campaign|[0-9]+\.[0-9]+|"
+    r"\d{4}[-./]\d{1,2}[-./]\d{1,2}|\d{4}年\d{1,2}月|\d{1,2}月\d{4}"
+    r")\)\s*$",
+    re.I,
+)
+
+# 没有括号的容量标记，如 `生化危机DS 1G`。
+_ZH_TRAILING_SIZE = re.compile(r"\s+[0-9]+[GMK]$", re.I)
 
 # 括号被去掉后残留的尾部类型码，如 `无敌破坏王 ACT`
 _ZH_TRAILING_GENRE = re.compile(
@@ -326,6 +346,11 @@ def clean_zh(text: str) -> str:
     text = _ZH_GENRE_TAG.sub("", text)
     text = _ZH_TRAILING_GENRE.sub("", text)
     text = _ZH_TRAILING_REGION.sub("", text)
+    # 技术标记可能连着出现多个，如 `某某 (Disc 1) (RE)`。
+    previous = None
+    while previous != text:
+        previous, text = text, _ZH_TRAILING_TECH.sub("", text).strip()
+        text = _ZH_TRAILING_SIZE.sub("", text).strip()
     # 名录里有 `(美版 欧版` 这种漏了右括号的坏行，直接截掉尾巴。
     if text.count("(") > text.count(")"):
         text = text[: text.rfind("(")]
@@ -378,6 +403,25 @@ def title_keys(text: str) -> list[str]:
         if value.startswith("the "):
             add(value[4:])
     return out
+
+
+# 无括号的尾部地区词，如 `Planet Puzzle League - USA`。
+_TAIL_REGION = re.compile(r"\s*[-–—:]\s*(?:" + REGION_WORDS + r")\s*$", re.I)
+
+
+def loose_key(text: str) -> str:
+    """宽松标题键：去掉所有括号内容与尾部地区词，仅用于名录中文名兜底匹配。
+
+    名录的英文名常带发行商与地区标注（`(Buena Vista Games)(US)`、
+    `(USA, Europe) (NDSi Enhanced)`、` - USA`），精确键剥不掉这些内容，
+    会导致明明有名录也匹配不上。宽松键不用于卡带 ID，避免版本混淆。
+    """
+    text = re.sub(r"\([^()]*\)|\[[^\[\]]*\]", " ", text or "")
+    text = re.sub(r"\s+", " ", text).strip()
+    previous = None
+    while previous != text:
+        previous, text = text, _TAIL_REGION.sub("", text).strip()
+    return norm(text)
 
 
 def region_of_label(label: str) -> str:
@@ -546,6 +590,10 @@ def load_catalog() -> tuple[dict[str, list[tuple[str, str]]], dict[str, list[tup
                 for key in title_keys(en):
                     by_stem[path.stem][key].append((zh, en))
                     global_idx[key].append((zh, en))
+                loose = "~" + loose_key(en)
+                if loose != "~":
+                    by_stem[path.stem][loose].append((zh, en))
+                    global_idx[loose].append((zh, en))
     return by_stem, global_idx
 
 
@@ -584,11 +632,35 @@ def catalog_zh(
         picked = pick_zh(merged)
         if picked:
             return picked, "catalog"
+    # 名录里的英文名常带发行商/地区标注，精确键匹配不上时用宽松键兜底。
+    # 同机种内仍可能有同名不同译法，只接受唯一（或明显占多数）的译名。
+    loose = "~" + loose_key(en)
+    merged = []
+    for stem in stems:
+        merged.extend(by_stem.get(stem, {}).get(loose, []))
+    picked = pick_zh(merged, require_unique=True)
+    if picked:
+        return picked, "catalog-loose"
     # 跨机种只接受唯一译名；多个译名说明有歧义，留给联网补录。
     for key in keys:
         picked = pick_zh(global_idx.get(key, []), require_unique=True)
         if picked:
             return picked, "catalog-cross"
+    # 跨机种的宽松键风险更高：`Chameleon` 这类单词标题在不同机种常是
+    # 不同的游戏，只接受至少两个词的标题。
+    if len(loose_key(en).split()) >= 2:
+        picked = pick_zh(global_idx.get(loose, []), require_unique=True)
+        if picked:
+            return picked, "catalog-cross-loose"
+    # 同机种模糊匹配兜底：拼写差异（Yuu/Yu、连字符位置、复数）已由
+    # `_fuzzy_pick` 的数字/版本词/词重叠规则守住，跨机种不做模糊。
+    entries: dict[str, list[str]] = {}
+    for stem in stems:
+        for key, values in by_stem.get(stem, {}).items():
+            entries.setdefault(key, []).extend(zh for zh, _ in values)
+    picked = _fuzzy_pick(norm(strip_tags(en)), entries)
+    if picked:
+        return picked, "catalog-fuzzy"
     return None
 
 
@@ -925,6 +997,22 @@ class PlatformStat:
     id_filled: Counter = field(default_factory=Counter)
 
 
+def load_ranking_zh_all() -> dict[str, list[tuple[str, str]]]:
+    """其他机种榜单里已填的中文名，key 是同机种标题键。
+
+    同名标题跨机种基本是同一个游戏的移植版，译名通常一致；调用方只接受
+    **唯一** 译名，出现分歧就留空。
+    """
+    idx: dict[str, list[tuple[str, str]]] = defaultdict(list)
+    for path in ranking_paths():
+        for row in read_ranking(path)[0]:
+            if not row.zh.strip():
+                continue
+            for key in title_keys(row.en):
+                idx[key].append((path.stem, row.zh))
+    return idx
+
+
 def fill_rows(
     platform: str,
     rows: list[RankingRow],
@@ -933,6 +1021,7 @@ def fill_rows(
     mame_idx: dict[str, list[SourceHit]],
     nointro_idx: dict[str, list[SourceHit]],
     legacy: dict[str, list[tuple[str, str, str]]] | None,
+    ranking_zh: dict[str, list[tuple[str, str]]] | None = None,
 ) -> tuple[list[Change], PlatformStat]:
     changes: list[Change] = []
     stat = PlatformStat(rows=len(rows))
@@ -953,10 +1042,22 @@ def fill_rows(
                         break
             if not got:
                 got = catalog_zh(row.en, platform, by_stem, global_catalog)
+            if not got and ranking_zh:
+                other = {
+                    zh
+                    for key in title_keys(row.en)
+                    for stem, zh in ranking_zh.get(key, [])
+                    if stem != platform
+                }
+                if len(other) == 1:
+                    got = (other.pop(), "ranking-cross")
             if got and got[0] and _CJK.search(got[0]):
                 row.zh = got[0]
                 stat.zh_filled[got[1]] += 1
                 changes.append(Change(platform, row.line, row.en, "zh", "", got[0], got[1]))
+                if ranking_zh:
+                    for key in title_keys(row.en):
+                        ranking_zh.setdefault(key, []).append((platform, got[0]))
         if not row.cid:
             stat.miss_id += 1
             got = None
@@ -982,6 +1083,7 @@ def fill(
 ) -> int:
     by_stem, global_catalog = load_catalog()
     legacy = load_legacy(legacy_path) if legacy_path else None
+    ranking_zh = load_ranking_zh_all()
     all_changes: list[Change] = []
     stats: dict[str, PlatformStat] = {}
 
@@ -991,7 +1093,7 @@ def fill(
         mame_idx = load_mame(cache, platform)
         nointro_idx = load_no_intro(cache, platform)
         changes, stat = fill_rows(
-            platform, rows, by_stem, global_catalog, mame_idx, nointro_idx, legacy
+            platform, rows, by_stem, global_catalog, mame_idx, nointro_idx, legacy, ranking_zh
         )
         stats[platform] = stat
         all_changes.extend(changes)
