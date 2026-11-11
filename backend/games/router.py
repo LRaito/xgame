@@ -21,7 +21,6 @@ from backend.games.uploads import CHUNK_SIZE, SINGLE_FILE_MAX
 from backend.games.service import (
     GAME_TYPES,
     MANAGE_PAGE_SIZE_DEFAULT,
-    META_CSV_MAX_BYTES,
     RECENT_LIMIT_DEFAULT,
     GameUpload,
     allowed_body_extensions,
@@ -239,26 +238,6 @@ def games_import(body: ImportGameBody, _user: CurrentUser, service: GameServiceD
     return json_ok(_manage_payload(item), status=201)
 
 
-@router.post("/manage/import/prepare")
-def games_import_prepare(
-    _user: CurrentUser,
-    service: GameServiceDep,
-    meta: UploadFile = File(...),
-    game_type: str = Form(""),
-):
-    """批量导入预检：解析目录根下的 meta.csv，返回每行状态。
-
-    第 2 列卡带 ID、第 3 列名称、第 4 列封面文件名；只读，不创建条目。
-    每行带 `error`（无法导入）、`skip`（库中或文件内重复）与自动决定的 `cover_type`。
-    """
-    try:
-        payload = meta.file.read(META_CSV_MAX_BYTES + 1)
-        rows = service.prepare_import(game_type, payload)
-    except ValidationError as exc:
-        return json_err(str(exc), 400)
-    return json_ok({"rows": rows})
-
-
 @router.post("/manage")
 def games_create(
     _user: CurrentUser,
@@ -272,7 +251,6 @@ def games_create(
     body_url: str = Form(""),
     body_game_type: str = Form(""),
     cover_url: str = Form(""),
-    cover_type: str = Form(""),
     upload_id: str = Form(""),
     upload_ids: list[str] = Form(default=[]),
 ):
@@ -285,7 +263,6 @@ def games_create(
     或已完成分片上传的暂存文件（`upload_id` 单个，`upload_ids` 多文件本体），彼此互斥。
     走本地文件时游戏类型由本体文件名自动判定；走直链时地址未必看得出类型，
     所以由前端下拉传入 `body_game_type`，后者必须与地址能认出的类型一致。
-    `cover_type` 只有批量导入会传，且必须同时带封面。
     """
     try:
         if upload_id and upload_ids:
@@ -309,7 +286,6 @@ def games_create(
             body_url=body_url,
             body_game_type=body_game_type,
             cover_url=cover_url,
-            cover_type=cover_type,
             staged=staged,
             staged_files=staged_files,
         )

@@ -73,27 +73,13 @@ export function getManageGameAPI(id) {
     return request({ url: `/api/games/manage/${id}`, method: "get" });
 }
 
-/** 新建游戏：一次性提交名称/描述/本体（可选封面），类型由后端按本体文件名判定。
-
-    `silent` 用于批量导入：逐行失败不弹全局 toast，由调用方汇总统计。 */
-export function createManageGameAPI(formData, { silent = false } = {}) {
+/** 新建游戏：一次性提交名称/描述/本体（可选封面），类型由后端按本体文件名判定。 */
+export function createManageGameAPI(formData) {
     return request({
         url: "/api/games/manage",
         method: "post",
         data: formData,
         timeout: 0,
-        notShowError: silent,
-    });
-}
-
-/** 批量导入预检：上传目录根下的 meta.csv，后端解析并返回每行的错误 / 重复 / 封面类型。 */
-export function prepareManageImportAPI(formData) {
-    return request({
-        url: "/api/games/manage/import/prepare",
-        method: "post",
-        data: formData,
-        timeout: 0,
-        notShowError: true,
     });
 }
 

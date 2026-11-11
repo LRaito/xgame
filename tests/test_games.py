@@ -1,5 +1,4 @@
 import zlib
-import csv
 import html
 import io
 import itertools
@@ -105,7 +104,6 @@ def _create_game(
     cover: tuple[str, bytes, str] | None = None,
     cartridge_id: str | None = None,
     description: str = "",
-    cover_type: str | None = None,
     game_type: str | None = None,
 ):
     """按新流程建游戏：一次请求提交名称/卡带ID/描述/本体（可选封面）。
@@ -123,8 +121,6 @@ def _create_game(
     }
     if game_type is not None:
         data["body_game_type"] = game_type
-    if cover_type is not None:
-        data["cover_type"] = cover_type
     return client.post("/api/games/manage", data=data, files=files)
 
 
@@ -2028,27 +2024,17 @@ def test_failed_same_type_upload_keeps_old_asset(game_service, storage_root):
     assert _read(storage_root, "game/h5/KEEP1/game.zip") == good_zip
 
 
-def test_create_cover_type_requires_cover(logged_in_games):
-    """新建默认没有封面类型；带封面时批量导入可写，没有封面不能只给类型。"""
-    plain = _create_game(logged_in_games, "CT 空", "a.nes", b"nes-body").json()["data"]
-    assert plain["cover_type"] is None
-
-    with_cover = _create_game(
+def test_create_leaves_cover_type_empty(logged_in_games):
+    """新建不写封面类型：即使带封面，也要建好后由编辑弹框或「美化封面」设置。"""
+    created = _create_game(
         logged_in_games,
         "CT 封面",
         "b.nes",
         b"nes-body",
         cover=("cover.png", b"png-body", "image/png"),
-        cover_type="nes",
     )
-    assert with_cover.status_code == 201, with_cover.text
-    assert with_cover.json()["data"]["cover_type"] == "nes"
-
-    no_cover = _create_game(
-        logged_in_games, "CT 硬塞", "c.gb", b"gb-body", cover_type="gb"
-    )
-    assert no_cover.status_code == 400
-    assert "封面" in no_cover.json()["message"]
+    assert created.status_code == 201, created.text
+    assert created.json()["data"]["cover_type"] is None
 
 
 def test_update_cover_type(logged_in_games):
@@ -4137,204 +4123,3 @@ def test_init_db_drops_removed_tables(tmp_path):
     init_db(engine)
 
     assert not sa_inspect(engine).has_table("game_h5_files")
-
-
-# --------------------------------------------------------------------------
-# 批量导入：meta.csv 预检
-# --------------------------------------------------------------------------
-
-
-IMPORT_PREPARE_URL = "/api/games/manage/import/prepare"
-
-
-def _meta_csv_bytes(rows) -> bytes:
-    buffer = io.StringIO()
-    writer = csv.writer(buffer)
-    writer.writerows(rows)
-    return buffer.getvalue().encode("utf-8-sig")
-
-
-def _prepare_import(client, rows, game_type="nes"):
-    return client.post(
-        IMPORT_PREPARE_URL,
-        data={"game_type": game_type},
-        files={"meta": ("meta.csv", _meta_csv_bytes(rows), "text/csv")},
-    )
-
-
-def test_import_prepare_parses_meta_csv(logged_in_games):
-    """表头跳过；按位置取 ID / 名称 / 封面，ID 去空白转大写。"""
-    response = _prepare_import(
-        logged_in_games,
-        [
-            ["number", "id", "name", "cart"],
-            ["834", " nes-sm-usa ", " Super Mario Bros. ", "NES-SM-USA.jpg"],
-        ],
-    )
-    assert response.status_code == 200, response.text
-    row = response.json()["data"]["rows"][0]
-    assert row["cartridge_id"] == "NES-SM-USA"
-    # 外部名称按搬运同一套规则无害化：结尾的点会被去掉
-    assert row["name"] == "Super Mario Bros"
-    assert row["cover"] == "NES-SM-USA.jpg"
-    assert row["cover_type"] == "nes"
-    assert row["skip"] == ""
-    assert row["error"] == ""
-
-
-def test_import_prepare_sets_fc_cover_type(logged_in_games):
-    """FC 机种按卡带 ID 自动决定封面类型：-USA → nes，其余 → fc；其他机种留空。"""
-    response = _prepare_import(
-        logged_in_games,
-        [
-            ["1", "NES-SM-USA", "美版", "a.jpg"],
-            ["2", "NES-SM-JPN", "日版", "b.jpg"],
-        ],
-    )
-    assert response.status_code == 200, response.text
-    rows = response.json()["data"]["rows"]
-    assert [row["cover_type"] for row in rows] == ["nes", "fc"]
-
-    other = _prepare_import(
-        logged_in_games, [["1", "SFC-1-USA", "SFC 游戏", "c.jpg"]], game_type="snes"
-    )
-    assert other.status_code == 200, other.text
-    assert other.json()["data"]["rows"][0]["cover_type"] == ""
-
-
-def test_import_prepare_skips_existing_cartridge_id_globally(logged_in_games):
-    """同卡带 ID 不分机种都跳过；大小写与首尾空白归一后比较。"""
-    _create_game(
-        logged_in_games,
-        "已有 SFC",
-        "a.sfc",
-        b"snes-body",
-        cartridge_id="DUP-ID",
-        game_type="snes",
-    )
-
-    response = _prepare_import(
-        logged_in_games, [["1", " dup-id ", "另一个游戏", "a.jpg"]]
-    )
-    assert response.status_code == 200, response.text
-    row = response.json()["data"]["rows"][0]
-    assert row["skip"] == "cartridge_id"
-    assert row["cartridge_id"] == "DUP-ID"
-
-
-def test_import_prepare_scopes_name_duplicates_by_game_type(logged_in_games):
-    """同名只在同一机种内跳过；别的机种同名照常导入。"""
-    _create_game(
-        logged_in_games,
-        "同名游戏",
-        "a.nes",
-        b"nes-body",
-        cartridge_id="NAME-1",
-    )
-
-    same_type = _prepare_import(
-        logged_in_games, [["1", "NAME-2", "同名游戏", "a.jpg"]], game_type="nes"
-    )
-    assert same_type.json()["data"]["rows"][0]["skip"] == "name"
-
-    other_type = _prepare_import(
-        logged_in_games, [["1", "NAME-2", "同名游戏", "a.jpg"]], game_type="snes"
-    )
-    row = other_type.json()["data"]["rows"][0]
-    assert row["skip"] == ""
-    assert row["error"] == ""
-
-
-def test_import_prepare_skips_duplicates_inside_csv(logged_in_games):
-    """CSV 内部重复：先出现者生效，后面的按 ID / 名称跳过。"""
-    response = _prepare_import(
-        logged_in_games,
-        [
-            ["1", "ID-1", "游戏一", "a.jpg"],
-            ["2", "id-1", "游戏一-改名", "b.jpg"],
-            ["3", "ID-2", "游戏一", "c.jpg"],
-        ],
-    )
-    assert response.status_code == 200, response.text
-    rows = response.json()["data"]["rows"]
-    assert [row["skip"] for row in rows] == ["", "cartridge_id", "name"]
-
-
-def test_import_prepare_reports_row_errors(logged_in_games):
-    """列数不足、ID/名称非法、封面为空或后缀不支持 → 行级错误，不中断整批。"""
-    response = _prepare_import(
-        logged_in_games,
-        [
-            ["1", "ID-1", "正常", "a.jpg"],
-            ["2", "ONLY-THREE"],
-            ["3", "BAD ID", "ID 有空格", "b.jpg"],
-            ["4", "ID-2", "", "c.jpg"],
-            ["5", "ID-3", "无封面", ""],
-            ["6", "ID-4", "封面格式不对", "d.bmp"],
-            ["7", "ID-5", "封面带路径", "sub/e.jpg"],
-        ],
-    )
-    assert response.status_code == 200, response.text
-    rows = response.json()["data"]["rows"]
-    assert rows[0]["error"] == ""
-    assert all(row["error"] for row in rows[1:])
-    assert "列数不足" in rows[1]["error"]
-    assert "卡带 ID" in rows[2]["error"]
-    assert "名称" in rows[3]["error"]
-    assert "封面" in rows[4]["error"]
-    assert "封面" in rows[5]["error"]
-    assert "路径" in rows[6]["error"]
-
-
-def test_import_prepare_rejects_empty_and_header_only(logged_in_games):
-    empty = _prepare_import(logged_in_games, [])
-    assert empty.status_code == 400
-    assert "没有可导入" in empty.json()["message"]
-
-    only_header = _prepare_import(
-        logged_in_games, [["number", "id", "name", "cart"]]
-    )
-    assert only_header.status_code == 400
-    assert "没有可导入" in only_header.json()["message"]
-
-
-def test_import_prepare_rejects_unknown_game_type(logged_in_games):
-    response = _prepare_import(
-        logged_in_games, [["1", "ID-1", "游戏", "a.jpg"]], game_type="nope"
-    )
-    assert response.status_code == 400
-    assert "不支持的游戏类型" in response.json()["message"]
-
-    missing = _prepare_import(
-        logged_in_games, [["1", "ID-1", "游戏", "a.jpg"]], game_type=""
-    )
-    assert missing.status_code == 400
-    assert "游戏类型" in missing.json()["message"]
-
-
-def test_import_prepare_chunks_large_cartridge_id_list(logged_in_games):
-    """超过查重分块大小（500）也不触发 SQLite 绑定变量上限。"""
-    _create_game(
-        logged_in_games,
-        "分块命中",
-        "a.nes",
-        b"nes-body",
-        cartridge_id="HIT-1",
-    )
-    rows = [["1", "HIT-1", "命中", "a.jpg"]]
-    rows += [[str(index), f"MISS-{index}", f"缺失 {index}", "a.jpg"] for index in range(600)]
-
-    response = _prepare_import(logged_in_games, rows)
-    assert response.status_code == 200, response.text
-    data = response.json()["data"]["rows"]
-    assert data[0]["skip"] == "cartridge_id"
-    assert all(row["skip"] == "" for row in data[1:])
-
-
-def test_import_prepare_requires_login(client):
-    response = client.post(
-        IMPORT_PREPARE_URL,
-        data={"game_type": "nes"},
-        files={"meta": ("meta.csv", _meta_csv_bytes([["1", "A", "B", "c.jpg"]]), "text/csv")},
-    )
-    assert response.status_code == 401
