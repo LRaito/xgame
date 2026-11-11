@@ -1,7 +1,8 @@
-# 基础镜像固定到具体补丁版本 + 发行版代号（不用 node:22-alpine 这类浮动标签）：
-# 浮动标签会在上游重发时悄悄换掉 Node 版本与 Alpine 基线，构建产物跟着变、还难排查。
-# 升级请手动改这一行。
-FROM node:22.23.3-alpine3.24 AS build
+# 基础镜像按 digest 固定（原 tag：node:22.23.3-alpine3.24，取值日期 2026-11-11）：
+# 浮动标签会在上游重发时悄悄换掉 Node 版本与 Alpine 基线，tag 也会被重指到别的镜像；
+# digest 内容不可变，构建产物才可复现、能排查。
+# 升级请手动改这一行：docker buildx imagetools inspect node:22.23.3-alpine3.24 取新 digest。
+FROM node@sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402 AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -14,8 +15,8 @@ ARG APP_VERSION=""
 # test -s 保证插件一旦失效构建就失败，而不是部署一个永远探测不到版本的产物。
 RUN APP_VERSION="$APP_VERSION" npm run build && test -s dist/version.txt
 
-# 同上：nginx 也固定补丁版本 + Alpine 代号（nginx:1.27-alpine 会随上游重发漂移）。
-FROM nginx:1.27.5-alpine3.21
+# 同上：nginx 也按 digest 固定（原 tag：nginx:1.27.5-alpine3.21，取值日期 2026-11-11）。
+FROM nginx@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
 # 中国上海时区：nginx 访问/错误日志的时间戳按本地时间走。基础镜像自带 tzdata
 # （/usr/share/zoneinfo），所以只设环境变量 + 指向时区文件。
 ENV TZ=Asia/Shanghai

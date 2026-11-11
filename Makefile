@@ -26,9 +26,11 @@ export APP_VERSION
 certs:
 	bash scripts/gen-certs.sh $(ARGS)
 
-# 构建 api / web 镜像
+# 构建 api / web 镜像。
+# --pull=false：构建前不主动拉取更新的基础镜像（基础镜像已按 digest 固定，见两个 Dockerfile）。
+# 注意 Docker 在本地缺基础镜像时仍会联网拉取；要完全离线，先手动 docker pull 好再用。
 build:
-	$(COMPOSE) build
+	$(COMPOSE) build --pull=false
 
 # 后台启动（api + web）
 up:

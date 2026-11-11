@@ -1,7 +1,9 @@
-# 基础镜像固定到具体补丁版本 + 发行版代号（不用 python:3.12-slim 这类浮动标签）：
-# 浮动标签会在上游重发时悄悄换掉 Python 版本与 Debian 基线，构建产物跟着变、还难排查。
-# 升级请手动改这一行（改完跑一遍 pytest 再上线）。
-FROM python:3.12.15-slim-trixie
+# 基础镜像按 digest 固定（原 tag：python:3.12.15-slim-trixie，取值日期 2026-11-11）：
+# 浮动标签会在上游重发时悄悄换掉 Python 版本与 Debian 基线，tag 也会被重指到别的镜像；
+# digest 内容不可变，构建产物才可复现、能排查。
+# 升级请手动改这一行：docker buildx imagetools inspect python:3.12.15-slim-trixie 取新 digest
+# （改完跑一遍 pytest 再上线）。
+FROM python@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
 
 WORKDIR /app
 

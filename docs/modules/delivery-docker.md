@@ -51,7 +51,9 @@
 
 **镜像。**
 
-- 基础镜像固定到补丁版本 + 发行版代号，不用浮动标签。
+- 基础镜像按 digest 固定（`FROM <image>@sha256:<digest>`），Dockerfile 注释里记录原 tag 与取值日期。
+- 构建统一带 `--pull=false`（`make build` 与 Windows 包构建脚本），不在构建前拉取更新的基础镜像。
+  本地缺基础镜像时 Docker 仍会联网拉取；要完全离线运行构建，先手动 `docker pull` 好一次。
 - api：`python:3.12.15-slim-trixie`。
 - web 构建阶段：`node:22.23.3-alpine3.24`。
 - web 运行阶段：`nginx:1.27.5-alpine3.21`。

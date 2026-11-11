@@ -62,7 +62,7 @@ npm run dev
 ## Docker 运行
 
 ```bash
-make all            # = docker compose build && up -d
+make all            # = docker compose build --pull=false && up -d
 ```
 
 站点在 **https://localhost**。只支持 HTTPS，不发布 80，也没有 http→https 跳转。
@@ -322,7 +322,7 @@ Docker 可能先于 WSL 发行版起来，bind 把空目录挂进了容器。
 
 **页面还是旧版。**
 前端按构建版本号探测更新；nginx 对 HTML 与 `/version.txt` 不缓存。
-经 `make all` 构建才会带上版本号，直接 `docker compose build` 会退化成时间戳。
+经 `make all` 构建才会带上版本号，直接 `docker compose build --pull=false` 会退化成时间戳。
 
 **api 起不来，日志里一串「Booting worker」。**
 看 worker 抛的异常（常见是数据目录不可写）。

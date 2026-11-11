@@ -52,7 +52,9 @@ else
     say "（装工具链 + 下 Windows 运行时/轮子/前端依赖/引擎资产，首次几分钟且要联网，之后就都复用了）"
     # 构建上下文是仓库根：Dockerfile 要从 frontend/ 里取 package.json、lock 与引擎脚本。
     # 不 COPY 的一律不会进镜像，所以不需要 .dockerignore。
-    BUILD_ARGS=()
+    # --pull=false：不在构建前主动拉取更新的基础镜像（基础镜像按 digest 固定）。
+    # 本地缺基础镜像时 Docker 仍会联网拉取；要完全离线，先手动 docker pull 好再用。
+    BUILD_ARGS=(--pull=false)
     [ "${WINBUILD_NO_CACHE:-0}" = "1" ] && BUILD_ARGS+=(--no-cache)
     docker build -f "$DOCKERFILE" -t "$IMAGE" "${BUILD_ARGS[@]}" "$REPO"
 fi
