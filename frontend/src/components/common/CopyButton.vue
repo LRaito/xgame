@@ -64,7 +64,7 @@ async function copy() {
     color: #282828;
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
-    font-weight: 500;
+    font-weight: 600;
     line-height: 20px;
 }
 

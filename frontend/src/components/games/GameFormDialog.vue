@@ -1720,6 +1720,11 @@ onBeforeUnmount(() => {
     min-width: 0;
 }
 
+/* 卡带 ID 是这盘卡的身份，值一律加粗；CRC32 共用同一个类，不在这里加 */
+.game-form__cartridge .game-form__detail-key {
+    font-weight: 600;
+}
+
 /* 描述框：高度交给 rows（不拖拽缩放），底部留出字数统计那一行的位置，免得压住最后一行 */
 .game-form__desc-input :deep(.el-textarea__inner) {
     padding-bottom: 22px;

@@ -919,6 +919,7 @@ onMounted(async () => {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-weight: 600;
 }
 
 /* 白底描边、文字与边框同色；覆盖 AppButton 的私有配色变量。
@@ -944,10 +945,11 @@ onMounted(async () => {
     --_btn-secondary-border-focus: var(--brand-accent);
 }
 
+/* 库存外：卡带 ID 与外框都用普通正文色 */
 .game-discover__ids .app-button.game-discover__cartridge-btn--out {
-    --_btn-secondary-fg: var(--text-muted);
-    --_btn-secondary-border: var(--text-muted);
-    --_btn-secondary-border-hover: var(--text-muted);
-    --_btn-secondary-border-focus: var(--text-muted);
+    --_btn-secondary-fg: var(--app-text);
+    --_btn-secondary-border: var(--app-text);
+    --_btn-secondary-border-hover: var(--app-text);
+    --_btn-secondary-border-focus: var(--app-text);
 }
 </style>

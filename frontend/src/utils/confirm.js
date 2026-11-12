@@ -53,6 +53,8 @@ export async function noticeAction(message, options = {}) {
             confirmButtonText: confirmText,
             showCancelButton: false,
             confirmButtonClass: "el-button--secondary",
+            // Element Plus 的 alert 默认禁用 Esc 关闭，这里显式打开
+            closeOnPressEscape: true,
         });
     } catch {
         // 关闭（X / Esc）也当作正常结束
