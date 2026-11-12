@@ -21,7 +21,7 @@
                 <div>
                     <dt>卡带 ID</dt>
                     <dd>
-                        <span class="game-detail__key">{{ detail.cartridge_id }}</span>
+                        <copy-button :text="detail.cartridge_id" variant="pill" />
                     </dd>
                 </div>
                 <div><dt>类型</dt><dd>{{ typeLabel(detail.game_type) }}</dd></div>
@@ -354,7 +354,7 @@ function formatSize(bytes) {
     gap: 8px;
 }
 
-/* 卡带 ID 与 CRC32 的值：窄了就省略 */
+/* CRC32 的值：窄了就省略 */
 .game-detail__key {
     display: block;
     min-width: 0;
