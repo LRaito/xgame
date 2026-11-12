@@ -104,7 +104,7 @@ CREATE VIRTUAL TABLE game_fts USING fts5(
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 """
 
-# 榜单表。`id` 是自增主键，只用于数据库身份与同分稳定排序；`platform` 是机种 key
+# 榜单表。`id` 是主键，构建时按行序从 1 显式分配，只用于数据库身份与同分稳定排序；`platform` 是机种 key
 # （来自榜单文件名，也就是 EmulatorJS 的 system key），`console` 留文件名 stem 供溯源，
 # `score` 存 MobyGames 原始 double。`rank` 不再落库。
 # `uq_ranking_platform_en` 保证同一机种内英文名唯一；评分排序走 `_RANKING_INDEXES`。
@@ -727,15 +727,17 @@ def _load_ranking_dir(ranking_dir: Path) -> RankingData:
 
 def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, int]:
     """把榜单整份写进 `ranking` 表、重建卡带映射并更新 meta（调用方负责事务与建表）。"""
-    # 一行一行插，拿 lastrowid 建映射；榜单是几千行级，事务内逐条插入可以接受。
+    # 逐行插入；id 显式按行序从 1 分配（整库重建，每次都是同一序列），与游戏名录一致。
+    # 榜单是几千行级，事务内逐条插入可以接受。
     mapping: dict[str, int] = {}
     first_seen: dict[str, str] = {}
     conflicts: list[str] = []
-    for row in data.rows:
-        cursor = conn.execute(
-            "INSERT INTO ranking(platform, console, score, zh, en, cartridge_ids, in_library) "
-            "VALUES(?, ?, ?, ?, ?, ?, 0)",
+    for ranking_id, row in enumerate(data.rows, start=1):
+        conn.execute(
+            "INSERT INTO ranking(id, platform, console, score, zh, en, cartridge_ids, in_library) "
+            "VALUES(?, ?, ?, ?, ?, ?, ?, 0)",
             (
+                ranking_id,
                 row.platform,
                 row.console,
                 row.score,
@@ -744,7 +746,6 @@ def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, in
                 json.dumps(list(row.cartridge_ids), ensure_ascii=False),
             ),
         )
-        ranking_id = cursor.lastrowid
         seen_in_row: set[str] = set()
         for raw in row.cartridge_ids:
             normalized = normalize_cartridge_id(raw)
