@@ -185,11 +185,11 @@ const showMeta = computed(
 
 .game-card__tag--playing {
     gap: 4px;
-    color: var(--brand-accent);
+    color: var(--app-color-in-progress);
 }
 
 .game-card__tag--completed {
-    color: #16a34a;
+    color: var(--app-color-success);
 }
 
 .game-card__check {
@@ -199,7 +199,7 @@ const showMeta = computed(
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #16a34a;
+    background: var(--app-color-success);
     color: #fff;
     font-size: 8px;
     font-weight: 900;
@@ -210,8 +210,8 @@ const showMeta = computed(
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--brand-accent);
-    box-shadow: 0 0 0 3px rgba(0, 152, 238, 0.18);
+    background: var(--app-color-in-progress);
+    box-shadow: 0 0 0 3px var(--app-color-in-progress-soft);
     flex: none;
 }
 </style>

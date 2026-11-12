@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from backend.errors import IndexUnavailableError
+from backend.games.models import PROGRESS_NOT_STARTED
 from backend.games.platforms import PLATFORM_BY_ID, platform_label, platform_order
 from backend.games.search_index import RANKING_SCHEMA_VERSION
 from backend.games.search_service import PAGE_SIZE_DEFAULT, PAGE_SIZE_MAX
@@ -26,6 +27,27 @@ logger = logging.getLogger(__name__)
 # 传一批**原始**卡带ID 文本，回一批命中的 `{原始ID: GameLink}`。榜单服务自己不碰 `games` 表，
 # 也不 import 平台库存那边的 service，只认这个窄接口。
 CartridgeLookup = Callable[[Sequence[str]], Mapping[str, GameLink]]
+# 「按游戏 id 批量取当前用户进度」的能力，同样由构造函数注入
+# （实现见 `GameStatsService.map_for_games`，在 deps 里绑定当前用户）。
+ProgressLookup = Callable[[Sequence[int]], Mapping[int, str]]
+
+
+@dataclass(frozen=True)
+class CartridgeItem:
+    """榜单行里的一个卡带：是否在库存、对应的游戏、当前用户进度。
+
+    只对本页做请求期关联：`in_library` 以现查库存为准（不是 `ranking.in_library`
+    那个行级标记），未命中时其余字段保持默认值。
+    """
+
+    cartridge_id: str
+    game_id: int | None = None
+    in_library: bool = False
+    # 不在库存 = None；在库存但没有统计行 = not_started
+    progress: str | None = None
+    path: str | None = None
+    # 无本体的关联卡带仍返回路径，但前端点击时提示先上传本体（不进播放页）
+    has_body: bool = False
 
 
 @dataclass(frozen=True)
@@ -34,14 +56,7 @@ class RankingItem:
     zh: str
     en: str
     platform: str
-    cartridge_ids: tuple[str, ...]
-    # 是否命中库存；由 make index 全量对账、增删改游戏时增量维护，查询直接按它过滤
-    in_library: bool = False
-    # 该行是否关联到平台库存里的游戏；只对当前页做关联，结果用于渲染播放链接
-    game_id: int | None = None
-    path: str | None = None
-    # 无本体的关联行仍显示为链接样式，但前端点击时提示先上传本体（不进播放页）
-    has_body: bool = False
+    cartridges: tuple[CartridgeItem, ...]
 
 
 @dataclass(frozen=True)
@@ -79,11 +94,16 @@ _CARTRIDGE_LOOKUP_CHUNK = 500
 
 class GameRankingService:
     def __init__(
-        self, db_path: Path, cartridge_lookup: CartridgeLookup | None = None
+        self,
+        db_path: Path,
+        cartridge_lookup: CartridgeLookup | None = None,
+        progress_lookup: ProgressLookup | None = None,
     ) -> None:
         self._db_path = Path(db_path)
-        # None = 不关联平台库存（榜单照样返回，只是没有 game_id / path）
+        # None = 不关联平台库存（榜单照样返回，只是卡带全部按「不在库」处理）
         self._cartridge_lookup = cartridge_lookup
+        # None = 不补当前用户进度（在库卡带统一按未开始处理）
+        self._progress_lookup = progress_lookup
 
     def is_indexed(self) -> bool:
         """索引是否已构建。只 stat，不建目录、不建文件。"""
@@ -187,7 +207,7 @@ class GameRankingService:
                 page = min(page, pages)
                 offset = (page - 1) * page_size
                 rows = conn.execute(
-                    "SELECT platform, score, zh, en, cartridge_ids, in_library "
+                    "SELECT platform, score, zh, en, cartridge_ids "
                     "FROM ranking"
                     + where_sql
                     + " ORDER BY score DESC, id LIMIT ? OFFSET ?",
@@ -197,8 +217,9 @@ class GameRankingService:
             except sqlite3.Error as exc:
                 raise _broken(exc) from exc
 
-        # 只关联当前页（≤100 行）：库存标记已经负责筛选/计数，这里只补播放链接。
-        items = self._attach_links(items)
+        # 只关联当前页（≤100 行）：库存标记已经负责筛选/计数，这里只补每盘卡带的
+        # 库存状态、播放链接与当前用户进度。
+        items = self._attach_cartridges(items)
         return RankingPage(
             True,
             True,
@@ -210,20 +231,25 @@ class GameRankingService:
             matched_total,
         )
 
-    def _attach_links(self, items: list[RankingItem]) -> list[RankingItem]:
-        """把榜单行关联到平台库存的游戏（命中才有 `game_id` / `path`）。
+    def _attach_cartridges(self, items: list[RankingItem]) -> list[RankingItem]:
+        """给当前页的每盘卡带补库存关联与当前用户进度。
 
         **关联只能在请求期做**：榜单所在的 `game.db` 是外部名录的派生只读库，刻意不与 `games` 表
         联动（构建索引时也不能把库存信息写进 `ranking` 表），所以每次请求现查一次，增删游戏立刻生效。
 
-        规则：一行最多两个卡带ID，**任意一个**命中就算关联，命中多个时取**该行第一个命中的那个**
-        （按 CSV 里的先后，结果确定）；比对是「去首尾空白 + 转大写」（`normalize_cartridge_id`）。
-        **不区分有无本体**：无本体的游戏也关联，`has_body=False` 由前端决定是否拦下跳转。
-        按 `_CARTRIDGE_LOOKUP_CHUNK` 分批查库存，不是逐行查。
+        规则：一行最多两个卡带，**逐盘独立**处理；比对是「去首尾空白 + 转大写」
+        （`normalize_cartridge_id`）。**不区分有无本体**：无本体的游戏也关联，
+        `has_body=False` 由前端决定是否拦下跳转。库存与进度各做一次批量查询，不是逐行查。
         """
         if self._cartridge_lookup is None or not items:
             return items
-        raw_ids = [cartridge_id for item in items for cartridge_id in item.cartridge_ids]
+        raw_ids = list(
+            dict.fromkeys(
+                cartridge.cartridge_id
+                for item in items
+                for cartridge in item.cartridges
+            )
+        )
         links: dict[str, GameLink] = {}
         for start in range(0, len(raw_ids), _CARTRIDGE_LOOKUP_CHUNK):
             links.update(
@@ -232,22 +258,37 @@ class GameRankingService:
             )
         if not links:
             return items
+        # 进度按「本页命中的游戏」批量取一次；当前用户由注入的闭包绑定。
+        game_ids = list(
+            dict.fromkeys(
+                link.game_id
+                for item in items
+                for cartridge in item.cartridges
+                if (link := links.get(cartridge.cartridge_id)) is not None
+            )
+        )
+        progress = (
+            self._progress_lookup(game_ids) if self._progress_lookup and game_ids else {}
+        )
         linked: list[RankingItem] = []
         for item in items:
-            link = next(
-                (links[cid] for cid in item.cartridge_ids if cid in links), None
-            )
-            if link is None:
-                linked.append(item)
-            else:
-                linked.append(
-                    replace(
-                        item,
-                        game_id=link.game_id,
-                        path=link.path,
-                        has_body=link.has_body,
+            cartridges = []
+            for cartridge in item.cartridges:
+                link = links.get(cartridge.cartridge_id)
+                if link is None:
+                    cartridges.append(cartridge)
+                else:
+                    cartridges.append(
+                        replace(
+                            cartridge,
+                            in_library=True,
+                            game_id=link.game_id,
+                            path=link.path,
+                            has_body=link.has_body,
+                            progress=progress.get(link.game_id, PROGRESS_NOT_STARTED),
+                        )
                     )
-                )
+            linked.append(replace(item, cartridges=tuple(cartridges)))
         return linked
 
     @contextmanager
@@ -316,7 +357,7 @@ def _to_console(platform: str, raw_console: str) -> RankingConsole:
 
 
 def _to_item(row: tuple) -> RankingItem:
-    platform, score, zh, en, ids_text, in_library = row
+    platform, score, zh, en, ids_text = row
     try:
         ids = json.loads(ids_text)
     except (TypeError, ValueError) as exc:
@@ -328,8 +369,9 @@ def _to_item(row: tuple) -> RankingItem:
         zh=str(zh),
         en=str(en),
         platform=platform,
-        cartridge_ids=tuple(str(item) for item in ids),
-        in_library=bool(in_library),
+        cartridges=tuple(
+            CartridgeItem(cartridge_id=str(item)) for item in ids
+        ),
     )
 
 

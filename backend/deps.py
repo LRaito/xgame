@@ -126,13 +126,25 @@ def get_game_search_service(request: Request) -> GameSearchService:
 GameSearchServiceDep = Annotated[GameSearchService, Depends(get_game_search_service)]
 
 
-def get_game_ranking_service(request: Request, games: GameServiceDep) -> GameRankingService:
+def get_game_ranking_service(
+    request: Request,
+    games: GameServiceDep,
+    stats: GameStatsServiceDep,
+    user: CurrentUser,
+) -> GameRankingService:
     # 榜单与游戏名录共用同一个只读库（`<运行时根>/db/game.db`），只是读另一张表。
-    # 额外把「按卡带ID 找库存游戏」注进去：榜单行要在**请求期**与 `games` 表关联一次
-    # （索引库本身刻意不与平台库存联动，见 ranking_service._attach_links）。
+    # 额外注入两个请求期回调：按卡带ID 找库存游戏、按游戏 id 取**当前用户**进度。
+    # 索引库本身刻意不与平台库存联动（见 ranking_service._attach_cartridges）。
+    def progress_lookup(game_ids):
+        return {
+            game_id: stat.progress
+            for game_id, stat in stats.map_for_games(user.id, list(game_ids)).items()
+        }
+
     return GameRankingService(
         request.app.state.settings.game_index_path,
         cartridge_lookup=games.map_for_cartridge_ids,
+        progress_lookup=progress_lookup,
     )
 
 

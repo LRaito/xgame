@@ -157,7 +157,7 @@
 |---|---|---|---|
 | GET | `/api/games/search` | 需登录 | `q` / `console_id` / `page` / `page_size`，服务端分页 |
 | GET | `/api/games/search/consoles` | 需登录 | 机种下拉 `{id, name, platform_id}`，同名已合并 |
-| GET | `/api/games/search/ranking` | 需登录 | `console` / `keyword` / `in_library` / `page` / `page_size`，服务端分页；省略 console 则跨机种并按评分全局降序；`in_library` 三态：省略=全部，true=库存之内，false=库存之外；item 含 `score` / `zh` / `en` / `platform` / `in_library` |
+| GET | `/api/games/search/ranking` | 需登录 | `console` / `keyword` / `in_library` / `page` / `page_size`，服务端分页；省略 console 则跨机种并按评分全局降序；`in_library` 三态：省略=全部，true=库存之内，false=库存之外；item 含 `score` / `zh` / `en` / `platform` / `cartridges`（每盘卡带 `game_id` / `cartridge_id` / `in_library` / `progress` / `path` / `has_body`） |
 | GET | `/api/games/search/ranking/consoles` | 需登录 | 榜单机种 `{platform, label, playable}` |
 
 - 榜单响应顶层含 `page` / `page_size` / `total` / `matched_total`；

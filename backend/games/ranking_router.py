@@ -30,7 +30,9 @@ def game_ranking(
 
     关键词与库存三态（全部/之内/之外）都由服务端过滤。`page` / `page_size` 越界在 service 收敛。
     榜单没加载时返回 `has_ranking: false` + 空列表（不是错误）。
-    与平台库存关联上的行会多三个字段（`game_id` / `path` / `has_body`）。
+    每行返回 `cartridges` 列表：一行最多两个卡带，每一项独立给出是否在库存、对应的
+    `game_id` / 播放路径 `path` / 是否有本体 `has_body`，以及**当前登录用户**的
+    `progress`（`not_started` / `in_progress` / `completed`；不在库存为 `null`）。
     """
     try:
         result = service.get(
@@ -57,11 +59,17 @@ def game_ranking(
                     "zh": item.zh,
                     "en": item.en,
                     "platform": item.platform,
-                    "cartridge_ids": list(item.cartridge_ids),
-                    "in_library": item.in_library,
-                    "game_id": item.game_id,
-                    "path": item.path,
-                    "has_body": item.has_body,
+                    "cartridges": [
+                        {
+                            "game_id": cartridge.game_id,
+                            "cartridge_id": cartridge.cartridge_id,
+                            "in_library": cartridge.in_library,
+                            "progress": cartridge.progress,
+                            "path": cartridge.path,
+                            "has_body": cartridge.has_body,
+                        }
+                        for cartridge in item.cartridges
+                    ],
                 }
                 for item in result.items
             ],

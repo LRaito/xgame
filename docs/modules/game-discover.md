@@ -171,9 +171,12 @@
   3. 编辑卡带 ID：同时重算旧 ID 与新 ID 对应的榜单行；
   4. 删除游戏：重算旧 ID 对应的榜单行。
 - 增量更新只做短事务 UPDATE；game.db 缺失/过旧/写锁时只记 warning，不阻断游戏操作。
-- 查询只对当前页做库存关联：用 `map_for_cartridge_ids()` 补 `game_id` / `path` / `has_body`；
+- 查询只对当前页做库存关联：用 `map_for_cartridge_ids()` 给每盘卡带补
+  `game_id` / `path` / `has_body`，再用 `map_for_games()` 按**当前登录用户**批量取进度；
   标记本身负责筛选与计数，不再全量关联。
-- `path` 与 `GameItem.path` 同一实现；没命中时 `game_id` / `path` 都是 `null`。
+- 每行最多 2 个卡带，逐盘独立关联：同一行可以一个在库、一个不在库。
+- 在库但没有统计行按 `not_started`；不在库的卡带 `progress` 为 `null`。
+- `path` 与 `GameItem.path` 同一实现；没命中时 `game_id` / `path` / `progress` 都是 `null`。
 
 **接口。**
 
@@ -185,8 +188,11 @@
   - 参数：`console`、`keyword`、`in_library`、`page`、`page_size`。
   - `in_library` 是三态：省略 = 全部；`true` = 库存之内；`false` = 库存之外。
   - `page_size` 默认 10、上限 100；`page` 越界钳到最后一页。
-- item 是 `{score, zh, en, platform, cartridge_ids, in_library, game_id, path, has_body}`；
-  **没有 rank**。
+- item 是 `{score, zh, en, platform, cartridges}`；**没有 rank**，也没有行级
+  `in_library` / `cartridge_ids` / `game_id` / `path` / `has_body`。
+- `cartridges` 每项是 `{game_id, cartridge_id, in_library, progress, path, has_body}`：
+  一行最多两个，逐盘给出是否在库、播放路径、有无本体与当前用户进度。
+- `progress` 取 `not_started` / `in_progress` / `completed`；不在库为 `null`。
 - `score` 是原始 double；前端固定两位小数展示，四舍五入。
 - `console` 传机种键，回显也是机种键；**不传则跨机种**，回显 `null`。
 - 跨机种按评分全局降序；单机种按该类型内评分降序；同分按自增 id 稳定排序。
@@ -221,10 +227,18 @@
 - 库存类型不再显示「已入库 N / M」按钮，也不请求任何比例计数。
 - 分页条 `:total` 用 `total`；翻页触发 `loadRanking()`。
 - 空态用 `matched_total` / `total` / 库存类型区分「没有匹配」与「所选库存范围为空」。
-- 命中库存的行，中英文名都渲染成真 `<a href>`：`<router-link :to="item.path">`。
-- 不加 `@click`，也不加 `custom`，否则 Ctrl/中键开新标签页就废了。
-- 卡带 ID 是并排可点按钮，点击复制。
-- 复制复用 `utils/clipboard.js` 的 `writeClipboard()`；不用 `title` / `el-tooltip`。
+- 命中库存的榜单行，中英文名保持纯文本，只保留截断展开；不再做跳转链接。
+- 卡带 ID 是按钮列：固定列宽、每个按钮固定占整列 1/2（用 grid 两等分），
+  白底描边，文字与边框按进度着色。
+- 配色与游戏中心一致：未开始蓝（`--brand-accent`）、进行中紫
+  （`--app-color-in-progress`）、已通关绿（`--app-color-success`）、不在库灰（`--text-muted`）。
+- 卡带按钮点击：
+  - 在库且有本体：直接进播放页（用后端返回的 `path`）；
+  - 在库但无本体：提示「请先上传游戏本体」；
+  - 不在库：打开与游戏管理页共用的添加游戏弹框，预填名称（中文名，空则英文名）、
+    被点卡带的 ID、以及该机种可玩时的游戏类型；保存后留在榜单页并刷新当前页。
+- 卡带按钮行高仍与其它行一致（40px）：按钮 28px，卡带格上下内边距各 6px。
+- 卡带 ID 最长 15 字符（见 `backend/search/rankings/`），窄屏超出时省略显示，完整值在 `title` 里。
 - 页面默认不选类型，首次请求就不传 `console`，直接看跨机种榜单；选中类型后只取该类型。
 - 行 key 用 `platform + rank`；rank 由当前页位置计算，单页内唯一。
 
@@ -257,6 +271,7 @@
 - 还覆盖缺省表头、空卡带 ID、非 UTF-8、榜单目录必须独立。
 - 还覆盖 v7 结构、映射表、重复卡带 ID 报错、库存/榜单三态筛选与 SQL 分页。
 - 还覆盖只对当前页做库存关联、关键词 `%` / `_` 转义。
+- 还覆盖逐卡带库存/进度：无统计行按未开始、按用户隔离、进度查询只调一次。
 - `tests/test_ranking_flags.py`：全量双向对账、双 ID 行重算、API 增删改标记、缺列报错。
 - 库存关联覆盖：命中、按类型给 path、第二个 ID 命中、大小写不敏感、无本体也算库存之内。
 

@@ -9,15 +9,16 @@ import hashlib
 import sqlite3
 
 import pytest
-from sqlmodel import Session
+from sqlmodel import Session, select
 
+from backend.auth.models import User
 from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, Settings
 from backend.games import search_index
-from backend.games.models import Game
+from backend.games.models import Game, GameUserStat
 from backend.games.platforms import resolve_platform
 from backend.games.ranking_flags import refresh_all_flags
 from backend.games.ranking_service import GameRankingService
-from backend.games.service import GameService
+from backend.games.service import GameLink, GameService
 from backend.games.search_index import (
     RANKING_SCHEMA_VERSION,
     SCHEMA_VERSION,
@@ -545,7 +546,11 @@ def test_ranking_without_console_returns_all_consoles(ranked, logged_in):
     assert scores == sorted(scores, reverse=True)
     assert page["items"][0]["en"] == "Super Mario Bros."
     assert page["items"][0]["score"] == 8.84316671219157
-    assert page["items"][0]["cartridge_ids"] == ["NES-SM"]
+    assert [item["cartridge_id"] for item in page["items"][0]["cartridges"]] == [
+        "NES-SM"
+    ]
+    assert "cartridge_ids" not in page["items"][0]
+    assert "in_library" not in page["items"][0]
     assert "rank" not in page["items"][0]
     assert page["page"] == 1
     assert page["page_size"] == 10
@@ -562,10 +567,14 @@ def test_ranking_gba_page(ranked, logged_in):
     assert page["items"][0]["platform"] == "gba"
     assert page["items"][0]["zh"] == "精灵宝可梦 火红"
     assert page["items"][0]["en"] == "Pokemon FireRed"
-    assert page["items"][0]["cartridge_ids"] == ["POKEMON FIRE RED"]
-    assert page["items"][2]["cartridge_ids"] == ["ID1", "ID2"]
-    # 没编号的行照常返回，只是 ID 列表为空
-    assert page["items"][3]["cartridge_ids"] == []
+    assert [
+        item["cartridge_id"] for item in page["items"][0]["cartridges"]
+    ] == ["POKEMON FIRE RED"]
+    assert [
+        item["cartridge_id"] for item in page["items"][2]["cartridges"]
+    ] == ["ID1", "ID2"]
+    # 没编号的行照常返回，只是卡带列表为空
+    assert page["items"][3]["cartridges"] == []
     assert page["total"] == 4
 
 
@@ -617,12 +626,17 @@ def test_ranking_in_library_filters_and_counts(ranked, logged_in, app):
     assert page["total"] == 1
     assert page["matched_total"] == 8
     assert page["items"][0]["en"] == "Super Mario Bros."
-    assert page["items"][0]["in_library"] is True
-    assert page["items"][0]["path"] is not None
+    cartridge = page["items"][0]["cartridges"][0]
+    assert cartridge["in_library"] is True
+    assert cartridge["path"] is not None
 
     outside = _get(logged_in, RANKING_URL, in_library="false")
     assert outside["total"] == 7
-    assert all(item["in_library"] is False for item in outside["items"])
+    assert all(
+        not cartridge["in_library"]
+        for item in outside["items"]
+        for cartridge in item["cartridges"]
+    )
 
 
 def test_ranking_keyword_and_in_library_are_combined(ranked, logged_in, app):
@@ -649,7 +663,9 @@ def test_ranking_specific_console_and_separators(ranked, logged_in):
         "Zelda - Oracle",
         "Separator Example",
     ]
-    assert page["items"][1]["cartridge_ids"] == ["A1", "A2"]
+    assert [
+        item["cartridge_id"] for item in page["items"][1]["cartridges"]
+    ] == ["A1", "A2"]
 
 
 def test_ranking_unknown_console_returns_empty(ranked, logged_in):
@@ -755,16 +771,21 @@ def ranked_with(app, csv_dir, index_path, tmp_path):
 
 
 def test_ranking_links_game_in_library(ranked, logged_in, app):
-    """卡带ID 对上的行带上 game_id 与播放路径，没对上的行两个字段都是 null。"""
+    """卡带ID 对上的卡带带上 game_id 与播放路径，没对上的保持默认值。"""
     game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
 
     page = _get(logged_in, RANKING_URL)
 
-    assert page["items"][0]["game_id"] == game_id
-    assert page["items"][0]["path"] == f"/games/play/{game_id}"
+    cartridge = page["items"][0]["cartridges"][0]
+    assert cartridge["game_id"] == game_id
+    assert cartridge["in_library"] is True
+    assert cartridge["path"] == f"/games/play/{game_id}"
     # 银河战士（NES-MT）库存里没有
-    assert page["items"][1]["game_id"] is None
-    assert page["items"][1]["path"] is None
+    missed = page["items"][1]["cartridges"][0]
+    assert missed["game_id"] is None
+    assert missed["in_library"] is False
+    assert missed["path"] is None
+    assert missed["progress"] is None
 
 
 def test_ranking_link_uses_play_path_by_game_type(ranked, logged_in, app):
@@ -773,19 +794,24 @@ def test_ranking_link_uses_play_path_by_game_type(ranked, logged_in, app):
 
     page = _get(logged_in, RANKING_URL)
 
-    assert page["items"][0]["path"] == f"/games/flash/{flash_id}"
+    assert page["items"][0]["cartridges"][0]["path"] == f"/games/flash/{flash_id}"
 
 
 def test_ranking_links_when_second_cartridge_id_matches(ranked, logged_in, app):
-    """一行两个卡带ID：任意一个命中就算关联（这里是第二个命中）。"""
+    """一行两个卡带：逐盘独立关联，只有命中的那盘在库。"""
     game_id = _make_game(app, "双版本示例", "ID2")
 
     page = _get(logged_in, RANKING_URL, console="gba")
 
     assert page["items"][2]["zh"] == "双版本示例"
     assert page["items"][2]["en"] == "Double Version Example"
-    assert page["items"][2]["cartridge_ids"] == ["ID1", "ID2"]
-    assert page["items"][2]["path"] == f"/games/play/{game_id}"
+    cartridges = page["items"][2]["cartridges"]
+    assert [cartridge["cartridge_id"] for cartridge in cartridges] == ["ID1", "ID2"]
+    assert cartridges[0]["in_library"] is False
+    assert cartridges[0]["path"] is None
+    assert cartridges[0]["progress"] is None
+    assert cartridges[1]["in_library"] is True
+    assert cartridges[1]["path"] == f"/games/play/{game_id}"
 
 
 def test_ranking_link_is_case_insensitive(ranked_with, logged_in, app):
@@ -795,7 +821,7 @@ def test_ranking_link_is_case_insensitive(ranked_with, logged_in, app):
 
     page = _get(logged_in, RANKING_URL)
 
-    assert page["items"][0]["path"] == f"/games/play/{game_id}"
+    assert page["items"][0]["cartridges"][0]["path"] == f"/games/play/{game_id}"
 
 
 def test_ranking_link_ignores_ids_that_are_not_valid_cartridge_ids(
@@ -810,41 +836,48 @@ def test_ranking_link_ignores_ids_that_are_not_valid_cartridge_ids(
 
     page = _get(logged_in, RANKING_URL)
 
-    assert page["items"][0]["cartridge_ids"] == ["Part No. 7004 0894"]
-    assert page["items"][0]["path"] is None
+    cartridge = page["items"][0]["cartridges"][0]
+    assert cartridge["cartridge_id"] == "Part No. 7004 0894"
+    assert cartridge["in_library"] is False
+    assert cartridge["path"] is None
 
 
 def test_ranking_links_games_without_body(ranked, logged_in, app):
     """没有本体的条目同样关联；has_body=False 供前端拦下跳转并提示先上传。"""
     _make_game(app, "本体丢了的游戏", "NES-SM", game_path="")
 
-    item = _get(logged_in, RANKING_URL)["items"][0]
+    cartridge = _get(logged_in, RANKING_URL)["items"][0]["cartridges"][0]
 
-    assert item["path"] is not None
-    assert item["has_body"] is False
+    assert cartridge["in_library"] is True
+    assert cartridge["path"] is not None
+    assert cartridge["has_body"] is False
+    assert cartridge["progress"] == "not_started"
 
 
 def test_ranking_unlinks_after_game_deleted(ranked, logged_in, app):
     """关联是每请求现算的：删掉游戏后下一次请求就没有链接了（不用执行 make index）。"""
     game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
-    assert _get(logged_in, RANKING_URL)["items"][0]["path"] is not None
+    assert _get(logged_in, RANKING_URL)["items"][0]["cartridges"][0]["path"] is not None
 
     _delete_game(app, game_id)
 
-    assert _get(logged_in, RANKING_URL)["items"][0]["path"] is None
+    cartridge = _get(logged_in, RANKING_URL)["items"][0]["cartridges"][0]
+    assert cartridge["in_library"] is False
+    assert cartridge["path"] is None
+    assert cartridge["progress"] is None
 
 
 def test_ranking_link_follows_cartridge_id_rename(ranked, logged_in, app):
     """改卡带ID 后关联立刻跟着新 ID 走：旧 ID 脱钩、新 ID 命中（同样是每请求现算）。"""
     game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
-    assert _get(logged_in, RANKING_URL)["items"][0]["path"] is not None
+    assert _get(logged_in, RANKING_URL)["items"][0]["cartridges"][0]["path"] is not None
 
     renamed = logged_in.put(
         f"/api/games/manage/{game_id}/cartridge-id", json={"cartridge_id": "NES-SM2"}
     )
     assert renamed.status_code == 200, renamed.text
 
-    assert _get(logged_in, RANKING_URL)["items"][0]["path"] is None
+    assert _get(logged_in, RANKING_URL)["items"][0]["cartridges"][0]["path"] is None
     with Session(app.state.engine) as session:
         links = GameService(
             session, app.state.storage, app.state.runtime_storage
@@ -853,22 +886,39 @@ def test_ranking_link_follows_cartridge_id_rename(ranked, logged_in, app):
 
 
 def test_ranking_link_counts_for_stock_ratio(ranked, logged_in, app):
-    """「已入库比例」的数据契约：前端拿 path 非空的行数当分子、总行数当分母。"""
+    """「已入库比例」的数据契约：前端拿有卡带在库的行数当分子、总行数当分母。"""
     _make_game(app, "精灵宝可梦 火红", "GSAE")
     _make_game(app, "黄金太阳", "ID1")
 
     items = _get(logged_in, RANKING_URL, console="gba")["items"]
 
     assert len(items) == 4
-    assert sum(1 for item in items if item["path"]) == 2
+    assert (
+        sum(
+            1
+            for item in items
+            if any(cartridge["in_library"] for cartridge in item["cartridges"])
+        )
+        == 2
+    )
 
 
 def test_ranking_service_without_lookup_does_not_link(ranked, csv_dir, ranking_dir):
     """不注入查库存的回调 = 不关联（默认值，老的构造方式行为不变）。"""
     page = GameRankingService(ranked).get("nes")
 
-    assert [item.cartridge_ids for item in page.items] == [("NES-SM",), ("NES-MT",)]
-    assert all(item.game_id is None and item.path is None for item in page.items)
+    assert [
+        [cartridge.cartridge_id for cartridge in item.cartridges]
+        for item in page.items
+    ] == [["NES-SM"], ["NES-MT"]]
+    assert all(
+        not cartridge.in_library
+        and cartridge.game_id is None
+        and cartridge.path is None
+        and cartridge.progress is None
+        for item in page.items
+        for cartridge in item.cartridges
+    )
 
 
 def test_ranking_attaches_links_only_for_current_page(ranked):
@@ -885,3 +935,69 @@ def test_ranking_attaches_links_only_for_current_page(ranked):
 
     assert len(page.items) == 1
     assert sum(len(ids) for ids in calls) == 1
+
+
+def test_ranking_cartridge_progress_defaults_and_is_per_user(
+    ranked, logged_in, app, user
+):
+    """进度按当前登录用户批量取：没有统计行按未开始，别的账号互不影响。"""
+    game_id = _make_game(app, "超级马里奥兄弟", "NES-SM")
+
+    # 还没有统计行：在库卡带按 not_started，未入库卡带仍是 None
+    items = _get(logged_in, RANKING_URL)["items"]
+    assert items[0]["cartridges"][0]["progress"] == "not_started"
+    assert items[1]["cartridges"][0]["progress"] is None
+
+    with Session(app.state.engine) as session:
+        session.add(
+            GameUserStat(user_id=user.id, game_id=game_id, progress="in_progress")
+        )
+        session.commit()
+
+    assert (
+        _get(logged_in, RANKING_URL)["items"][0]["cartridges"][0]["progress"]
+        == "in_progress"
+    )
+
+    # 换一个账号：同一盘游戏、同一份榜单，看到的进度的自己的
+    logged_in.post("/api/logout")
+    logged_in.post("/api/register", json={"username": "bob", "password": "secret123"})
+    response = logged_in.post(
+        "/api/login", json={"username": "bob", "password": "secret123"}
+    )
+    assert response.status_code == 200, response.text
+    with Session(app.state.engine) as session:
+        bob = session.exec(select(User).where(User.username == "bob")).one()
+        session.add(
+            GameUserStat(user_id=bob.id, game_id=game_id, progress="completed")
+        )
+        session.commit()
+
+    assert (
+        _get(logged_in, RANKING_URL)["items"][0]["cartridges"][0]["progress"]
+        == "completed"
+    )
+
+
+def test_ranking_progress_lookup_is_batched(ranked):
+    """一页只调用一次进度查询，且只带当前页命中的 game_id。"""
+    progress_calls = []
+
+    def lookup(raw_ids):
+        return {
+            raw: GameLink(game_id=index, path=f"/games/play/{index}")
+            for index, raw in enumerate(raw_ids, start=1)
+        }
+
+    def progress_lookup(game_ids):
+        progress_calls.append(list(game_ids))
+        return {}
+
+    GameRankingService(
+        ranked,
+        cartridge_lookup=lookup,
+        progress_lookup=progress_lookup,
+    ).get(None, page=1, page_size=1)
+
+    assert len(progress_calls) == 1
+    assert len(progress_calls[0]) == 1

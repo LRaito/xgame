@@ -164,68 +164,36 @@
                                 {{ rankingPlatformLabel(item.platform) }}
                             </td>
                             <td>
-                                <!-- 回填后仍可能没有中文名：显示 —，不渲染空链接 -->
+                                <!-- 回填后仍可能没有中文名：显示 — -->
                                 <span v-if="!item.zh" class="game-discover__none">—</span>
-                                <!-- 卡带 ID 与平台库存对上的行：中英文名是**真链接**（router-link 渲染成
-                                     原生 <a href>），没截断时单击进播放页，Ctrl+点击 / 中键由浏览器自己开新标签页；
-                                     截断时单击优先展开全名（AppTruncatableName 在捕获阶段拦掉默认跳转）。
-                                     对上但还没上传本体的行保持链接样式，单击只弹提示、不进播放页；
-                                     没对上的行就是纯文本 -->
-                                <app-truncatable-name v-else>
-                                    <router-link
-                                        v-if="item.path && item.has_body"
-                                        class="game-discover__link"
-                                        :to="item.path"
-                                    >
-                                        {{ item.zh }}
-                                    </router-link>
-                                    <span
-                                        v-else-if="item.path"
-                                        class="game-discover__link"
-                                        role="button"
-                                        tabindex="0"
-                                        @click="onMissingBodyLink"
-                                        @keydown.enter.prevent="onMissingBodyLink"
-                                    >
-                                        {{ item.zh }}
-                                    </span>
-                                    <template v-else>{{ item.zh }}</template>
-                                </app-truncatable-name>
+                                <app-truncatable-name v-else>{{ item.zh }}</app-truncatable-name>
                             </td>
                             <td>
-                                <app-truncatable-name>
-                                    <router-link
-                                        v-if="item.path && item.has_body"
-                                        class="game-discover__link"
-                                        :to="item.path"
-                                    >
-                                        {{ item.en }}
-                                    </router-link>
-                                    <span
-                                        v-else-if="item.path"
-                                        class="game-discover__link"
-                                        role="button"
-                                        tabindex="0"
-                                        @click="onMissingBodyLink"
-                                        @keydown.enter.prevent="onMissingBodyLink"
-                                    >
-                                        {{ item.en }}
-                                    </span>
-                                    <template v-else>{{ item.en }}</template>
-                                </app-truncatable-name>
+                                <app-truncatable-name>{{ item.en }}</app-truncatable-name>
                             </td>
-                            <td>
-                                <span v-if="!item.cartridge_ids.length" class="game-discover__none">
+                            <td class="game-discover__ids-cell">
+                                <span v-if="!item.cartridges.length" class="game-discover__none">
                                     —
                                 </span>
-                                <span v-else class="game-discover__ids">
-                                    <copy-button
-                                        v-for="cartridgeId in item.cartridge_ids"
-                                        :key="cartridgeId"
-                                        :text="cartridgeId"
-                                        variant="pill"
-                                    />
-                                </span>
+                                <div v-else class="game-discover__ids">
+                                    <!-- 每盘卡带一个按钮：在库按进度着色并直接进播放页；
+                                         不在库就弹添加游戏弹框，名称/卡带 ID/类型自动填好 -->
+                                    <app-button
+                                        v-for="(cartridge, index) in item.cartridges"
+                                        :key="`${cartridge.cartridge_id}-${index}`"
+                                        variant="secondary"
+                                        size="sm"
+                                        block
+                                        class="game-discover__cartridge-btn"
+                                        :class="cartridgeToneClass(cartridge)"
+                                        :title="cartridge.cartridge_id"
+                                        @click="onCartridgeClick(item, cartridge)"
+                                    >
+                                        <span class="game-discover__cartridge-label">
+                                            {{ cartridge.cartridge_id }}
+                                        </span>
+                                    </app-button>
+                                </div>
                             </td>
                         </tr>
                     </tbody>
@@ -245,6 +213,14 @@
                 @change="loadRanking"
             />
         </section>
+
+        <!-- 榜单里点「库存之外」的卡带：与游戏管理页同一个添加弹框，预填名称/卡带ID/类型 -->
+        <game-form-dialog
+            v-model="formVisible"
+            mode="create"
+            :initial="formInitial"
+            @saved="loadRanking"
+        />
     </div>
 </template>
 
@@ -259,6 +235,11 @@ import {
 } from "@/api/games";
 import { useAdaptiveRows } from "@/utils/adaptiveRows";
 import { noticeAction } from "@/utils/confirm";
+import GameFormDialog from "@components/games/GameFormDialog.vue";
+import {
+    PROGRESS_COMPLETED,
+    PROGRESS_IN_PROGRESS,
+} from "@/constants/gameProgress";
 
 const TABS = [
     { label: "游戏名录", value: "search" },
@@ -466,6 +447,16 @@ const rankingConsoleLabels = computed(() =>
 function rankingPlatformLabel(platform) {
     return rankingConsoleLabels.value[platform] || platform || "";
 }
+
+// 只有可玩机种才能直接当 game_type 预填；sega / mame 这类兜底键不开放上传
+const rankingPlatformPlayable = computed(() =>
+    Object.fromEntries(
+        rankingConsoles.value.map((item) => [item.platform, Boolean(item.playable)])
+    )
+);
+function canPrefillGameType(platform) {
+    return Boolean(rankingPlatformPlayable.value[platform]);
+}
 // 评分只在这里格式化：后端返回原始 double，页面固定两位小数（四舍五入）。
 function formatRankingScore(score) {
     if (score === null || score === undefined || score === "") {
@@ -501,9 +492,40 @@ let rankingKeywordTimer = null;
 // 同名录框：clear 已立即查询，跳过其后的 input 防抖
 let skipRankingKeywordInput = false;
 
-/** 榜单关联到的游戏还没有本体：不进播放页，提示先上传。 */
-function onMissingBodyLink() {
-    noticeAction("请先上传游戏本体");
+// 添加游戏弹框：点「库存之外」的卡带时打开，保存后刷新当前页、不离开榜单
+const formVisible = ref(false);
+const formInitial = ref(null);
+
+/** 卡带按钮的配色：不在库灰；在库按当前用户进度（未开始蓝 / 进行中紫 / 已通关绿）。 */
+function cartridgeToneClass(cartridge) {
+    if (!cartridge.in_library) {
+        return "game-discover__cartridge-btn--out";
+    }
+    if (cartridge.progress === PROGRESS_COMPLETED) {
+        return "game-discover__cartridge-btn--completed";
+    }
+    if (cartridge.progress === PROGRESS_IN_PROGRESS) {
+        return "game-discover__cartridge-btn--in-progress";
+    }
+    return "game-discover__cartridge-btn--not-started";
+}
+
+/** 在库：有本体直接进播放页，无本体提示先上传；不在库：弹添加弹框并预填。 */
+function onCartridgeClick(item, cartridge) {
+    if (cartridge.in_library) {
+        if (!cartridge.has_body || !cartridge.path) {
+            noticeAction("请先上传游戏本体");
+            return;
+        }
+        router.push(cartridge.path);
+        return;
+    }
+    formInitial.value = {
+        name: (item.zh || item.en || "").trim(),
+        cartridgeId: cartridge.cartridge_id,
+        gameType: canPrefillGameType(item.platform) ? item.platform : "",
+    };
+    formVisible.value = true;
 }
 
 // 每页行数自适应（与名录区同一套行高与开销）。行数变化时重新取当前页。
@@ -737,22 +759,7 @@ onMounted(async () => {
     width: 160px;
 }
 
-/* 命中平台库存的榜单行：游戏名是真 <a>（router-link 渲染），走全局的主色；
-   下划线做成 1px 细线并抬高 2px，比浏览器默认那条粗线克制，指上去才转成实色。
-   链接是 inline 元素，不影响格子里写死的 20px 行盒 */
-.game-discover__link {
-    color: var(--brand-accent);
-    text-decoration: underline;
-    text-decoration-thickness: 1px;
-    text-decoration-color: #bfdbfe;
-    text-underline-offset: 2px;
-    /* 无本体的关联行用 span 渲染，同样要手型 */
-    cursor: pointer;
-}
-
-.game-discover__link:hover {
-    text-decoration-color: currentColor;
-}
+/* 命中平台库存的榜单行不再给名称加链接效果：跳转与添加入口统一放到卡带按钮上 */
 
 /* 列表高度由「实际显示的行数 × 固定行高」决定（模板 :style 绑定；min-height 兜空态）：
    行数按视口高度自适应（utils/adaptiveRows.js），行高全屏/非全屏一致 */
@@ -880,10 +887,67 @@ onMounted(async () => {
     color: var(--text-muted);
 }
 
-/* 0~2 个卡带 ID 在同一格里并排；每个都是 CopyButton 的药丸样式；没有就显示 — */
+/* 0~2 个卡带按钮：固定两等分，单按钮也只占左半边；列宽由表头固定，不随 ID 长短变化。
+   按钮高 28px，所以这格上下内边距收到 6px，整行仍是 40px（6 + 28 + 6） */
+.game-discover__table td.game-discover__ids-cell {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
 .game-discover__ids {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+    align-items: center;
+}
+
+/* Element Plus 默认给相邻按钮加左边距，会把第二个按钮顶出半格 */
+.game-discover__ids :deep(.el-button + .el-button) {
+    margin-left: 0;
+}
+
+.game-discover__cartridge-btn {
+    min-width: 0;
+    --_btn-px: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+}
+
+.game-discover__cartridge-label {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* 白底描边、文字与边框同色；覆盖 AppButton 的私有配色变量。
+   选择器带上父级与 .app-button，压过 .app-button--light 里的定义 */
+.game-discover__ids .app-button.game-discover__cartridge-btn--in-progress {
+    --_btn-secondary-fg: var(--app-color-in-progress);
+    --_btn-secondary-border: var(--app-color-in-progress);
+    --_btn-secondary-border-hover: var(--app-color-in-progress);
+    --_btn-secondary-border-focus: var(--app-color-in-progress);
+}
+
+.game-discover__ids .app-button.game-discover__cartridge-btn--completed {
+    --_btn-secondary-fg: var(--app-color-success);
+    --_btn-secondary-border: var(--app-color-success);
+    --_btn-secondary-border-hover: var(--app-color-success);
+    --_btn-secondary-border-focus: var(--app-color-success);
+}
+
+.game-discover__ids .app-button.game-discover__cartridge-btn--not-started {
+    --_btn-secondary-fg: var(--brand-accent);
+    --_btn-secondary-border: var(--brand-accent);
+    --_btn-secondary-border-hover: var(--brand-accent);
+    --_btn-secondary-border-focus: var(--brand-accent);
+}
+
+.game-discover__ids .app-button.game-discover__cartridge-btn--out {
+    --_btn-secondary-fg: var(--text-muted);
+    --_btn-secondary-border: var(--text-muted);
+    --_btn-secondary-border-hover: var(--text-muted);
+    --_btn-secondary-border-focus: var(--text-muted);
 }
 </style>
