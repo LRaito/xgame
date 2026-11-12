@@ -122,6 +122,34 @@
                     :options="rankingLibraryOptions"
                     @change="rankingNow"
                 />
+
+                <!-- 卡带按钮配色说明：与下面 cartridgeToneClass 的四种配色一一对应 -->
+                <div class="game-discover__legend" aria-label="卡带按钮颜色说明">
+                    <span class="game-discover__legend-item">
+                        <span
+                            class="game-discover__legend-swatch game-discover__legend-swatch--out"
+                        ></span>
+                        未入库
+                    </span>
+                    <span class="game-discover__legend-item">
+                        <span
+                            class="game-discover__legend-swatch game-discover__legend-swatch--not-started"
+                        ></span>
+                        未开始
+                    </span>
+                    <span class="game-discover__legend-item">
+                        <span
+                            class="game-discover__legend-swatch game-discover__legend-swatch--in-progress"
+                        ></span>
+                        进行中
+                    </span>
+                    <span class="game-discover__legend-item">
+                        <span
+                            class="game-discover__legend-swatch game-discover__legend-swatch--completed"
+                        ></span>
+                        已通关
+                    </span>
+                </div>
             </div>
 
             <div
@@ -757,6 +785,46 @@ onMounted(async () => {
 
 .game-discover__library {
     width: 160px;
+}
+
+/* 卡带配色说明：靠右对齐，窄屏换行后仍贴右边；色块颜色与 .game-discover__cartridge-btn--* 一致 */
+.game-discover__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+.game-discover__legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.game-discover__legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex: none;
+}
+
+.game-discover__legend-swatch--out {
+    background: var(--app-text);
+}
+
+.game-discover__legend-swatch--not-started {
+    background: var(--brand-accent);
+}
+
+.game-discover__legend-swatch--in-progress {
+    background: var(--app-color-in-progress);
+}
+
+.game-discover__legend-swatch--completed {
+    background: var(--app-color-success);
 }
 
 /* 命中平台库存的榜单行不再给名称加链接效果：跳转与添加入口统一放到卡带按钮上 */

@@ -34,8 +34,8 @@
     --app-color-success: #16a34a;
     --app-color-warning: #d97706;
     /* 游戏进度「进行中」：游戏中心角标与榜单卡带按钮共用 */
-    --app-color-in-progress: #a78bfa;
-    --app-color-in-progress-soft: rgba(167, 139, 250, 0.18);
+    --app-color-in-progress: #8b5cf6;
+    --app-color-in-progress-soft: rgba(139, 92, 246, 0.18);
 
     /* 开关选中态：浅蓝底 + 深蓝边，避免重新引入实心主按钮 */
     --app-color-selected-bg: #e6f5fd;
