@@ -16,13 +16,13 @@ RGBA PNG，直接覆盖原图位置：
 468 宽源图已裁掉左右各 2 像素，对应矩形各减 2：左宽 26、右宽 27。
 
 文件名不含 `-` 的图片视为异常数据，直接删除，不处理。
-尺寸不在这三种之内的图片跳过（不写出），退出码 1。
+尺寸不在这四种之内的图片跳过（不写出），退出码 1。
 
 JPG / JPEG 源图转成同名 .png 并删除原图；PNG 源图原地覆盖。
 同一批里多个源图会写到同一个输出文件时（如同名 jpg 与 png），整组跳过。
 
 用法：
-    python3 tools/vimm/vimm-fc-crop.py <源图或目录>... [--dry-run]
+    python3 tools/vimm/vimm-fc-crop.py <源图或目录>...
 """
 from __future__ import annotations
 
@@ -157,7 +157,7 @@ def transform(im: Image.Image, size: tuple[int, int]) -> Image.Image:
     return im.crop((SIDE_CROP, 0, SRC_W - SIDE_CROP, OUT_H))
 
 
-def process(src: Path, dst: Path, *, dry_run: bool = False) -> bool:
+def process(src: Path, dst: Path) -> bool:
     """处理一张并写到 dst；失败或尺寸不符返回 False，不动文件。"""
     tmp: Path | None = None
     try:
@@ -168,9 +168,6 @@ def process(src: Path, dst: Path, *, dry_run: bool = False) -> bool:
 
         if out.size != (OUT_W, OUT_H):
             raise ValueError(f"输出尺寸异常 {out.size[0]}x{out.size[1]}")
-        if dry_run:
-            emit("info", f"{src.name} -> {dst.name}（未写入）")
-            return True
 
         # 先写临时文件再原子替换；源文件关闭后才动它。
         tmp = dst.with_name(f".{dst.name}.tmp")
@@ -197,11 +194,6 @@ def main(argv: list[str] | None = None) -> int:
         description="处理 vimm.net FC 卡带图并覆盖为 468x526 PNG（按分辨率分派版式）"
     )
     parser.add_argument("inputs", nargs="+", help="源图文件或目录（可多个）")
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="只报告会处理的文件，不写盘、不删除",
-    )
     args = parser.parse_args(argv)
 
     files = collect_inputs(args.inputs)
@@ -209,14 +201,7 @@ def main(argv: list[str] | None = None) -> int:
         emit("fail", "没有可处理的图片。")
         return 2
 
-    if args.dry_run:
-        # dry-run 也不删异常文件，只报告。
-        abnormal = [p for p in files if "-" not in p.stem]
-        for p in abnormal:
-            emit("warn", f"异常文件（文件名无中划线）：{p.name}")
-        files = [p for p in files if "-" in p.stem]
-    else:
-        files = drop_abnormal(files)
+    files = drop_abnormal(files)
 
     if not files:
         emit("fail", "没有可处理的图片。")
@@ -242,7 +227,7 @@ def main(argv: list[str] | None = None) -> int:
             emit("warn", f"跳过 {src.name}：多个源图会写到 {dst.name}")
             ok = False
             continue
-        if not process(src, dst, dry_run=args.dry_run):
+        if not process(src, dst):
             ok = False
     return 0 if ok else 1
 

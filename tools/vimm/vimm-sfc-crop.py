@@ -8,14 +8,14 @@
    矩形边界取自银色卡带转折：左角 x 0..86、右角 x 449..532，y 都是 0..18。
 2. 底部白底「Vimm's Lair - vimm.net」网址栏 -> 裁掉 14 像素（y=344 起全白）。
 
-输出统一是 532x344 的 RGBA PNG，默认不覆盖源图：
-- 写到源图所在目录的 output/ 子目录（没有就新建），文件名同源图、后缀 .png；
-- 加 --overwrite 时写回源图位置：PNG 原地覆盖，JPG 另存旁边的同名 .png（源图保留）。
+输出统一是 532x344 的 RGBA PNG，直接写回源图位置：
+- PNG 原地覆盖；
+- JPG / JPEG 另存旁边的同名 .png，成功后删除原图。
 尺寸不是 532x358 的图会被跳过（不处理、不写出，退出码 1）。
 同一批里多个源图会写到同一个输出文件时（如同名 jpg 与 png），整组跳过。
 
 用法：
-    python3 tools/vimm-sfc-crop.py <源图或目录>... [--overwrite]
+    python3 tools/vimm/vimm-sfc-crop.py <源图或目录>...
 """
 from __future__ import annotations
 
@@ -37,19 +37,22 @@ RIGHT_RECT = (449, 0, SRC_W, 18)
 # 输出需要透明通道，统一写 PNG；JPG 源图也转成同名 .png。
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
 
-# 默认不覆盖源图，结果放到源图所在目录的这个子目录里。
-OUTPUT_DIR_NAME = "output"
+TAGS = {
+    "ok": ("[ OK ]", 32),
+    "fail": ("[FAIL]", 31),
+    "warn": ("[WARN]", 33),
+    "info": ("[INFO]", 36),
+}
 
-GREEN = "\x1b[32m"
-RED = "\x1b[31m"
-RESET = "\x1b[0m"
 
-
-def emit(tag: str, text: str, *, error: bool = False) -> None:
-    """打一行带状态前缀的日志；输出到终端时成功绿色、失败红色。"""
-    stream = sys.stderr if error else sys.stdout
-    color = (RED if error else GREEN) if stream.isatty() else ""
-    print(f"{color}[{tag}] {text}{RESET if color else ''}", file=stream)
+def emit(kind: str, text: str) -> None:
+    """按项目脚本输出规范打一行日志；非终端输出退回纯文本。"""
+    tag, color = TAGS[kind]
+    stream = sys.stderr if kind in ("fail", "warn") else sys.stdout
+    if stream.isatty():
+        print(f"\x1b[{color}m{tag}\x1b[0m {text}", file=stream)
+    else:
+        print(f"{tag} {text}", file=stream)
 
 
 def collect_inputs(raw_paths: list[str]) -> list[Path]:
@@ -68,15 +71,12 @@ def collect_inputs(raw_paths: list[str]) -> list[Path]:
         elif p.is_file():
             files.append(p)
         else:
-            print(f"找不到：{p}", file=sys.stderr)
+            emit("fail", f"找不到：{p}")
     return files
 
 
-def output_path(src: Path, overwrite: bool) -> Path:
-    """默认落到源图所在目录的 output/；overwrite 时写回源图位置。"""
-    name = f"{src.stem}.png"
-    if not overwrite:
-        return src.parent / OUTPUT_DIR_NAME / name
+def output_path(src: Path) -> Path:
+    """PNG 原地覆盖；JPG / JPEG 另存同名 .png。"""
     if src.suffix.lower() == ".png":
         return src
     return src.with_suffix(".png")
@@ -100,32 +100,29 @@ def process(src: Path, dst: Path) -> bool:
                 alpha.paste(0, (x0, y0, x1, y1))
             out.putalpha(alpha)
 
-        # 源文件已关闭，再写出；默认输出目录按需新建，JPG 源图不删。
+        # 源文件已关闭，再写出；JPG 转出的 .png 写好后才删原图。
         dst.parent.mkdir(parents=True, exist_ok=True)
         out.save(dst, format="PNG")
-        emit("成功", src.name)
+        if src != dst:
+            src.unlink()
+        emit("ok", src.name)
         return True
 
     except Exception as exc:  # 读不了/写不了都要报出来，不能让批处理静默漏图
-        emit("失败", f"{src.name} {exc}", error=True)
+        emit("fail", f"{src.name} {exc}")
         return False
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="处理 vimm.net SFC 卡带图并输出 PNG（源图固定 532x358，支持 PNG / JPG）"
+        description="处理 vimm.net SFC 卡带图并覆盖为 532x344 PNG（源图固定 532x358，支持 PNG / JPG）"
     )
     parser.add_argument("inputs", nargs="+", help="源图文件或目录（可多个）")
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="写回源图位置（PNG 原地覆盖，JPG 另存旁边的同名 .png），默认写到 output/",
-    )
     args = parser.parse_args(argv)
 
     files = collect_inputs(args.inputs)
     if not files:
-        print("没有可处理的图片。", file=sys.stderr)
+        emit("fail", "没有可处理的图片。")
         return 2
 
     # 先规划每张源图的输出，再按输出文件分组：同一批里多个源图写到同一个
@@ -138,13 +135,14 @@ def main(argv: list[str] | None = None) -> int:
         if src_key in seen:
             continue
         seen.add(src_key)
-        dst = output_path(src, args.overwrite)
+        dst = output_path(src)
         plans.append((src, dst))
         groups.setdefault(dst.resolve(), []).append(src)
 
     ok = True
     for src, dst in plans:
         if len(groups[dst.resolve()]) > 1:
+            emit("warn", f"跳过 {src.name}：多个源图会写到 {dst.name}")
             ok = False
             continue
         if not process(src, dst):
