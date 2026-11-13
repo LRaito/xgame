@@ -21,7 +21,7 @@
  *
  * 2. 打开面板
  *    访问任意 https://vimm.net/ 页面，右上角会出现“Vimm's Lair 按名称抓图”面板；
- *    点标题栏的“—”可收起/展开。
+ *    面板默认收起，只显示标题栏；点“+”展开，点“—”收起。
  *
  * 3. 准备名称文件
  *    - 点“选择名称文件”，选择本地 CSV，例如 backend/search/rankings/nes.csv。
@@ -645,9 +645,9 @@
     <div id="panel">
       <div id="head">
         <span>Vimm's Lair 按名称抓图</span>
-        <button id="collapse" title="收起 / 展开">—</button>
+        <button id="collapse" title="展开 / 收起" aria-expanded="false">+</button>
       </div>
-      <div id="body">
+      <div id="body" class="collapsed">
         <div class="row">
           <label>机种 <select id="system"></select></label>
         </div>
@@ -1586,8 +1586,9 @@
   });
 
   collapseBtn.addEventListener('click', () => {
-    bodyEl.classList.toggle('collapsed');
-    collapseBtn.textContent = bodyEl.classList.contains('collapsed') ? '+' : '—';
+    const collapsed = bodyEl.classList.toggle('collapsed');
+    collapseBtn.textContent = collapsed ? '+' : '—';
+    collapseBtn.setAttribute('aria-expanded', String(!collapsed));
   });
 
   if (typeof GM_registerMenuCommand === 'function') {
