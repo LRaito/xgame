@@ -200,10 +200,8 @@
                                 <app-truncatable-name>{{ item.en }}</app-truncatable-name>
                             </td>
                             <td class="game-discover__ids-cell">
-                                <span v-if="!item.cartridges.length" class="game-discover__none">
-                                    —
-                                </span>
-                                <div v-else class="game-discover__ids">
+                                <!-- 没有对应卡带就空着，不填「—」 -->
+                                <div class="game-discover__ids">
                                     <!-- 每盘卡带一个按钮：在库按进度着色并直接进播放页；
                                          不在库就弹添加游戏弹框，名称/卡带 ID/类型自动填好 -->
                                     <app-button
