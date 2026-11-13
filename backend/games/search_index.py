@@ -32,7 +32,9 @@ import logging
 import os
 import re
 import sqlite3
+import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -304,6 +306,17 @@ _RANKING_SCORE_RE = re.compile(r"^\d+(?:\.\d+)?$")
 _SEARCH_HEADER = ("中文名", "英文名")
 
 
+# 进度回调：(阶段名, 已完成, 总数)。总数 <= 0 表示该阶段无法估计百分比。
+ProgressCallback = Callable[[str, int, int], None]
+
+
+def _notify(
+    on_progress: ProgressCallback | None, label: str, current: int, total: int
+) -> None:
+    if on_progress is not None:
+        on_progress(label, current, total)
+
+
 class IndexBuildError(Exception):
     """构建失败。message 是给用户看的中文，`backend/cli.py` 直接打印。"""
 
@@ -347,6 +360,7 @@ def build_index(
     *,
     ranking_dir: Path | None = None,
     strict_ranking: bool = False,
+    on_progress: ProgressCallback | None = None,
 ) -> BuildStats:
     """读 `csv_dir` 下所有游戏名录 CSV，构建 `out_path`（`<运行时根>/db/game.db`）的数据。
 
@@ -354,7 +368,8 @@ def build_index(
     这里只写数据、不做结构迁移。写入用同结构的临时库 + 原子替换，可重复执行，
     失败不会留下半成品。`ranking_dir` 给了就在同一次构建里把榜单也写进去；
     `strict_ranking=False` 时榜单目录坏了只记 warning（游戏名录照常建），
-    `True`（`make index`）时直接抛错让人看到问题。
+    `True`（`make index`）时直接抛错让人看到问题。`on_progress` 用来向调用方
+    报告各阶段进度，回调里不能抛异常（CLI 传的是终端绘制函数）。
     """
     csv_files = sorted(Path(csv_dir).glob("*.csv"), key=_csv_sort_key)
     if not csv_files:
@@ -365,7 +380,7 @@ def build_index(
         ranking_path = Path(ranking_dir)
         if ranking_path.is_dir():
             try:
-                ranking_data = _load_ranking_dir(ranking_path)
+                ranking_data = _load_ranking_dir(ranking_path, on_progress=on_progress)
             except RankingCsvError:
                 if strict_ranking:
                     raise
@@ -379,7 +394,7 @@ def build_index(
         out_path.parent.mkdir(parents=True, exist_ok=True)
         temp_path.unlink(missing_ok=True)
         rows, consoles, ranking_rows, ranking_consoles = _write_database(
-            csv_files, temp_path, ranking_data
+            csv_files, temp_path, ranking_data, on_progress=on_progress
         )
         os.chmod(temp_path, 0o644)
         os.replace(temp_path, out_path)
@@ -437,6 +452,8 @@ def _write_database(
     csv_files: list[Path],
     temp_path: Path,
     ranking_data: RankingData | None,
+    *,
+    on_progress: ProgressCallback | None = None,
 ) -> tuple[int, int, int, int]:
     """把名录（以及可选的榜单）写进临时库文件，返回 (行数, 机种数, 榜单条数, 榜单机种数)。"""
     # 不开 WAL：WAL 会留 -wal/-shm 伴随文件，而 os.replace 只换主文件，新库配旧 -wal 必坏。
@@ -452,7 +469,8 @@ def _write_database(
         seen: set[tuple[str, str, str]] = set()
         groups: dict[str, list[str]] = {}  # 分组键 -> 该组的原始机种名（按首次出现顺序）
 
-        for csv_file in csv_files:
+        _notify(on_progress, "读取游戏名录", 0, len(csv_files))
+        for file_index, csv_file in enumerate(csv_files, start=1):
             console_name = _console_name_for(csv_file)
             for line_no, row in enumerate(_read_csv(csv_file), start=1):
                 if line_no == 1 and _is_search_header(row):
@@ -476,6 +494,7 @@ def _write_database(
                 raw_names = groups.setdefault(group, [])
                 if console_name not in raw_names:
                     raw_names.append(console_name)
+            _notify(on_progress, "读取游戏名录", file_index, len(csv_files))
 
         if not rows:
             raise IndexBuildError(f"{csv_files[0].parent} 下的 CSV 一行数据都没有。")
@@ -493,6 +512,7 @@ def _write_database(
                 "INSERT INTO game_fts(rowid, zh_uni, en_uni) VALUES(?, ?, ?)",
                 (row_id, index_text(zh), index_text(en)),
             )
+            _notify(on_progress, "写入游戏名录", row_id, len(rows))
 
         now = datetime.now().isoformat(timespec="seconds")
         meta = {
@@ -505,7 +525,9 @@ def _write_database(
 
         ranking_rows, ranking_consoles = 0, 0
         if ranking_data is not None:
-            ranking_rows, ranking_consoles = _write_ranking(conn, ranking_data)
+            ranking_rows, ranking_consoles = _write_ranking(
+                conn, ranking_data, on_progress=on_progress
+            )
         else:
             # 没有榜单 CSV 也要留下版本号：榜单页据此区分「索引都没有」与「榜单还没加载」
             _upsert_meta(
@@ -517,12 +539,15 @@ def _write_database(
                 },
             )
         conn.commit()
+        # FTS5 的 optimize 只合并倒排索引段，耗时通常很短，不单独报进度
         # optimize 会重建倒排索引块，必须落在自己的事务里（放进隐式事务一旦回滚就白做）
         conn.execute("INSERT INTO game_fts(game_fts) VALUES('optimize')")
         conn.commit()
-        conn.execute("VACUUM")
     finally:
         conn.close()
+
+    # 压缩必须在连接关闭之后做：Windows 上仍被打开的文件无法替换
+    _vacuum_database(temp_path, on_progress=on_progress)
 
     # 收尾断言：临时文件旁边不该有 journal 系伴随文件（有的话 os.replace 出来的主库会与它不匹配）
     for suffix in ("-wal", "-shm", "-journal"):
@@ -530,6 +555,86 @@ def _write_database(
         if leftover.exists():  # pragma: no cover - 正常路径不会走到
             leftover.unlink()
     return row_id, len(console_ids), ranking_rows, ranking_consoles
+
+
+# 轮询 VACUUM INTO 目标文件大小的间隔（秒）。进度条只按整数百分比刷新，再密没有收益。
+_VACUUM_POLL_INTERVAL = 0.1
+
+
+def _vacuum_database(
+    temp_path: Path, *, on_progress: ProgressCallback | None = None
+) -> None:
+    """把临时库压缩成新文件再原子替换回 ``temp_path``。
+
+    ``VACUUM`` 是单条 SQLite 调用，报不出百分比；``VACUUM INTO`` 逐页顺序写新文件，
+    用「新文件大小 / 预估产物大小」近似进度。产物等价，而且不建回滚日志，在慢盘上
+    比 ``VACUUM`` 快得多。
+    """
+    vacuum_path = temp_path.with_name(temp_path.name + ".vacuum")
+    vacuum_path.unlink(missing_ok=True)
+    total = _compacted_size(temp_path)
+    errors: list[Exception] = []
+
+    def run() -> None:
+        try:
+            conn = sqlite3.connect(temp_path)
+            try:
+                conn.execute("VACUUM INTO ?", (str(vacuum_path),))
+            finally:
+                conn.close()
+        except Exception as exc:  # noqa: BLE001 - 交给主线程重新抛出
+            errors.append(exc)
+
+    thread: threading.Thread | None = None
+    try:
+        if on_progress is None:
+            run()
+        else:
+            _notify(on_progress, "正在优化索引", 0, total)
+            thread = threading.Thread(target=run, daemon=True)
+            thread.start()
+            written = 0
+            while thread.is_alive():
+                written = max(written, _file_size(vacuum_path, total))
+                _notify(on_progress, "正在优化索引", written, total)
+                thread.join(_VACUUM_POLL_INTERVAL)
+        if thread is not None:
+            thread.join()
+        if errors:
+            raise errors[0]
+        os.replace(vacuum_path, temp_path)
+        _notify(on_progress, "正在优化索引", total, total)
+    except BaseException:
+        if thread is not None and thread.is_alive():
+            thread.join()
+        vacuum_path.unlink(missing_ok=True)
+        raise
+
+
+def _compacted_size(path: Path) -> int:
+    """估算压缩后的库大小：去掉 freelist 页再乘页大小。
+
+    VACUUM 只回收空闲页，所以这个估算与真实产物的偏差很小；收尾时进度直接补到 100%。
+    """
+    conn = None
+    try:
+        conn = sqlite3.connect(path)
+        page_size = conn.execute("PRAGMA page_size").fetchone()[0]
+        page_count = conn.execute("PRAGMA page_count").fetchone()[0]
+        freelist = conn.execute("PRAGMA freelist_count").fetchone()[0]
+        return max((page_count - freelist) * page_size, 1)
+    except sqlite3.Error:
+        return max(path.stat().st_size, 1)
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _file_size(path: Path, limit: int) -> int:
+    try:
+        return min(path.stat().st_size, limit)
+    except OSError:
+        return 0
 
 
 # 认不出机种的原始名自成一组时的分组键前缀（加前缀是为了与机种 id 分得开）
@@ -603,7 +708,9 @@ def _is_search_header(row: list[str]) -> bool:
     return len(row) == len(_SEARCH_HEADER) and tuple(cell.strip() for cell in row) == _SEARCH_HEADER
 
 
-def _load_ranking_dir(ranking_dir: Path) -> RankingData:
+def _load_ranking_dir(
+    ranking_dir: Path, *, on_progress: ProgressCallback | None = None
+) -> RankingData:
     """解析榜单目录，返回行、机种与多文件内容指纹。任何格式问题都抛带文件名与行号的中文错误。"""
     csv_files = sorted(Path(ranking_dir).glob("*.csv"))
     if not csv_files:
@@ -616,7 +723,8 @@ def _load_ranking_dir(ranking_dir: Path) -> RankingData:
     first_seen: dict[tuple[str, str], tuple[str, int]] = {}
     duplicates: list[str] = []
 
-    for csv_path in csv_files:
+    _notify(on_progress, "解析游戏榜单", 0, len(csv_files))
+    for file_index, csv_path in enumerate(csv_files, start=1):
         raw = csv_path.read_bytes()
         # 指纹覆盖「文件名 + 原始字节」：改名、换内容、增删文件都会变；空文件也算一份。
         digest.update(csv_path.name.encode("utf-8"))
@@ -705,6 +813,7 @@ def _load_ranking_dir(ranking_dir: Path) -> RankingData:
             )
 
         # 只有表头的机种文件合法（例如暂无评分的 c128/pcfx/pet），继续读下一份。
+        _notify(on_progress, "解析游戏榜单", file_index, len(csv_files))
 
     if duplicates:
         raise RankingCsvError(
@@ -725,7 +834,12 @@ def _load_ranking_dir(ranking_dir: Path) -> RankingData:
     )
 
 
-def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, int]:
+def _write_ranking(
+    conn: sqlite3.Connection,
+    data: RankingData,
+    *,
+    on_progress: ProgressCallback | None = None,
+) -> tuple[int, int]:
     """把榜单整份写进 `ranking` 表、重建卡带映射并更新 meta（调用方负责事务与建表）。"""
     # 逐行插入；id 显式按行序从 1 分配（整库重建，每次都是同一序列），与游戏名录一致。
     # 榜单是几千行级，事务内逐条插入可以接受。
@@ -763,6 +877,7 @@ def _write_ranking(conn: sqlite3.Connection, data: RankingData) -> tuple[int, in
             first_seen.setdefault(
                 normalized, f"{row.platform} / {row.zh or row.en or '未命名'}"
             )
+        _notify(on_progress, "写入游戏榜单", ranking_id, len(data.rows))
 
     if conflicts:
         raise RankingCsvError(

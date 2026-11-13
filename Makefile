@@ -74,7 +74,7 @@ index:
 			bash scripts/log.sh fail "    sudo chown -R \"$$USER\" \"$$root\""; \
 			exit 1; \
 		} || true
-	RUNTIME_ROOT=$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}} \
+	@RUNTIME_ROOT=$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}} \
 	STORAGE_ROOT=$${STORAGE_HOST_DIR:-./data/storage} \
 	python3 -m backend.cli index
 

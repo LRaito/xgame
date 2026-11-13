@@ -4,7 +4,7 @@ from typing import NoReturn
 import click
 
 from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, get_settings
-from backend.console import fail, info, ok
+from backend.console import Progress, fail, info, ok
 from backend.database import ensure_data_dir, has_business_tables, init_db, make_engine
 
 
@@ -152,30 +152,39 @@ def build_index_cmd(
             "make index 需要同时构建游戏名录与游戏榜单。"
         )
 
-    info(f"读取游戏名录：{source}")
-    info(f"读取游戏榜单目录：{ranking_source}")
-
+    info("开始构建游戏名录与游戏榜单。")
+    progress = Progress()
     try:
-        stats = build_index(
-            source, target, ranking_dir=ranking_source, strict_ranking=True
-        )
-    except IndexBuildError as exc:
-        _stop(str(exc))
+        try:
+            stats = build_index(
+                source,
+                target,
+                ranking_dir=ranking_source,
+                strict_ranking=True,
+                on_progress=progress.report,
+            )
+        except IndexBuildError as exc:
+            progress.finish()
+            _stop(str(exc))
 
-    try:
-        sync = refresh_all_flags(settings.database_path, stats.path, strict=True)
-    except FlagSyncError as exc:
-        _stop(str(exc))
+        progress.report("同步榜单与库存标记")
+        try:
+            sync = refresh_all_flags(settings.database_path, stats.path, strict=True)
+        except FlagSyncError as exc:
+            progress.finish()
+            _stop(str(exc))
+    finally:
+        progress.finish()
 
-    ok(
-        f"已写入 {stats.path}：游戏名录 {stats.rows} 行 / {stats.consoles} 机种，"
-        f"游戏榜单 {stats.ranking_rows} 条 / {stats.ranking_consoles} 机种，"
-        f"耗时 {stats.seconds:.1f} 秒，文件 {stats.size / 1024 / 1024:.1f} MB。"
-    )
     if sync is not None:
         info(
             f"已同步标记：库存表 {sync.games_changed} 行，榜单 {sync.rankings_changed} 行。"
         )
+    ok(
+        f"构建完成：游戏名录 {stats.rows} 行 / {stats.consoles} 机种，"
+        f"游戏榜单 {stats.ranking_rows} 条 / {stats.ranking_consoles} 机种，"
+        f"索引 {stats.size / 1024 / 1024:.1f} MB，耗时 {stats.seconds:.1f} 秒。"
+    )
 
 
 if __name__ == "__main__":

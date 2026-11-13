@@ -309,6 +309,23 @@ def test_build_index_writes_ranking(csv_dir, ranking_dir, index_path):
     assert rows[5][5] == "[]"
 
 
+def test_build_index_reports_ranking_progress(csv_dir, ranking_dir, index_path):
+    events = []
+    stats = build_index(
+        csv_dir,
+        index_path,
+        ranking_dir=ranking_dir,
+        on_progress=lambda *event: events.append(event),
+    )
+
+    stages = {label for label, _, _ in events}
+    assert {"解析游戏榜单", "写入游戏榜单"} <= stages
+    written = [
+        (current, total) for label, current, total in events if label == "写入游戏榜单"
+    ]
+    assert written[-1] == (stats.ranking_rows, stats.ranking_rows)
+
+
 def test_ranking_table_has_auto_increment_id(csv_dir, ranking_dir, index_path):
     build_index(csv_dir, index_path, ranking_dir=ranking_dir)
 

@@ -155,7 +155,7 @@ def test_build_index_stats_and_schema(csv_dir, index_path):
     assert index_path.is_file()
 
     # 不留 journal 系伴随文件（os.replace 只换主库，留了就是隐患）
-    for suffix in ("-wal", "-shm", "-journal", ".tmp"):
+    for suffix in ("-wal", "-shm", "-journal", ".tmp", ".tmp.vacuum"):
         assert not index_path.with_name(index_path.name + suffix).exists()
 
     with sqlite3.connect(index_path) as conn:
@@ -183,6 +183,22 @@ def test_build_index_is_idempotent_and_overwrites(csv_dir, index_path):
     assert third.rows == 1
     with sqlite3.connect(index_path) as conn:
         assert conn.execute("SELECT count(*) FROM game").fetchone()[0] == 1
+
+
+def test_build_index_reports_progress(csv_dir, index_path):
+    events = []
+    stats = build_index(
+        csv_dir, index_path, on_progress=lambda *event: events.append(event)
+    )
+
+    stages = {label for label, _, _ in events}
+    assert {"读取游戏名录", "写入游戏名录", "正在优化索引"} <= stages
+    written = [
+        (current, total) for label, current, total in events if label == "写入游戏名录"
+    ]
+    assert written[-1] == (stats.rows, stats.rows)
+    assert events[-1][0] == "正在优化索引"
+    assert events[-1][1] == events[-1][2]
 
 
 def test_build_index_rejects_bad_row(tmp_path):
