@@ -1,9 +1,11 @@
-# 基础镜像按 digest 固定（原 tag：python:3.12.15-slim-trixie，取值日期 2026-11-11）：
-# 浮动标签会在上游重发时悄悄换掉 Python 版本与 Debian 基线，tag 也会被重指到别的镜像；
-# digest 内容不可变，构建产物才可复现、能排查。
-# 升级请手动改这一行：docker buildx imagetools inspect python:3.12.15-slim-trixie 取新 digest
+# 基础镜像同时写 tag 与 digest：
+# - tag 让 BuildKit 先在本机镜像库里按名字命中，构建时不再向 Docker Hub 解析 metadata；
+# - digest 固定内容，上游重发 tag 时这里不会跟着换 Python 版本或 Debian 基线。
+# 只写 digest 时 BuildKit 每次构建都要联网解析（load metadata），本机有镜像也一样。
+# digest 必须与本机镜像的 RepoDigest 一致，否则 tag 命中后仍会去 Docker Hub 解析。
+# 升级请手动改这两处：docker buildx imagetools inspect python:3.12.15-slim-trixie 取新 digest
 # （改完跑一遍 pytest 再上线）。
-FROM python@sha256:a0f57064cbdcd6285fa45f51237ab0b35ea8ebaed06a1f5973e89e19dfb86704
+FROM python:3.12.15-slim-trixie@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
 
 WORKDIR /app
 
