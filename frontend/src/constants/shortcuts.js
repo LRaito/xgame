@@ -174,6 +174,12 @@ export const SHORTCUT_PAGES = [
         scope: "play",
         rows: [
             {
+                id: "play.toggle_pause",
+                feature: "播放控制",
+                defaultBinding: "Escape",
+                desc: "暂停 / 继续游戏（模拟器）",
+            },
+            {
                 id: "play.sync_cloud",
                 feature: "存档",
                 defaultBinding: "Backquote",

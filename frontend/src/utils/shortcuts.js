@@ -1,4 +1,4 @@
-import { bindingMatchesEvent } from "@/constants/shortcuts";
+import { bindingMatchesEvent, bindingParts } from "@/constants/shortcuts";
 import { useShortcutsStore } from "@/store/shortcuts";
 
 /**
@@ -11,4 +11,9 @@ export function matchesShortcut(event, actionId) {
     // 配置由 Layout / 登录流程在进入应用时拉取一次；按键处理只读缓存，
     // 避免接口异常时每次按键都发请求、弹错误提示。
     return bindingMatchesEvent(useShortcutsStore().bindingOf(actionId), event);
+}
+
+/** 当前绑定串的显示文案（如 `Esc`、`Ctrl+Shift+S`）；已关闭时返回空串。 */
+export function shortcutLabel(actionId) {
+    return bindingParts(useShortcutsStore().bindingOf(actionId)).join("+");
 }

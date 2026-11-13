@@ -155,6 +155,9 @@
 - 保存是手动的：标题栏「保存配置」把当前整块配置 PUT 上去。
 - 不做自动侦测：引擎不发设置变更事件，也没有保存按钮。
 - NDS 写回前会剔除双屏布局与 gap 选项，保证窗口选择器是布局的唯一入口。
+- 复古滤镜只按机种记在浏览器本地（`games.emu.filters`），读写云端时都会剔除
+  `shader` 与各内核滤镜键，不随账号同步；详见
+  [`./game-center-playback.md`](./game-center-playback.md)。
 - 接口为 `GET /api/games/emulator-settings?game_type=…` 与 `PUT /api/games/emulator-settings`。
 
 ### 最近游玩

@@ -21,13 +21,22 @@
                     <slot name="extra" />
                 </div>
             </div>
-            <div class="game-shell__actions">
+            <div
+                class="game-shell__actions"
+                :class="{ 'game-shell__actions--uniform': uniformActions }"
+            >
                 <slot name="actions" />
-                <app-button variant="secondary" tone="dark" size="lg" @click="toggleFullscreen">
-                    {{ isFullscreen ? "退出全屏" : "全屏" }}
+                <app-button
+                    variant="secondary"
+                    tone="dark"
+                    size="lg"
+                    :pressed="isFullscreen"
+                    @click="toggleFullscreen"
+                >
+                    全屏模式
                 </app-button>
                 <app-button variant="secondary" tone="dark" size="lg" @click="goBack">
-                    返回游戏中心
+                    返回平台
                 </app-button>
             </div>
         </header>
@@ -48,6 +57,8 @@ import { useFullscreenState } from "@/utils/fullscreen";
 
 defineProps({
     title: { type: String, required: true },
+    // 标题栏所有触发按钮使用同一固定宽度；播放页按需开启
+    uniformActions: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(["fullscreen-change", "cursor-idle-change"]);
@@ -297,8 +308,29 @@ onBeforeUnmount(() => {
 .game-shell__actions {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex-shrink: 0;
+}
+
+/* 等间隙：Element Plus 给相邻按钮加左边距，清掉后统一由 gap 控制 */
+.game-shell__actions :deep(.el-button + .el-button) {
+    margin-left: 0;
+}
+
+/* 标题栏整体收窄一点；面板内的小格子保持自己的尺寸 */
+.game-shell__actions > :deep(.app-button),
+.game-shell__actions :deep(.playback-select > .app-button),
+.game-shell__actions :deep(.emu-window-select > .app-button) {
+    padding-left: 14px;
+    padding-right: 14px;
+}
+
+/* 模拟器播放页：所有触发按钮同宽，切换文案/倍率时标题栏不跳动 */
+.game-shell__actions--uniform > :deep(.app-button),
+.game-shell__actions--uniform :deep(.playback-select > .app-button),
+.game-shell__actions--uniform :deep(.emu-window-select > .app-button) {
+    width: 6em;
+    justify-content: center;
 }
 
 .game-shell__body {

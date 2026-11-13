@@ -129,7 +129,7 @@
 
 ### 游戏截图
 
-- 截图入口在主机播放页标题栏「截图」按钮或 `Ctrl+Shift+S`。
+- 截图入口在主机播放页标题栏「保存截图」按钮或 `Ctrl+Shift+S`。
 - 宿主页优先取引擎自带截图（内核侧读帧缓冲，得到原生像素）；拿不到或全黑时
   退回同一帧 `requestAnimationFrame` 里拷画布。
 - 引擎 WebGL 上下文是 `preserveDrawingBuffer: false`；个别浏览器会拷到全黑。

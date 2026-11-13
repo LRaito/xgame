@@ -9,7 +9,11 @@
             :aria-expanded="open ? 'true' : 'false'"
             @click="open = !open"
         >
-            {{ currentLabel }}
+            <!-- 用最长条目的隐形副本撑住按钮宽度：换选择时按钮大小不变，标题栏不跳 -->
+            <span class="playback-select__value">
+                <span class="playback-select__measure" aria-hidden="true">{{ longestLabel }}</span>
+                <span class="playback-select__current">{{ currentLabel }}</span>
+            </span>
         </app-button>
 
         <!-- 面板就地渲染在标题栏里（不 teleport）：鼠标移进面板仍算在标题栏内，
@@ -54,6 +58,22 @@ const currentLabel = computed(() => {
     const hit = props.options.find((option) => option.value === props.modelValue);
     return hit ? hit.label : props.options[0]?.label || "";
 });
+
+// 中文按 2 个宽度、其余按 1 个宽度估算，选最长的条目做隐形撑宽副本。
+function labelWidth(text) {
+    return Array.from(String(text || "")).reduce(
+        (total, char) => total + (/[一-鿿]/.test(char) ? 2 : 1),
+        0,
+    );
+}
+
+const longestLabel = computed(() =>
+    props.options.reduce(
+        (longest, option) =>
+            labelWidth(option.label) > labelWidth(longest) ? option.label : longest,
+        "",
+    ),
+);
 
 function pick(value) {
     emit("update:modelValue", value);
@@ -104,16 +124,37 @@ onBeforeUnmount(() => {
     white-space: nowrap;
 }
 
-/* 面板挂在按钮下方、右对齐：标题栏靠右，右对齐才不会被视口切掉 */
+.playback-select__value {
+    display: inline-grid;
+    justify-items: center;
+}
+
+.playback-select__value > * {
+    grid-area: 1 / 1;
+}
+
+.playback-select__measure {
+    visibility: hidden;
+    white-space: nowrap;
+}
+
+.playback-select__current {
+    white-space: nowrap;
+}
+
+/* 面板挂在按钮下方，以按钮中心线左右对齐 */
 .playback-select__panel {
     position: absolute;
     top: calc(100% + 10px);
-    right: 0;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 30;
     display: grid;
     grid-template-columns: 1fr;
     gap: 4px;
+    max-height: calc(100vh - 120px);
     padding: 8px;
+    overflow-y: auto;
     border: 1px solid rgba(148, 163, 184, 0.3);
     border-radius: 10px;
     background: rgba(15, 23, 42, 0.96);

@@ -521,6 +521,45 @@
                 return false;
             }
 
+            /**
+             * 启用/关闭引擎内置着色器。name 为空或 "disabled" 即关闭。
+             * 同时同步 settings/allSettings：引擎之后 saveSettings() 会按内存里的值
+             * 写回设置块，所以这里保持内存值与实际状态一致。
+             */
+            function applyShader(name) {
+                const inst = window.EJS_emulator;
+                const value = name || "disabled";
+                if (!inst || typeof inst.enableShader !== "function") {
+                    return value === "disabled";
+                }
+                if (value !== "disabled" && !inst.config?.shaders?.[value]) {
+                    return false;
+                }
+                try {
+                    inst.enableShader(value);
+                    if (inst.settings) {
+                        inst.settings.shader = value;
+                    }
+                    if (inst.allSettings) {
+                        inst.allSettings.shader = value;
+                    }
+                    return true;
+                } catch {
+                    return false;
+                }
+            }
+
+            /**
+             * 着色器已加入 EJS_hideSettings：设置行不会创建，引擎读设置块时只会把值写进
+             * settings，不会自动调用 enableShader。所以启动完成后要按设置块显式启用一次。
+             */
+            function applyShaderFromSettings() {
+                const name = window.EJS_emulator?.settings?.shader;
+                if (typeof name === "string" && name && name !== "disabled") {
+                    applyShader(name);
+                }
+            }
+
             window.__ejsRpc = {
                 get ready() {
                     return window.__ejsReady === true && Boolean(window.EJS_emulator);
@@ -603,6 +642,42 @@
                         return { ok: false, message: "切换加速模式失败。" };
                     }
                     return { ok: true, fastForward: inst.isFastForward === true };
+                },
+
+                /** 引擎当前是否暂停；未开始游戏时返回 null（与 fastForward 一致）。 */
+                get paused() {
+                    const inst = window.EJS_emulator;
+                    if (!inst || !inst.started) {
+                        return null;
+                    }
+                    return inst.paused === true;
+                },
+
+                /**
+                 * 暂停/继续。走引擎自己的 pause() / play()：会同步引擎的 paused 状态、
+                 * 切换底部控制条播放/暂停按钮，并停止/恢复 WASM 主循环。
+                 */
+                async togglePause() {
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再暂停。" };
+                    }
+                    if (typeof inst.pause !== "function" || typeof inst.play !== "function") {
+                        return { ok: false, message: "当前内核不支持暂停。" };
+                    }
+                    try {
+                        if (inst.paused) {
+                            inst.play();
+                        } else {
+                            inst.pause();
+                        }
+                    } catch {
+                        return { ok: false, message: "切换暂停状态失败。" };
+                    }
+                    return { ok: true, paused: inst.paused === true };
                 },
 
                 /** 捕捉“当前进度”：触发引擎把状态写入浏览器档，读回字节 → base64 */
@@ -717,6 +792,110 @@
                         return { ok: false, message: "切换显示比例失败。" };
                     }
                     return { ok: true };
+                },
+
+                /**
+                 * 切复古滤镜（父页面标题栏的「滤镜」下拉）。
+                 *
+                 * payload: {
+                 *   options: { 内核键: 值 },  // 新滤镜的原生选项，可为空
+                 *   reset:   { 内核键: 关闭值 }, // 本机种涉及的滤镜键，先复位
+                 *   shader:  "crt-lottes" | "",  // 空串表示关闭着色器
+                 *   core:    "fceumm"            // 期望的默认内核名，可为空
+                 * }
+                 *
+                 * 原生选项走 gameManager.setVariable——和引擎设置菜单改选项是同一条路，
+                 * 运行中立即生效。着色器走 enableShader。两端都把值同步进 settings /
+                 * allSettings，否则引擎下一次 saveSettings() 会按内存里的值覆盖设置块。
+                 */
+                async setFilter(payload) {
+                    if (!payload || typeof payload !== "object") {
+                        return { ok: false, message: "滤镜参数无效。" };
+                    }
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再切换滤镜。" };
+                    }
+                    const shader = typeof payload.shader === "string" ? payload.shader : "";
+                    if (shader && shader !== "disabled" && !inst.config?.shaders?.[shader]) {
+                        return { ok: false, message: "当前引擎不支持该滤镜着色器。" };
+                    }
+                    // 原生选项只对默认内核有效：用户把内核切走之后键名对不上，
+                    // setVariable 会静默失效。提前判断并说明，只应用着色器。
+                    const expectedCore = typeof payload.core === "string" ? payload.core : "";
+                    let warning = "";
+                    if (
+                        expectedCore &&
+                        typeof inst.getCore === "function" &&
+                        inst.getCore() !== expectedCore
+                    ) {
+                        warning = "当前内核不支持这组原生信号选项，仅着色器生效。";
+                    }
+                    try {
+                        const options =
+                            payload.options && typeof payload.options === "object"
+                                ? payload.options
+                                : {};
+                        const reset =
+                            payload.reset && typeof payload.reset === "object" ? payload.reset : {};
+                        if (
+                            !warning &&
+                            inst.gameManager &&
+                            typeof inst.gameManager.setVariable === "function"
+                        ) {
+                            for (const key of Object.keys(reset)) {
+                                if (!(key in options)) {
+                                    inst.gameManager.setVariable(key, reset[key]);
+                                    if (inst.settings) inst.settings[key] = reset[key];
+                                    if (inst.allSettings) inst.allSettings[key] = reset[key];
+                                }
+                            }
+                            for (const key of Object.keys(options)) {
+                                const value = String(options[key]);
+                                inst.gameManager.setVariable(key, value);
+                                if (inst.settings) inst.settings[key] = value;
+                                if (inst.allSettings) inst.allSettings[key] = value;
+                            }
+                        }
+                    } catch {
+                        return { ok: false, message: "切换滤镜失败。" };
+                    }
+                    if (!applyShader(shader)) {
+                        return { ok: false, message: "切换滤镜失败。" };
+                    }
+                    // 有设置块、或这次确实启用了滤镜时才落盘：首次进游戏没有设置块，
+                    // saveSettings() 会顺手建块，下次启动就能在 iframe 之前预置。
+                    let key = "";
+                    try {
+                        key =
+                            typeof inst.getLocalStorageKey === "function"
+                                ? inst.getLocalStorageKey()
+                                : "";
+                    } catch {
+                        key = "";
+                    }
+                    let hasBlock = false;
+                    if (key) {
+                        try {
+                            hasBlock = Boolean(localStorage.getItem(key));
+                        } catch {
+                            // 隐私模式等读不到 localStorage：本次照常生效，只是不落盘
+                        }
+                    }
+                    const hasFilter =
+                        Object.keys(payload.options || {}).length > 0 ||
+                        (shader && shader !== "disabled");
+                    if ((hasBlock || hasFilter) && typeof inst.saveSettings === "function") {
+                        try {
+                            inst.saveSettings();
+                        } catch {
+                            // 本次已经生效，落盘失败不影响画面
+                        }
+                    }
+                    return warning ? { ok: true, warning } : { ok: true };
                 },
 
                 /** 当前 NDS 屏幕布局（非 NDS 返回 null），供父页面/调试读取。 */
@@ -980,7 +1159,10 @@
                 }
                 // 线程只由播放页按机种决定：现有核没有 -thread 资产，用户在设置菜单里
                 // 打开线程会请求不存在的文件，所以把这一项统一藏掉。
-                const hiddenSettings = ["ejs_threads"];
+                // 着色器从设置菜单隐藏：标题栏「滤镜」是唯一入口。
+                // 注意：行被隐藏后引擎读设置块不会自动应用 shader，必须靠 EJS_onGameStart
+                // 里的 applyShaderFromSettings() 显式启用（见下）。
+                const hiddenSettings = ["ejs_threads", "shader"];
                 // NDS（melonDS）：屏幕布局由父页面 ?nds= 决定
                 // （dual / top / side，见上面的 NDS_LAYOUTS）。布局的两项内核选项从引擎设置
                 // 菜单里隐藏——布局只能由父页面 - / = / setNdsLayout 控制，避免用户从菜单
@@ -997,6 +1179,9 @@
                 // 引擎开始运行后标记就绪，并接管底部控制条显隐
                 window.EJS_onGameStart = () => {
                     window.__ejsReady = true;
+                    // shader 已从设置菜单隐藏，引擎启动时不会自动应用；
+                    // 这里按设置块里的值显式启用（父页在 iframe 之前写入）。
+                    applyShaderFromSettings();
                     // 兜底：引擎自己写回的旧值若把布局带偏，就在这次启动后再强制一次。
                     // 个别内核没有 setVariable，或这一项要重启才生效——失败了也不能挡住
                     // 后面的 initControlBar，所以整段包在 try 里。

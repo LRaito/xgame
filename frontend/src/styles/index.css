@@ -1,3 +1,12 @@
+/* 街机像素字体：开始页与暂停遮罩共用，随前端资源一起打包 */
+@font-face {
+    font-family: "Press Start 2P";
+    src: url("../assets/fonts/press-start-2p.woff2") format("woff2");
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+}
+
 :root {
     color-scheme: light;
     /* 给文档滚动条永久留一条槽位：内容变长变短时滚动条出现/消失不再改变内容区宽度，

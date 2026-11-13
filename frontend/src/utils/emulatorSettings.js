@@ -12,6 +12,8 @@
  * 引擎会逐项校验，任一不合规就整块丢弃，故写入前先按同样规则挡一层。
  */
 
+import { EMU_FILTER_SETTING_KEYS } from "@/constants/emuFilters";
+
 /** 引擎读写设置用的键名。 */
 export function engineSettingsKey(gameId, system, gameName) {
     return `ejs-${gameId}-${system}-${gameName}-settings`;
@@ -83,6 +85,28 @@ export function stripNdsDisplayOptions(value) {
     }
     const nextSettings = { ...settings };
     for (const key of NDS_DISPLAY_OPTIONS) {
+        delete nextSettings[key];
+    }
+    return { ...value, settings: nextSettings };
+}
+
+/**
+ * 剔除复古滤镜相关的设置键，返回**新对象**（不改入参）。
+ *
+ * 滤镜选择只按「用户 + 机种」记在浏览器本地（games.emu.filters），不随账号走。
+ * 云端设置块或本机设置块里可能带有 shader 与各内核的 NTSC/LCD 选项，读取和上传前
+ * 都按这张表剔除，避免这些键影响当前选择，也避免滤镜键混进账号配置。结构不合法原样返回。
+ */
+export function stripEmuFilterSettings(value) {
+    if (!isValidEngineSettings(value)) {
+        return value;
+    }
+    const settings = value.settings;
+    if (!EMU_FILTER_SETTING_KEYS.some((key) => key in settings)) {
+        return value;
+    }
+    const nextSettings = { ...settings };
+    for (const key of EMU_FILTER_SETTING_KEYS) {
         delete nextSettings[key];
     }
     return { ...value, settings: nextSettings };

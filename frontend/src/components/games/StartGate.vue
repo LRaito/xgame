@@ -25,15 +25,6 @@ defineEmits(["start"]);
 </script>
 
 <style scoped>
-/* 街机像素字体随前端资源一起打包，运行时不依赖外网 */
-@font-face {
-    font-family: "Press Start 2P";
-    src: url("../../assets/fonts/press-start-2p.woff2") format("woff2");
-    font-style: normal;
-    font-weight: 400;
-    font-display: swap;
-}
-
 /* 整个播放区都是启动按钮：铺满游戏外壳，点哪里都能开始；扫描线与光晕只做氛围，不接事件 */
 .start-gate {
     position: absolute;
