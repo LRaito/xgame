@@ -1,18 +1,34 @@
 #!/usr/bin/env python3
 """处理 vimm.net 的 SFC 卡带图。
 
-源图固定 532x358（PNG 或 JPG）；用这批图的固定版式，不做任何检测：
+受支持的源图尺寸与处理步骤（同一轮里按顺序执行完，直接得到最终的
+532x344 RGBA PNG，不需要对同一批图重复运行脚本）：
 
-1. 左上、右上两块矩形黑背景 -> 透明（只把 alpha 置 0，不填白色或任何底色）。
-   中间封面顶到画面上边，一点不动。
-   矩形边界取自银色卡带转折：左角 x 0..86、右角 x 449..532，y 都是 0..18。
-2. 底部白底「Vimm's Lair - vimm.net」网址栏 -> 裁掉 14 像素（y=344 起全白）。
+| 源图尺寸 | 1. 缩放 | 2. 裁网址栏 | 3. 抠两角 | 4. 右侧镜像 |
+|---|---|---|---|---|
+| 532x358 | - | 底部 14 像素 | 是 | 是 |
+| 532x344 | - | 已裁过 | 是 | 是 |
+| 264x169 / 265x172 / 266x167 / 267x167 | 放大到 532x344 | - | 是 | 是 |
 
-输出统一是 532x344 的 RGBA PNG，直接写回源图位置：
-- PNG 原地覆盖；
-- JPG / JPEG 另存旁边的同名 .png，成功后删除原图。
-尺寸不是 532x358 的图会被跳过（不处理、不写出，退出码 1）。
-同一批里多个源图会写到同一个输出文件时（如同名 jpg 与 png），整组跳过。
+步骤说明：
+1. 缩放：缩略图是正式版式的缩小版，LANCZOS 拉到 532x344 后坐标对齐。
+2. 裁网址栏：532x358 底部「Vimm's Lair - vimm.net」白底栏（y=344 起全白）
+   直接裁掉。
+3. 抠两角：左上、右上两块矩形黑背景只把 alpha 置 0，不填白色或任何底色；
+   中间封面顶到画面上边，一点不动。各版式画面顶部对齐，矩形坐标相同，
+   取自银色卡带转折：左角 x 0..86、右角 x 449..532，y 都是 0..18
+   （源图坐标，右下开区间）。532x344 的 PNG 源图这两块本来就是透明的，
+   再置 0 没有影响；JPG 源图没有透明通道，原透明区被压成近黑色，正是靠
+   这一步清掉。
+4. 右侧镜像：把右侧 86 像素宽的条带换成左侧等宽条带的水平镜像（含
+   alpha），用于去掉部分图右侧的水印。左上透明角正好 86 宽，替换后
+   右上角同样透明。
+
+输出统一写回源图位置：PNG 原地覆盖；JPG / JPEG 另存旁边的同名 .png，
+成功后删除原图。输出尺寸 532x344 本身也在支持列表里，重复执行是幂等的。
+尺寸不在上表的图会报 [FAIL] 并跳过（不写出，退出码 1）。同一批里多个
+源图会写到同一个输出文件时（如同名 jpg 与 png），整组跳过。
+日志、输入收集、写文件与几何步骤由 vimm_common.py 提供，两个脚本共用。
 
 用法：
     python3 tools/vimm/vimm-sfc-crop.py <源图或目录>...
@@ -21,133 +37,49 @@ from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
 from PIL import Image
 
+from vimm_common import blank_rects, mirror_right, run
+
 SRC_W = 532
-SRC_H = 358
+SRC_H = 358  # 带底部网址栏的版式
+OUT_H = 344  # 裁掉网址栏后的统一输出高度
+OUT_SIZE = (SRC_W, OUT_H)
 
-BOTTOM_END = 344  # 保留到这一行（不含），即裁掉底部 14 像素白条
+# 各版式画面顶部对齐，角上的黑矩形坐标相同（源图坐标，右下开区间）。
+CORNER_RECTS = ((0, 0, 86, 18), (449, 0, SRC_W, 18))
 
-# 两个角上的黑矩形（源图坐标，右下开区间）
-LEFT_RECT = (0, 0, 86, 18)
-RIGHT_RECT = (449, 0, SRC_W, 18)
+# vimm 上少数封面只有缩略图；尺寸是 532x344 版式缩小后的取整结果，
+# 统一拉到 532x344 再抠角。
+SMALL_SIZES = {(264, 169), (265, 172), (266, 167), (267, 167)}
 
-# 输出需要透明通道，统一写 PNG；JPG 源图也转成同名 .png。
-IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
-
-TAGS = {
-    "ok": ("[ OK ]", 32),
-    "fail": ("[FAIL]", 31),
-    "warn": ("[WARN]", 33),
-    "info": ("[INFO]", 36),
-}
+# 右侧去水印用的镜像条带宽度：与左上角透明矩形同宽（x 0..86）。
+MIRROR_W = 86
 
 
-def emit(kind: str, text: str) -> None:
-    """按项目脚本输出规范打一行日志；非终端输出退回纯文本。"""
-    tag, color = TAGS[kind]
-    stream = sys.stderr if kind in ("fail", "warn") else sys.stdout
-    if stream.isatty():
-        print(f"\x1b[{color}m{tag}\x1b[0m {text}", file=stream)
-    else:
-        print(f"{tag} {text}", file=stream)
+def transform(im: Image.Image, size: tuple[int, int]) -> Image.Image:
+    """按源图分辨率处理，返回 532x344 的 RGBA 图。尺寸不认识则抛 ValueError。"""
+    if size == (SRC_W, SRC_H):
+        # 裁掉底部网址栏，剩余画面与 532x344 版式对齐。
+        im = im.crop((0, 0, SRC_W, OUT_H))
+    elif size in SMALL_SIZES:
+        # 缩略图放大到 532x344，与正式版式对齐。
+        im = im.resize(OUT_SIZE, Image.LANCZOS)
+    elif size != OUT_SIZE:
+        raise ValueError(f"不支持的尺寸 {size[0]}x{size[1]}")
 
-
-def collect_inputs(raw_paths: list[str]) -> list[Path]:
-    """把文件/目录参数展开成图片文件列表。目录只取直接子文件。"""
-    files: list[Path] = []
-    for raw in raw_paths:
-        p = Path(raw)
-        if p.is_dir():
-            files.extend(
-                sorted(
-                    q
-                    for q in p.iterdir()
-                    if q.is_file() and q.suffix.lower() in IMAGE_SUFFIXES
-                )
-            )
-        elif p.is_file():
-            files.append(p)
-        else:
-            emit("fail", f"找不到：{p}")
-    return files
-
-
-def output_path(src: Path) -> Path:
-    """PNG 原地覆盖；JPG / JPEG 另存同名 .png。"""
-    if src.suffix.lower() == ".png":
-        return src
-    return src.with_suffix(".png")
-
-
-def process(src: Path, dst: Path) -> bool:
-    """处理一张并写到 dst。尺寸不符返回 False，不动文件。"""
-    try:
-        if src.suffix.lower() not in IMAGE_SUFFIXES:
-            return False
-
-        with Image.open(src) as im:
-            size = im.size
-            if size != (SRC_W, SRC_H):
-                return False
-            im.load()
-            # 先裁掉底部网址栏，再按源图坐标处理两个角。
-            out = im.convert("RGBA").crop((0, 0, SRC_W, BOTTOM_END))
-            alpha = out.getchannel("A")
-            for x0, y0, x1, y1 in (LEFT_RECT, RIGHT_RECT):
-                alpha.paste(0, (x0, y0, x1, y1))
-            out.putalpha(alpha)
-
-        # 源文件已关闭，再写出；JPG 转出的 .png 写好后才删原图。
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        out.save(dst, format="PNG")
-        if src != dst:
-            src.unlink()
-        emit("ok", src.name)
-        return True
-
-    except Exception as exc:  # 读不了/写不了都要报出来，不能让批处理静默漏图
-        emit("fail", f"{src.name} {exc}")
-        return False
+    im = blank_rects(im, CORNER_RECTS)
+    return mirror_right(im, MIRROR_W)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="处理 vimm.net SFC 卡带图并覆盖为 532x344 PNG（源图固定 532x358，支持 PNG / JPG）"
+        description="处理 vimm.net SFC 卡带图并覆盖为 532x344 PNG（按分辨率分派版式）"
     )
     parser.add_argument("inputs", nargs="+", help="源图文件或目录（可多个）")
     args = parser.parse_args(argv)
-
-    files = collect_inputs(args.inputs)
-    if not files:
-        emit("fail", "没有可处理的图片。")
-        return 2
-
-    # 先规划每张源图的输出，再按输出文件分组：同一批里多个源图写到同一个
-    # 输出文件（如同名 jpg + png）视为冲突，整组静默跳过。
-    seen: set[Path] = set()  # 已排队的源图，避免同一文件处理两遍
-    plans: list[tuple[Path, Path]] = []
-    groups: dict[Path, list[Path]] = {}
-    for src in files:
-        src_key = src.resolve()
-        if src_key in seen:
-            continue
-        seen.add(src_key)
-        dst = output_path(src)
-        plans.append((src, dst))
-        groups.setdefault(dst.resolve(), []).append(src)
-
-    ok = True
-    for src, dst in plans:
-        if len(groups[dst.resolve()]) > 1:
-            emit("warn", f"跳过 {src.name}：多个源图会写到 {dst.name}")
-            ok = False
-            continue
-        if not process(src, dst):
-            ok = False
-    return 0 if ok else 1
+    return run(args.inputs, transform, OUT_SIZE)
 
 
 if __name__ == "__main__":
