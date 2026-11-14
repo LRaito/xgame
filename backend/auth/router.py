@@ -5,7 +5,7 @@ from pydantic import BaseModel
 
 from backend.auth.login_lockout import LoginLockoutService
 from backend.auth.service import AuthService
-from backend.csrf import generate_csrf_token
+from backend.csrf import generate_csrf_token, touch_session
 from backend.deps import SESSION_USER_KEY, CurrentUser, DbSession
 from backend.errors import AuthError, LoginLockedError, ValidationError
 from backend.http import json_err, json_ok
@@ -23,6 +23,9 @@ class CredentialsBody(BaseModel):
 @router.get("/csrf")
 def csrf_token(request: Request):
     token = generate_csrf_token(request.session)
+    # 顺带摸活会话：让每次整页加载都滑续一次 cookie 时效
+    # （原 SessionMiddleware 是每个响应都滑续，见 backend/session_middleware.py）。
+    touch_session(request.session)
     return json_ok({"csrf_token": token})
 
 

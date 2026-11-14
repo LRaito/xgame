@@ -8,8 +8,8 @@
 3. **等它就绪**再打开浏览器，并打印本机与局域网两个地址。
 
 配置文件是旁边的 `xgame.ini`（没有就用默认值建一份）。整个包不写注册表、不装服务、
-不碰系统目录，删掉文件夹就算卸载。**包里没有任何自动升级的代码**：升级是手动的
-（关窗口 → 解压新包 → 把 data 目录搬过去），步骤见 README.md 与 说明.txt。
+不碰系统目录，删掉文件夹就算卸载。**包里没有自动升级代码**：手动升级有两个入口——
+换新包并搬 `data`，或停服后双击「升级数据库.cmd」（本文件的 `--upgrade-db` 动作）。
 
 这个文件在包里位于 `xgame/launcher.py`，与 `backend/`、`web/`、`python/` 同级。
 """
@@ -30,6 +30,9 @@ import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
+from typing import NoReturn
+
+from xgame_console import emit
 
 ROOT = Path(__file__).resolve().parent
 INI_PATH = ROOT / "xgame.ini"
@@ -119,11 +122,11 @@ def load_config() -> Config:
 # ---------- 输出 ----------
 
 
-def say(message: str = "") -> None:
+def say(message: str = "", level: str = "info") -> None:
     if QUIET:
         logger.info(message)
         return
-    print(message, flush=True)
+    emit(level, message)
 
 
 def fatal(message: str) -> None:
@@ -134,7 +137,7 @@ def fatal(message: str) -> None:
         (RUNTIME_DIR / "last-error.txt").write_text(message + "\n", encoding="utf-8")
     except OSError:
         pass
-    say(f"\n[启动失败] {message}")
+    say(message, "fail")
     if QUIET and os.name == "nt":
         try:
             ctypes.windll.user32.MessageBoxW(None, message, "XGame 启动失败", 0x10)
@@ -163,7 +166,7 @@ def check_runtime() -> None:
             connection.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")
         connection.close()
     except sqlite3.Error:
-        say("提示：本机 Python 的 SQLite 没有 FTS5，「游戏发现」的检索会一直显示尚未构建索引。")
+        say("提示：本机 Python 的 SQLite 没有 FTS5，「游戏发现」的游戏名录会一直显示尚未构建。", "warn")
 
 
 def check_data_dir(data_dir: Path, *, label: str = "数据目录") -> None:
@@ -181,12 +184,11 @@ def check_data_dir(data_dir: Path, *, label: str = "数据目录") -> None:
         )
     marker = data_dir / ".mounted"
     if marker.exists() and label == "数据目录":
-        say()
-        say("!" * 62)
-        say("注意：这个数据目录里有 .mounted 哨兵，说明它是 Docker/WSL 那条路线在用的。")
-        say("两边同时打开同一份数据会把数据库写坏——请先执行 docker compose down，")
-        say("或者把 xgame.ini 里的 data_dir 换成另一个目录。")
-        say("!" * 62)
+        say("!" * 62, "warn")
+        say("注意：这个数据目录里有 .mounted 哨兵，说明它是 Docker/WSL 那条路线在用的。", "warn")
+        say("两边同时打开同一份数据会把数据库写坏——请先执行 docker compose down，", "warn")
+        say("或者把 xgame.ini 里的 data_dir 换成另一个目录。", "warn")
+        say("!" * 62, "warn")
 
 
 # ---------- 「来自 Internet」标记 ----------
@@ -328,16 +330,16 @@ def say_addresses(config: Config) -> None:
     启动成功时和「已经在运行、不重复启动」时都用它——后者尤其要让用户看到地址，
     因为这时候浏览器不一定能自动打开（比如开机自启起的服务，根本没有窗口）。
     """
-    say(f"  本机打开：http://127.0.0.1:{config.port}")
+    say(f"本机打开：http://127.0.0.1:{config.port}")
     if config.host != "0.0.0.0":
         return
     ips = local_ips()
     if not ips:
         return
-    say(f"  局域网内（手机/平板）：http://{ips[0]}:{config.port}")
+    say(f"局域网内（手机/平板）：http://{ips[0]}:{config.port}")
     for other in ips[1:]:
-        say(f"    （上面那个连不上就试试 http://{other}:{config.port}）")
-    say("  手机打不开就先双击一次「允许局域网访问.bat」（会弹一次权限确认）。")
+        say(f"（上面那个连不上就试试 http://{other}:{config.port}）")
+    say("手机打不开就先双击一次「允许局域网访问.bat」（会弹一次权限确认）。")
 
 
 def write_runtime_files(port: int) -> None:
@@ -371,13 +373,13 @@ def serve(config: Config) -> int:
     os.environ["SESSION_COOKIE_SECURE"] = "false"
 
     # 必须在这里才 import：backend.asgi 在导入时就 create_app()，配置是那一刻读的。
-    # 也正是这次导入在建目录、建表、做备份、建检索索引，首次启动会明显卡一下。
+    # 也正是这次导入在建目录、建表、做备份、建空的发现索引结构，首次启动会明显卡一下。
     prepared_at = time.monotonic()
     from backend.asgi import app
 
     prepared = time.monotonic() - prepared_at
     if prepared > 3:
-        say(f"已准备数据（{prepared:.0f} 秒）：建库、备份、检索索引。下次启动会快很多。")
+        say(f"已准备数据（{prepared:.0f} 秒）：建库、备份、空的发现索引结构。下次启动会快很多。")
 
     server = uvicorn.Server(
         uvicorn.Config(app, host=config.host, port=config.port, log_config=None, access_log=False)
@@ -395,16 +397,14 @@ def serve(config: Config) -> int:
             f"请查看日志：{config.data_dir / 'logs' / 'xgame.log'}"
         )
 
-    say()
     say("=" * 62)
-    say(f"  XGame {current_version()} 已经跑起来了")
+    say(f"XGame {current_version()} 已经跑起来了", "ok")
     say_addresses(config)
     if config.host == "0.0.0.0":
-        say("  同一个账号在不同地址下算两个站点，本地存档不互通，建议固定用一个地址。")
-    say("  数据目录：" + str(config.data_dir))
-    say("  关闭本窗口即停止服务。")
+        say("同一个账号在不同地址下算两个站点，本地存档不互通，建议固定用一个地址。")
+    say("数据目录：" + str(config.data_dir))
+    say("关闭本窗口即停止服务。")
     say("=" * 62)
-    say()
 
     if config.open_browser:
         webbrowser.open(open_url)
@@ -420,8 +420,77 @@ def serve(config: Config) -> int:
         server.should_exit = True
         thread.join(timeout=10)
     time.sleep(0.5)  # 给 server 一点时间收尾
-    say("服务已停止。")
+    say("服务已停止。", "ok")
     return 0
+
+
+# ---------- 数据库结构升级 ----------
+
+
+def _upgrade_cli_main(argv: list[str]) -> int:
+    """延迟导入升级工具：普通启动不该为 SQLModel / 后端配置付导入代价。"""
+    from upgrade.cli import main as upgrade_main
+
+    return upgrade_main(argv)
+
+
+def upgrade_error(message: str) -> NoReturn:
+    """升级入口的失败出口。
+
+    不复用 fatal()：那是「启动失败」专用的，会写 runtime/last-error.txt；
+    升级失败或拒绝升级不该覆盖上一次启动故障的原因。
+    """
+    logger.error("数据库升级失败：%s", message)
+    say(message, "fail")
+    raise SystemExit(1)
+
+
+def upgrade_database() -> int:
+    """「升级数据库.cmd」的入口：停服检查 → 调升级 CLI → 透传退出码。"""
+    config = load_config()
+
+    # 服务因版本不匹配阻塞时不会监听端口，但仍持有这个命名互斥体：先查它。
+    instance = SingleInstance(f"Local\\xgame-port-{config.port}")
+    if not instance.acquire():
+        upgrade_error(
+            "XGame 正在运行（或正在等待数据库升级）。\n"
+            "请先关闭「启动游戏平台.cmd」窗口，再双击「升级数据库.cmd」。"
+        )
+
+    if port_in_use(config.host, config.port):
+        upgrade_error(
+            f"端口 {config.port} 上已经有服务在运行。\n"
+            "请先关闭启动窗口（或占用该端口的程序），再双击「升级数据库.cmd」。"
+        )
+
+    # 只警告不拒绝：.mounted 是人工创建的，Docker 停掉后仍会留着。
+    if (config.data_dir / ".mounted").exists():
+        say("注意：数据目录里有 .mounted 哨兵，可能还在被 Docker/WSL 路线共用。", "warn")
+        say("      升级前请确认那边已经停止服务，否则会写坏数据库。", "warn")
+
+    say(f"数据目录：{config.data_dir}")
+    say(f"运行时目录：{config.runtime_dir}")
+    say("升级期间请不要关闭这个窗口。")
+
+    try:
+        code = _upgrade_cli_main(
+            [
+                "--storage-root",
+                str(config.data_dir),
+                "--runtime-root",
+                str(config.runtime_dir),
+            ]
+        )
+    except Exception as exc:  # noqa: BLE001 - 双击入口只给一条看得懂的中文
+        logger.exception("数据库升级失败")
+        upgrade_error(f"升级数据库时出错：{exc}")
+
+    if code == 0:
+        # 0 也可能是「已是最新」或「尚未初始化」，不能统一说「升级完成」
+        say("数据库升级检查完成，现在可以双击「启动游戏平台.cmd」启动。", "ok")
+    else:
+        say(f"数据库升级失败（退出码 {code}）。", "fail")
+    return code
 
 
 # ---------- 入口 ----------
@@ -458,6 +527,7 @@ _ACTIONS = {
     "--create-shortcut": "create-shortcut",
     "--toggle-autostart": "toggle-autostart",
     "--unlock": "unlock",
+    "--upgrade-db": "upgrade-db",
 }
 
 _USAGE = "可用参数：" + " / ".join([*_ACTIONS, "--quiet", "--no-browser"])
@@ -473,7 +543,8 @@ def parse_args(argv: list[str]) -> dict:
         elif item == "--no-browser":
             options["no_browser"] = True
         else:
-            raise SystemExit(f"未知参数：{item}（{_USAGE}）")
+            emit("fail", f"未知参数：{item}（{_USAGE}）")
+            raise SystemExit(2)
     return options
 
 
@@ -488,10 +559,13 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
     if options["action"]:
+        if options["action"] == "upgrade-db":
+            return upgrade_database()
         # 快捷方式 / 开机自启 / 解除锁定：建 .lnk 要用 PowerShell，逻辑在 winops.py
         import winops
 
-        say(winops.run_action(options["action"], ROOT))
+        message = winops.run_action(options["action"], ROOT)
+        say(message, winops.action_level(message))
         return 0
 
     config = load_config()
@@ -507,18 +581,15 @@ def main(argv: list[str] | None = None) -> int:
     setup_logging(config.data_dir)
 
     if still_locked():
-        say()
-        say("提示：这一份还带着「来自 Internet」标记，双击 .bat / .cmd 时 Windows 会先弹一次")
-        say("      「无法验证发布者」。双击一次「解除锁定.bat」（只需一次）以后就不再弹了。")
+        say("提示：这一份还带着「来自 Internet」标记，双击 .bat / .cmd 时 Windows 会先弹一次", "warn")
+        say("      「无法验证发布者」。双击一次「解除锁定.bat」（只需一次）以后就不再弹了。", "warn")
 
     # 先确认没有第二个实例在跑。双击第二次不该起第二个服务（除了白占资源，两个进程打开
     # 同一个 SQLite 更容易出事）：这里只把地址告诉用户、顺手把浏览器打开。
     instance = SingleInstance(f"Local\\xgame-port-{config.port}")
     if not instance.acquire():
-        say()
         say("XGame 已经在运行了，不用再开一个。")
         say_addresses(config)
-        say()
         if config.open_browser:
             webbrowser.open(f"http://127.0.0.1:{config.port}")
         return 0

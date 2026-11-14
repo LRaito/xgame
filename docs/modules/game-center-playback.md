@@ -1,0 +1,374 @@
+# 游戏中心播放
+
+本文件回答：三类游戏如何播放，标题栏、机壳与 NDS 如何呈现。
+
+## 范围与权威
+
+- 本规格覆盖 Flash、HTML5、主机 ROM 三类播放器与播放页交互。
+- 内容包括入口分派、播放接口、标题栏、加速模式、窗口倍率、机壳、NDS 布局与快捷键。
+- 播放页代码权威：`frontend/src/views/games/flash-player.vue`、`h5-player.vue`、`emulator-player.vue`。
+- 机壳几何权威在 `emulator-player.vue` 的 `SHELLS` 表与 `frontend/src/assets/shells/` 的素材。
+- 帧缓冲基准权威在 `frontend/src/constants/emulatorScreens.js` 的 `EMU_NATIVE`、`NDS_NATIVE`。
+- 引擎侧 RPC 权威在 `frontend/public/emulator-host.html` 的 `window.__ejsRpc`。
+- 截图与图集的完整规则见 [`./game-assets.md`](./game-assets.md)。
+- 存档、设置、最近游玩与统计的完整规则见 [`./game-saves-stats.md`](./game-saves-stats.md)。
+
+## 职责
+
+- 提供游戏中心列表与类型元数据。
+- 按类型分派 Flash、H5、主机三种播放器。
+- 播放页标题栏、机壳、NDS 屏幕布局与快捷键。
+
+## 关键接口
+
+- `GET /api/games`、`GET /api/games/status`。
+- `GET|HEAD /api/games/{id}/play`、`/play/manifest`、`/play/files/{name}`、`/h5/{路径}`。
+- 前端入口：`frontend/src/views/games/` 与 `components/games/`。
+
+## 依赖
+
+- Ruffle、EmulatorJS 与浏览器沙箱 iframe。
+- `backend/games/platforms.py` 的机种与线程标记。
+- `backend/storage/access.py` 的流式下载。
+- 前端 `constants/gameTypes.js` 与 `coverStyles.js` 的展示元数据。
+
+## 数据与路径
+
+| 播放类型 | 前端路由 | 实现 |
+|---|---|---|
+| Flash | `/games/flash/{id}` | Ruffle |
+| HTML5 | `/games/h5/{id}` | 嵌套 sandbox iframe |
+| 主机 ROM | `/games/play/{id}` | 宿主 iframe + EmulatorJS |
+
+- 播放路径只有一份实现：`play_path(game_type, id)`，列表载荷的 `path` 也用它。
+- 宿主页请求本体时用 `/api/games/{id}/play/<落盘名>`（普通类型如 `game.chd`，
+  街机是 `mslug.zip`）：
+  EmulatorJS 把 URL 末段当 ROM 文件名，`.pbp` 等核依赖后缀；不带末段的 `/play` 仍保留。
+- 主机播放页外层是 SPA 壳，内嵌 `/emulator-host.html`，EmulatorJS 官方要求 iframe 隔离。
+- **多文件本体**：列表条目带 `body_kind="bundle"`，播放页给宿主页加 `?bundle=1`；
+  宿主页先取 `/play/manifest`，把入口设为 `EJS_gameUrl`，其余文件用
+  `EJS_externalFiles` 写成 `{"/文件名": "/play/files/文件名"}`。
+- 入口统一改名 `game.{cue|m3u|chd|adf|hdf}`：EJS 把 `gameUrl` 末段当 MEMFS 文件名，
+  且不做 URL 解码，原文件名带空格/中文会与 cue 内引用对不上。
+- 多碟入口优先 m3u；多个 cue/chd/adf 且没有 m3u 时后端自动生成 `game.m3u`。
+  换盘交给 EJS 内置 Disk 菜单（`setupDisksMenu()`），不另做 UI。
+- 多文件场景 `EJS_CacheLimit=0`，避免大 ROM 再写一份 IndexedDB。
+- 多文件本体不提供「下载为单个文件」；详情弹框提示从数据目录整体备份。
+- 引擎资产由 `frontend/scripts/fetch-emulatorjs.mjs` 在构建期拉到 `frontend/public/emulatorjs/`。
+- 引擎资产以固定版本随镜像发布，nginx 与 `static_site.py` 按 immutable 缓存，运行时不依赖外网。
+- 需要 BIOS 的机种在 `platforms.py` 的 `BiosSpec` 里声明，元数据随 `/status.types[].bios`
+  与游戏列表条目的 `bios` 下发。
+- BIOS 是用户自备 ZIP，放在 `frontend/public/emulatorjs/bios/<id>.zip`，不进 git。
+- 播放页把 `bios` / `biosfiles` / `biosoptional` 传给宿主页；宿主页只接受安全文件名，
+  自己拼 `/emulatorjs/bios/<file>`。
+- **线程核**：列表条目的 `threads=true`（PSP / DOS）时，播放页给宿主页加 `?threads=1`；
+  宿主页据此设 `EJS_threads=true`。其余机种始终关闭线程。
+- **跨源隔离**：SPA 入口与 `emulator-host.html` 在 Docker nginx、Windows 静态站与
+  Vite dev server 三处都带 `COOP: same-origin` + `COEP: require-corp`。宿主页在启动前
+  检查 `window.crossOriginIsolated` 与 `SharedArrayBuffer`，缺一个就给中文提示。
+- H5 资源响应带 `COEP: unsafe-none` 与 `CORP: cross-origin`，保证沙箱页在隔离的父页里
+  仍能加载自己的外链资源。
+- **街机 romset**：本体落盘名就是集合名（如 `mslug.zip`），播放 URL 末段因此也是集合名；
+  FBNeo 用末段匹配 romset，不能统一改成 `game.zip`。
+- **PSP**：核 `ppsspp` 只有线程变体，强制 WebGL2；EJS 启动时还会拉
+  `cores/ppsspp-assets.zip`，构建期必须一起打包。首次加载明显慢于老机种。
+- **DOS**：核 `dosbox_pure` 只有线程变体；本体是 jsdos 包（`.jsdos` 或显式选 DOS 的 `.zip`），
+  键盘 / 鼠标由引擎默认处理。DOS 与街机不吃「回车载入本地存档」快捷键，
+  因为回车是 DOS 命令行与街机 Start 的常用键。
+- `emulatorjs/bios/` 前缀在 nginx 与 `static_site.py` 里单独 no-cache。
+- 宿主页启动前对 BIOS 做 HEAD 预检；必需包缺失时给中文提示，可选包缺失时跳过并继续启动。
+- H5 解包产物在运行时根的 `game/{类型}/{卡带ID}/h5/`，首次访问资源接口时按需生成。
+- 攻略解包产物在运行时根的 `game/{类型}/{卡带ID}/guide/`，首次访问攻略资源时按需生成。
+
+| 接口 | 用途 | 登录 | 内容类型 |
+|---|---|---|---|
+| `GET/HEAD /api/games/{id}/play` | 本体下载 | 需要 | `.swf` 用 Flash 值，其余 `octet-stream` |
+| `GET/HEAD /api/games/{id}/play/manifest` | 多文件本体清单 | 需要 | JSON 信封 |
+| `GET/HEAD /api/games/{id}/play/files/{name}` | 多文件本体的单个文件 | 需要 | `octet-stream` |
+| `GET /api/games/{id}/cover` | 封面预览 | 需要 | inline；`?download=1` 附件 |
+| `GET/HEAD /api/games/{id}/h5/{路径}` | H5 资源 | **不需要** | 按后缀现算 |
+| `GET/HEAD /api/games/{id}/guide/{路径}` | ZIP 攻略资源 | 需要 | 按后缀现算 |
+| `GET/HEAD /api/games/{id}/guide.pdf` | PDF 攻略 | 需要 | `application/pdf` inline |
+
+- 本体文件名取落盘名：普通类型是 `game.{后缀}`，街机是 romset 名（如 `mslug.zip`）；
+  文件不存在或本体未上传时返回中文 400/404。
+- `/play/manifest` 返回 `{entry, files:[{name,size}], total_size}`；单文件游戏也返回
+  只有入口一条的等价结构。它必须注册在 `/play/{filename}` **之前**，否则 `manifest`
+  会被当成文件名。
+- `/play/files/{name}` 只服务清单内的安全 basename，未知名字或 `..` 一律 404。
+- 主机播放页会先对本体的 URL 发 HEAD 探测，所以 play 接口同时提供 HEAD。
+- H5 资源接口是唯一免登录的业务接口，原因是沙箱 iframe 带不上 SameSite=Lax 的 cookie。
+- H5 响应强制 CSP `sandbox`，不含 `allow-same-origin`；另加 `nosniff`、`no-referrer`、`ACAO: *`、`no-cache`。
+- 攻略资源在新标签页顶层导航打开，cookie 正常带上，所以**必须登录**。
+- 攻略响应只加 `nosniff` 与 `no-cache`，**不加** CSP sandbox。
+- PDF 攻略直接从数据根流式返回，交给浏览器内置查看器就地渲染。
+
+## 行为与规则
+
+- **三类播放。**
+  - Flash 用 Ruffle 播放 `.swf`。
+  - H5 用不带 `allow-same-origin` 的 sandbox iframe。
+  - 主机 ROM 用 EmulatorJS。
+- 播放页会核对游戏类型，误入其它类型时重定向到对应播放路由。
+- H5 iframe 的 sandbox 值：
+  `allow-scripts allow-forms allow-modals allow-popups allow-pointer-lock allow-downloads`。
+- H5 iframe 还设置 `allow="autoplay; fullscreen; gamepad"` 与 `referrerpolicy="no-referrer"`。
+- **开始手势。** 刷新或直链进入没有用户手势时，三个播放页都先显示「开始游戏」。
+- 点击「开始游戏」后才挂载播放器；这样音频能正常启动。
+- 「真正拉起播放器」的那一刻，三个播放页都上报最近游玩并开始计时。
+- 最近游玩与计时的细节见 [`./game-saves-stats.md`](./game-saves-stats.md)。
+
+- **模拟器标题栏。** 按钮自左向右固定为：显示机壳、窗口、滤镜、加速模式、保存截图、保存配置、存档管理、全屏模式、返回平台。
+- 按钮之间间隙一致；标题栏里的触发按钮比下拉面板内的小格子更紧凑。
+- 滤镜与窗口下拉面板挂在触发按钮下方，按按钮中心线左右居中。
+- 「窗口」按钮内只显示当前窗口像素尺寸（如 `1195 × 896`），宽度固定、水平居中。
+- 「显示机壳」与「窗口」按钮同宽；「滤镜」按钮按该机种最长条目固定宽度。
+- 因此同一机种的标题栏按钮大小与位置不随选择或运行状态变化。
+- 「全屏模式」按钮与加速模式同为开关样式：按下点亮，再按恢复，文案始终是「全屏模式」。
+- 「显示机壳」只对 GBA、FC、SFC、GBC、NDS 出现。
+- 「滤镜」复用 `PlaybackSelect`，所有模拟器机种都有入口，默认「无滤镜」。
+- 加速模式与显示机壳使用固定文案 + 点亮高亮，不随状态改文案。
+- 「保存配置」把键位、选项与金手指整块上传到账号；引擎只在启动时读一次设置。
+- 模拟器设置的完整规则见 [`./game-saves-stats.md`](./game-saves-stats.md)。
+
+- **复古滤镜。** 清单权威是 `frontend/src/constants/emuFilters.js`。
+- 一条滤镜 = 引擎内置 GLSL 着色器，和/或默认内核的原生选项；不用图片/CSS 遮罩。
+- 原生选项模拟复合视频、RF、LCD 拖影、GBA 色彩校正等信号级效果。
+- 着色器是引擎级能力：34 个 core 全部导出 `shader_enable`，所以 CRT 全机种可用。
+- CRT 三档为「CRT 简易」「CRT zfast」「CRT lottes」；高分辨率/3D 机种只给前两档。
+- 不使用 `crt-geom`：它会弯曲几何，破坏 NDS 拆屏与机壳洞对齐。
+- 原生选项目前覆盖 FC、SFC、GB/GBC、GBA、MD、GG、Sega CD、SMS、Atari 2600、
+  Lynx、Atari 5200；PET 的 `vice_crtc_filter` 取值按引擎实际选项再核对。
+- 原生选项只保证默认内核（如 FC 的 fceumm）；用户切走内核后只余着色器生效，
+  宿主页会返回中文 warning。
+- 选择按 `game_type` 存 localStorage 的 `games.emu.filters`，不随账号走。
+- 进游戏时先应用云端设置与 NDS 清理，再把滤镜写进该游戏的引擎设置块；
+  写块只在该块已存在时进行，避免空 `controlSettings` 破坏默认键位。
+- 首次进入没有设置块时，引擎就绪后经 `__ejsRpc.setFilter` 补一次并建块。
+- 运行中切换走 `__ejsRpc.setFilter`：先复位本机种涉及的滤镜键，再下发新键，
+  最后切着色器；失败时回滚下拉并弹中文提示。
+- `shader` 在 `EJS_hideSettings` 中，设置菜单里没有第二个入口；
+  因为隐藏行不会自动应用，宿主页在 `EJS_onGameStart` 按设置块显式启用。
+- 云端设置读写都经过 `stripEmuFilterSettings`，滤镜键不进账号。
+- 内核截图路径不经过着色器，通常不带滤镜；画布兜底截图带滤镜。
+- NDS 的侧屏合成复制的是已应用着色器的源画布，左右两屏都带滤镜。
+
+- **加速模式。** 按一次持续加速，再按恢复；开关的是引擎自己的 Fast Forward 设置项。
+- 调用链为 `__ejsRpc.setFastForward` → `changeSettingOption("fastForward", …)`。
+- `changeSettingOption` 经设置行监听触发 `menuOptionChanged` → `handleSpecialOptions`。
+- 该链路会同时改掉 `isFastForward` 与内核的 `toggle_fastforward`，并调用 `saveSettings()`。
+- 因此它与引擎设置菜单里的那一项是同一份状态，也会随「保存配置」进账号。
+- 设置行被 `EJS_hideSettings` 隐藏时监听不会注册，宿主页会补一次 `menuOptionChanged`。
+- 按钮亮灭由每秒轮询读 `__ejsRpc.fastForward` 对齐；用户在引擎菜单里改过也认。
+- 加速模式**不碰任何按键**：关着时用户绑的快进键按住即加速、松手恢复。
+- 开着时按住该快进键临时回到正常速度，这是引擎自身语义。
+- 倍率用引擎默认的 3.0×；要改倍率去引擎设置菜单的 Fast Forward Ratio。
+
+- **窗口倍率。** 选择器是 `frontend/src/components/games/EmuWindowSelect.vue`，不是原生下拉。
+- 面板就地渲染在标题栏内；鼠标移进面板仍算在标题栏内，标题栏不会收起。
+- 普通机种是两列矩阵：行 = 倍率与「适应窗口」，列 = 显示比例。
+- 倍率可选 `1×`、`1.5×`、`2×`、`2.5×`、`3×`、`3.5×`、`4×`。
+- 只有 FC / SFC 画第二列「4:3」；其它机种只有「像素完美」一列。
+- 取值格式为 `<倍率>|<显示比例>`，如 `2|pp`、`1.5|wide`、`fit|pp`。
+- 普通机种的值存 localStorage 的 `games.emu.window`；老值只有倍率时按像素完美读。
+- NDS 例外为三列 = 上下、单屏、左右三种屏幕布局。
+- NDS 每列独立记住自己的倍率或「适应窗口」，存 `games.emu.nds.window`。
+- 点 NDS 某列的格子，除了记倍率，还会顺便切到那个屏幕布局。
+- 面板尺寸按帧缓冲**高度**乘倍率换算，宽度再按舞台宽高比推出。
+- 面板里括号中的尺寸是真实窗口像素尺寸，不是帧缓冲像素数。
+- 基准分辨率为：NES 256×224、SNES 256×224、GB/GBC 160×144、GBA 240×160。
+- 基准还含：NDS 默认 256×438、MD 320×224、GG 160×144、SMS 256×192。
+- PSP 480×272、DOS 640×400、街机 320×240 按各核初始 geometry 填写；仍以引擎上报的
+  `videoInfo.aspect` 为准。
+- NDS 的 `NDS_NATIVE` 另给 `top` 256×192、`side` 563×192（左右间隙由宿主页合成）。
+- **舞台长宽比取引擎上报的显示宽高比**，即 `__ejsRpc.videoInfo().aspect`。
+- 不能用帧缓冲比例代替：引擎按内核上报的 aspect 等比摆放画面，画布填不满处即黑边。
+- 引擎就绪前或取不到 aspect 时，用当前模式的帧缓冲比例兜底。
+- 就绪后每秒跟随一次；用户改内核 aspect 选项时舞台也会跟着变。
+- 引擎就绪后播放页会按选中模式纠正一次显示比例；窗口选择器是显示比例的唯一入口。
+- 「适应窗口」模式下，要塞进可用空间的是画面；开着机壳时改为整张机壳。
+- NDS `top`、`side` 的适应窗口按合成后的 `canvas` 尺寸计算。
+
+- **FC 两套显示比例。** 左列「像素完美」是 8:7，1× 窗口为 256×224。
+- 像素完美模式设 `fceumm_aspect = "PP"`，并保留内核默认的上下各裁 8 行过扫描。
+- 其帧缓冲为 256×224；显示比例为 256:224。
+- 右列「4:3」设 `fceumm_aspect = "4:3"`，并关掉过扫描裁切。
+- 4:3 模式必须使用完整 240 行帧，帧缓冲为 256×240。
+- 4:3 的 1× 窗口为 320×240，显示比例为 4:3。
+- **SFC 两套显示比例。** 帧缓冲始终 256×224；像素完美设
+  `snes9x_aspect = "uncorrected"`（显示 8:7），4:3 设 `snes9x_aspect = "4:3"`（横向拉宽）。
+- SFC 4:3 的 1× 窗口为 224 高、按 4:3 推出宽 ≈ 298.7，不做 FC 那种 240 行过扫描切换。
+- 显示比例模式经 iframe 的 `?ratio=` 传入；运行中切换走 `__ejsRpc.setDisplayMode`。
+
+- **显示机壳。** 把机壳图盖在画面上，只从透明屏幕洞露出游戏画面。
+- 对齐规则：按「洞（多洞取外接矩形）宽 = 画面宽」放大并偏移。
+- 画面尺寸一变（换倍率、缩窗口、全屏），机壳自动跟着缩放。
+- `SHELLS` 表每项统一用 `holes` 数组：单洞机种一个元素，NDS 两个。
+- 渲染走 `parts`：每块一个固定定位外层 + 负偏移 `img` 裁出 crop 区域。
+- 没有 `parts` 的机种整图一块，输出与旧版逐像素一致。
+- 机壳层 `pointer-events: none`，不会挡住引擎操作。
+- 机壳定位必须用 `position: fixed`，坐标从 `getBoundingClientRect` 读取并随滚动/缩放/全屏重算。
+- 用 absolute 会被 `.game-shell__body` 的 `overflow: auto` 裁掉并顶出滚动条。
+- 倍率调大后超出浏览器视口的部分看不见即可；不裁剪、不隐藏、不提示。
+- 机壳偏好存 localStorage 的 `games.emu.shell`；换到没有机壳的机种时不生效。
+
+| 机种 | 素材 | 整图尺寸 | 洞或部件几何 |
+|---|---|---|---|
+| GBA | `gba-shell.png` | 3840×2160 | 洞 (960,440) 1920×1280 |
+| GB/GBC | `gbc-shell.png` | 2131×1996 | 洞 (423,338) 1285×1156.5 |
+| FC / SFC 像素完美 | `nes-shell.png` | 1326×1237 | 洞 (121,146.3333) 1084×948.5 |
+| FC / SFC 4:3 | `nes-shell-43.png` | 1326×1077 | 洞 (121,125) 1084×813 |
+| NDS 上下 | `nds-shell.png` | 1080×1920 | 两洞 (120,177)、(120,984) 各 840×630 |
+| NDS 单屏 | `nds-shell.png` | 1080×1920 | 画布 1080×945；洞 (120,177) |
+| NDS 左右 | `nds-side-shell.png` | 1274×700 | 两洞 (131,100)、(683,100) 各 460×345 |
+
+- GBA 洞 1920×1280 = 精确 3:2，正是 GBA 原生 240×160，且居整图正中。
+- GBC 洞 1285×1156.5 = 10:9，正是 GB/GBC 的 160×144。
+- GBC 原素材左右留白差 17px，入项目前从左边裁掉 17px 让屏幕左右对称。
+- GBC 剩下半个像素差按小数声明，不拉伸图画。
+- FC 像素完美素材是把原素材屏幕段纵向拉长 7/6 得到的。
+- 拉长后洞从 1084×813 变为 1084×948.5 = 256:224。
+- 下方 121 行控制条（扬声器、按键、指示灯）保持等比，不被压扁。
+- 最后裁掉四周透明留白；只有顶部 10 行是空的，所以洞的 y 是原坐标 × 7/6 再减 10。
+- FC 4:3 素材就是原素材本身，只裁掉顶部 9 行透明留白。
+- SFC 原生帧缓冲同为 256×224（8:7），所以直接复用 FC 的这两套电视壳，逻辑一致。
+- NDS 两个洞各 840×630 = 精确 4:3，256×192 的屏幕完整铺满、不被机壳遮挡。
+- NDS 两洞之间是 177px 铰链带，外接矩形 840×1437 = 256:438。
+- 外接矩形对应双屏帧缓冲 192 + 54 gap + 192；gap 54 由几何反推。
+- NDS 原素材每块屏幕左右各 8px 被补成机身色，洞才从 856 宽收到 840。
+- NDS `top` 只取上图 crop y=0..945（距图底 975px，含整条铰链带），屏幕洞下沿再留 138px 机身。
+- NDS `side` 改用独立素材 `nds-side-shell.png`（整机正视、左右镜像），一块整图直出。
+- `side` 两洞各 460×345 = 精确 4:3，洞间距 92px，外接矩形 1012×345。
+- `side` 的两屏间隙由宿主页合成：内核 `Left/Right` **不吃 `melonds_screen_gap`**，帧缓冲固定 512×192（两屏紧贴）。
+- 宿主页把 512×192 拆成两屏、中间插 51px 透明间隙，再按 563×192 上报给播放页。
+- 51 由洞口反推：92×256/460 ≈ 51.2，取 51。
+- 左右机壳上缘 100px、下缘 255px（按键区），开壳时舞台相对上移 22.46% 的舞台高，让整机在可用区域垂直居中。
+- 换机壳图必须同步改 `SHELLS` 几何；NDS 还要同步改 `EMU_NATIVE.nds` 与 `NDS_NATIVE`。
+- 机壳图必须 `import` 取值，让 Vite 生成带内容哈希的 URL；放 public 会缓存旧图。
+
+- **NDS 屏幕布局。** 布局固定为 `dual`、`top`、`side`，循环顺序也是这个。
+- `dual` = 上下布局，`Top/Bottom` + gap 54。
+- `top` = 只显示上屏，`Top Only`，帧缓冲 256×192。
+- `side` = 左右布局，`Left/Right`；内核帧缓冲 512×192，宿主页插 51px 间隙后对外 563×192。
+- 模式经 iframe 的 `?nds=` 传入；运行中切换走 `__ejsRpc.setNdsLayout`。
+- 切换时先本地重排舞台与机壳，再由宿主页改内核变量并等引擎上报新几何。
+- 失败会回滚到原布局并给中文提示。
+- 不自动重启内核：宿主页返回 `needsRestart` 时只提示，不重建 iframe，以免丢进度。
+- `melonds_screen_layout` 与 `melonds_screen_gap` 已从引擎设置菜单隐藏。
+- 布局偏好存 localStorage 的 `games.emu.nds.screen`。
+
+- **NDS iframe 例外。** NDS 的 iframe 抬到机壳之上：`z-index: 6` > 机壳的 `5`。
+- `dual` / `top` 仍用 `mask-image` 只保留两块（或一块）屏幕区域。
+- `side` 由宿主页把两屏抠到一张 563×192 的合成画布上，中间 51px 透明，原画布 `opacity: 0` 继续渲染并接收输入。
+- 这样两块画面分别落在左右机壳的两个洞里，中间露出机身；合成层设 `pointer-events: none`，不挡引擎操作。
+- 宿主页在 `EJS_onGameStart` 后给 `<html>` 挂 `x-nds-passthrough`。
+- 这样引擎设置弹框跨过铰链时显示在机壳上面。
+- 其它机种的 iframe 仍不透明，机壳照旧盖在画面上。
+
+- **快捷键。** 模拟器播放页在父页面与宿主 iframe 的 `window` 各挂一份 `keydown`。
+- iframe 那份用捕获阶段，避免被引擎自己的按键处理吞掉。
+- 快捷键在输入框、引擎菜单/设置面板、弹框开着或引擎未就绪时不响应。
+
+表中是默认键位；用户可在 `/shortcuts` 改键或关闭，动作 id 见
+`frontend/src/constants/shortcuts.js`。
+
+| 快捷键 | 作用 | 适用 |
+|---|---|---|
+| `Esc` | 暂停 / 继续游戏 | 模拟器 |
+| `Ctrl+Shift+S` | 截图 | 模拟器 |
+| `·`（Backquote） | 捕捉当前进度并同步云端 | 三个播放页 |
+| ``Alt + ` ``（Backquote） | 打开存档管理 | Flash、模拟器 |
+| `-` / `=` | NDS 屏幕布局上一个/下一个 | 模拟器 |
+| `回车` | 载入本地存档并交出键盘焦点 | 模拟器（DOS / 街机除外） |
+
+- `Esc` 调用引擎自己的 `pause()` / `play()`，停止/恢复主循环；暂停时画面中央显示
+  `GAME PAUSED` 与 `PRESS ESC TO RESUME`，提示里的按键名跟随 `/shortcuts` 当前绑定。
+- 标题栏下拉或弹框开着时，`Esc` 先用于关闭它们；引擎菜单/设置面板里不抢；
+  浏览器全屏下 `Esc` 先用于退出全屏。
+- `/shortcuts` 的「播放控制 → 暂停 / 继续游戏（模拟器）」可改键或清除；
+  `Esc` 仍是设置弹框的取消键，改键后点「重置」恢复默认 `Esc`。
+- 引擎底部控制条改变暂停状态时，播放页每秒同步一次并显示/收起遮罩。
+- `Ctrl+Shift+S` 与标题栏「保存截图」按钮同效；F12 是浏览器开发者工具保留键，页面拦不住。
+- 截图截下后不直接下载，先走确认框；完整流程见 [`./game-assets.md`](./game-assets.md)。
+- 默认 `·` 用 `event.code === "Backquote"` 匹配，且不带任何修饰键。
+- `·` 命中后先捕捉当前进度，再上传云端，成功只弹一句「已同步至云端」。
+- Flash 的 `·` 会先弹二次确认，因为落盘必须先重启游戏；细节见 [`./game-saves-stats.md`](./game-saves-stats.md)。
+- H5 的 `·` 只弹「HTML5 游戏不支持云存档。」
+- 默认 ``Alt + ` `` 必须按住 Alt；存档管理已开或截图确认框开着时不响应。
+- 默认 `-` / `=` 认 `event.code` 的 `Minus` / `Equal`，即 Backspace 左边两个物理键。
+- 小键盘的 `-` / `+` 不生效；`+` 是 `Shift + =`，默认不算下一个、
+  需要时可在按键管理页把「下一个」设成 `Shift + =`。
+- 默认键位下 `-` / `=` 带 Ctrl/Alt/Meta 时不生效；焦点在输入框或引擎菜单/设置面板里时不抢。
+- 回车优先载入最近一份本地存档；没有本地存档时不拦键，回车照常传给引擎。
+- DOS 与街机例外：回车是常用输入键，即使有存档也不拦，只把焦点交给引擎。
+- 无论有没有存档，回车后都会把焦点交给模拟器（已选中时不动）。
+- 焦点在按钮、链接、下拉、输入框或弹框里时，回车不抢。
+- H5 没有存档管理，也没有 ``Alt + ` `` 与 `-` / `=`。
+
+- **全屏与光标。** 三个播放页全屏时（原生全屏或 F11），鼠标静止 3 秒隐藏光标并收起标题栏。
+- 任何鼠标活动立即恢复光标并重新计时；只认鼠标，键盘操作不算活动。
+- 模拟器把 iframe 内的指针活动转给 `GameShell`，并给宿主 `<html>` 挂 `x-cursor-hidden`。
+- 因此模拟器全屏时 iframe 内的光标也会一起隐藏。
+- H5 是沙箱不透明源，父页拿不到 iframe 文档，画面内光标无法隐藏。
+
+## 边界与错误
+
+- 引擎未就绪时，加速、截图、窗口与存档管理按钮不可用或返回中文提示。
+- 加速切换失败返回「切换加速模式失败。」；引擎未开始时提示「请先开始游戏再切换加速模式。」。
+- 截图失败返回「截图失败，请重试。」；没有可截画面时宿主页返回中文错误。
+- NDS 布局切换失败回滚并提示「切换屏幕布局失败。」。
+- 需要 BIOS 的机种缺包时，播放页给中文安装提示，不会只留黑屏。
+- 线程核（PSP / DOS）缺 COOP/COEP 或浏览器没有 `SharedArrayBuffer` 时，
+  宿主页给中文提示并停止启动。
+- H5 资源解包或读取写盘失败返回 500，并提示检查运行时目录是否可写、空间是否充足。
+- 攻略资源与 PDF 文件不存在、形态不符时返回 404。
+- 无本体条目照常出现在游戏中心；单击卡片只弹「请先上传游戏本体」，不进播放页。
+- 无本体条目的详情里，大小 / CRC32 / 本体下载都显示「—」。
+- 本体未上传时 play 接口返回 400「游戏文件尚未上传。」。
+- H5 沙箱下没有 localStorage 与 Web Worker，因此 H5 不接入云存档。
+- H5 画面内光标无法隐藏；H5 焦点在游戏里时父页也收不到 `·`。
+- 机壳超出视口不裁剪、不隐藏、不产生滚动条；这是刻意的观感。
+- 快捷键不会在输入框、引擎设置面板、确认框或存档弹框里抢键。
+
+## 测试要点
+
+- 后端：`python -m pytest tests/test_games.py -k "emulator_types_upload_and_play or play_path"`。
+- 上述用例覆盖各主机类型按扩展名入库、列表 `path` 与播放路由一致、本体 `octet-stream` 下发。
+- 后端：`python3 -m pytest tests/test_static_site.py -k "assets or bios"`。
+- 上述用例覆盖引擎资产 immutable、BIOS 前缀 no-cache、每个 BIOS 包缺失时 404。
+- 后端：`python -m pytest tests/test_platforms.py`，确认机种 id 与 EmulatorJS system key 一致。
+- 手工：三种播放页都能从游戏中心进入，误入其它类型会跳到正确路由。
+- 手工：H5 首次播放触发解包，重复播放不再解包；沙箱内拿不到本站 cookie。
+- 手工：模拟器标题栏顺序为显示机壳、窗口、滤镜、加速模式、保存截图、保存配置、存档管理、全屏模式、返回平台，且按钮同宽。
+- 手工：显示机壳只在 GBA/FC/SFC/GBC/NDS 出现；窗口按钮只显示像素尺寸且宽度固定。
+- 手工：切换滤镜、点全屏后按钮大小与其余按钮位置不跳动。
+- 手工：滤镜按机种保存在本地；NES 试复合/S-Video/单色，SFC 试 RF，GB/GBA 试真机液晶与强拖影，
+  MD/GG/SMS 试原生信号；三档 CRT 在运行中切换都立即生效。
+- 手工：切回「无滤镜」后拖影、色彩校正、扫描线都消失；失败时下拉回滚并给中文提示。
+- 手工：引擎设置菜单里没有着色器项；把 FC 内核切到 nestopia 后选原生条目会出现「仅着色器生效」。
+- 手工：保存配置的 payload 不含 `shader` 与滤镜键；清 localStorage 重进后滤镜回到「无滤镜」。
+- 手工：NDS 三种布局切滤镜并与机壳同时开启，屏幕洞与左右合成层不错位。
+- 手工：加速模式点亮后持续加速，重进游戏保持；用户自绑的快进键仍按引擎语义工作。
+- 手工：窗口选择器每种倍率/比例显示真实尺寸；FC / SFC 两列切换时画面、机壳、窗口同时变。
+- 手工：Commodore 五个机种首次进入时确认画面比例；`EMU_NATIVE` 里是初始值，
+  以引擎上报的 `videoInfo` 与截图实图为准校准。
+- 手工：N64 / 土星 / PS1 / PC-FX / 3DO 各跑一盘；PS1 至少覆盖 `.pbp` 与 `.chd`，
+  3DO 覆盖 `.iso`，确认 iframe URL 的末段是 `game.<ext>`。
+- 手工：上述机种缺 BIOS 时给中文提示；补齐后能启动；N64 不需要 BIOS。
+- 手工：土星帧率与 N64 画幅是否可接受，低配设备记录降级表现。
+- 手工：NDS 三种布局用 `-` / `=` 循环，舞台、机壳、窗口选择器三列同步。
+- 手工：每种机种的机壳洞与画面四边对齐，换倍率/全屏后仍对齐。
+- 手工：`Esc` 在引擎画布内和父页面都能暂停/继续，遮罩居中显示且不挡标题栏；
+  标题栏下拉、存档管理、截图确认框、引擎设置面板打开时不触发暂停。
+- 手工：`Esc` 暂停后引擎底部控制条的播放/暂停按钮状态同步；用底部按钮继续时遮罩收起。
+- 手工：在 `/shortcuts` 把暂停改成其他键后，遮罩提示显示新键名；清除后只显示 `GAME PAUSED`；
+  重置后恢复 `Esc`。
+- 手工：截图、`·`、``Alt + ` ``、回车、NDS 布局快捷键在焦点位于输入框/弹框时不响应。
+- 手工：全屏静止 3 秒光标与标题栏一起消失，动一下鼠标立即恢复；F11 同样成立。
+
+## 相关文档
+
+- [`../architecture.md`](../architecture.md)
+- [`./game-assets.md`](./game-assets.md)
+- [`./game-saves-stats.md`](./game-saves-stats.md)
+- [`../../AGENTS.md`](../../AGENTS.md)

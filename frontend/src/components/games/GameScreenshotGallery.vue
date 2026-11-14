@@ -111,6 +111,7 @@
 import { computed, onBeforeUnmount, ref, watch } from "vue";
 import { useZIndex } from "element-plus";
 import { galleryImagePath, screenshotImagePath } from "@/api/games";
+import { matchesShortcut } from "@/utils/shortcuts";
 
 const props = defineProps({
     // 封面（共享）的图片地址；为空时第一格渲染空占位
@@ -121,7 +122,7 @@ const props = defineProps({
     // 本人该游戏的截图，已按后端给的展示顺序排好
     screenshots: { type: Array, default: () => [] },
     // 截图的宽高比（宽 / 高）：只有截图格子按它变高（NDS 双屏是竖版），
-    // 封面与图集仍保持 1:1，现有 7 个机种的观感不变
+    // 封面与图集仍保持 1:1，其余机种的观感不变
     screenshotAspect: { type: Number, default: 1 },
 });
 
@@ -259,12 +260,14 @@ function stepPreview(delta) {
 /** 看大图期间接管按键：左右翻页，ESC 退回。捕获阶段就拦下并阻止默认行为——
  *  既别让详情弹框跟着一起关（只关最上面这层），也别让遮罩底下的页面跟着滚。 */
 function onPreviewKeydown(event) {
-    const actions = {
-        Escape: closePreview,
-        ArrowLeft: () => stepPreview(-1),
-        ArrowRight: () => stepPreview(1),
-    };
-    const action = actions[event.key];
+    let action = null;
+    if (event.key === "Escape") {
+        action = closePreview;
+    } else if (matchesShortcut(event, "preview.prev")) {
+        action = () => stepPreview(-1);
+    } else if (matchesShortcut(event, "preview.next")) {
+        action = () => stepPreview(1);
+    }
     if (!action) {
         return;
     }

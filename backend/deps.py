@@ -14,6 +14,8 @@ from backend.games.search_service import GameSearchService
 from backend.games.service import GameService
 from backend.games.settings_service import EmulatorSettingsService
 from backend.games.stats_service import GameStatsService
+from backend.games.uploads import BodyUploadService
+from backend.shortcuts.service import ShortcutService
 
 SESSION_USER_KEY = "user_id"
 
@@ -44,10 +46,25 @@ CurrentUser = Annotated[User, Depends(get_current_user)]
 
 def get_game_service(request: Request, session: DbSession) -> GameService:
     # 两个存储：数据根（素材与两个 zip）与运行时根（H5/攻略的解包产物）
-    return GameService(session, request.app.state.storage, request.app.state.runtime_storage)
+    settings = request.app.state.settings
+    return GameService(
+        session,
+        request.app.state.storage,
+        request.app.state.runtime_storage,
+        game_index_path=settings.game_index_path,
+        database_path=settings.database_path,
+    )
 
 
 GameServiceDep = Annotated[GameService, Depends(get_game_service)]
+
+
+def get_body_upload_service(request: Request, user: CurrentUser) -> BodyUploadService:
+    # 上传会话按账号隔离，和云存档/截图一样把 user.id 注入 service
+    return BodyUploadService(request.app.state.storage, user.id)
+
+
+BodyUploadServiceDep = Annotated[BodyUploadService, Depends(get_body_upload_service)]
 
 
 def get_cloud_save_service(
@@ -94,21 +111,40 @@ def get_game_stats_service(session: DbSession) -> GameStatsService:
 GameStatsServiceDep = Annotated[GameStatsService, Depends(get_game_stats_service)]
 
 
+def get_shortcut_service(session: DbSession) -> ShortcutService:
+    return ShortcutService(session)
+
+
+ShortcutServiceDep = Annotated[ShortcutService, Depends(get_shortcut_service)]
+
+
 def get_game_search_service(request: Request) -> GameSearchService:
-    # 检索用的是独立只读库（`<根路径>/db/game.db`），由 make index 构建，这里不碰 SQLite 会话
+    # 游戏名录用的是独立只读库（`<运行时根>/db/game.db`），由 make index 构建，这里不碰 SQLite 会话
     return GameSearchService(request.app.state.settings.game_index_path)
 
 
 GameSearchServiceDep = Annotated[GameSearchService, Depends(get_game_search_service)]
 
 
-def get_game_ranking_service(request: Request, games: GameServiceDep) -> GameRankingService:
-    # 榜单与检索共用同一个只读库（`<根路径>/db/game.db`），只是读另一张表。
-    # 额外把「按卡带ID 找库存游戏」注进去：榜单行要在**请求期**与 `games` 表关联一次
-    # （索引库本身刻意不与平台库存联动，见 ranking_service._attach_links）。
+def get_game_ranking_service(
+    request: Request,
+    games: GameServiceDep,
+    stats: GameStatsServiceDep,
+    user: CurrentUser,
+) -> GameRankingService:
+    # 榜单与游戏名录共用同一个只读库（`<运行时根>/db/game.db`），只是读另一张表。
+    # 额外注入两个请求期回调：按卡带ID 找库存游戏、按游戏 id 取**当前用户**进度。
+    # 索引库本身刻意不与平台库存联动（见 ranking_service._attach_cartridges）。
+    def progress_lookup(game_ids):
+        return {
+            game_id: stat.progress
+            for game_id, stat in stats.map_for_games(user.id, list(game_ids)).items()
+        }
+
     return GameRankingService(
         request.app.state.settings.game_index_path,
         cartridge_lookup=games.map_for_cartridge_ids,
+        progress_lookup=progress_lookup,
     )
 
 

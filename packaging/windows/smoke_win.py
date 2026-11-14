@@ -5,7 +5,7 @@
 
 检查的是「缺了会让整条路线悄悄坏掉」的那几件事：
 
-- SQLite 带不带 FTS5（不带 → 「游戏发现」的检索标签永远显示尚未构建索引，且没人知道为什么）；
+- SQLite 带不带 FTS5（不带 → 「游戏发现」的游戏名录标签永远显示尚未构建，且没人知道为什么）；
 - 依赖是否齐全、能不能 import（半边装好时会在启动那一刻炸）；
 - 有没有混进 gunicorn / uvloop（它们根本跑不了 Windows）；
 - MSVC 运行库在不在（不在 → 双击后进程直接没了，连报错都没有）。
@@ -20,6 +20,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from xgame_console import fail, info, ok
+
 REQUIRED_MODULES = [
     "fastapi",
     "uvicorn",
@@ -33,6 +35,7 @@ REQUIRED_MODULES = [
     "backend.static_site",
     "backend.games.search_index",
     "backend.asgi",
+    "upgrade.cli",
 ]
 FORBIDDEN_MODULES = ["gunicorn", "uvloop"]
 
@@ -40,18 +43,18 @@ FORBIDDEN_MODULES = ["gunicorn", "uvloop"]
 def main() -> int:
     problems: list[str] = []
 
-    print(f"Python {sys.version.split()[0]}（{sys.executable}）")
-    print(f"SQLite {sqlite3.sqlite_version}")
+    info(f"Python {sys.version.split()[0]}（{sys.executable}）")
+    info(f"SQLite {sqlite3.sqlite_version}")
 
     connection = sqlite3.connect(":memory:")
     options = [row[0] for row in connection.execute("pragma compile_options")]
     if "ENABLE_FTS5" not in options:
-        problems.append("这份 SQLite 没有编译 FTS5，游戏发现页的检索会一直显示尚未构建索引。")
+        problems.append("这份 SQLite 没有编译 FTS5，游戏发现页的游戏名录会一直显示尚未构建。")
     else:
         try:
             connection.execute("CREATE VIRTUAL TABLE probe USING fts5(x)")
             connection.execute("INSERT INTO probe VALUES ('测试')")
-            print("FTS5：可用")
+            ok("FTS5：可用")
         except sqlite3.Error as exc:
             problems.append(f"FTS5 建表失败：{exc}")
     connection.close()
@@ -63,7 +66,7 @@ def main() -> int:
     for name in REQUIRED_MODULES:
         try:
             importlib.import_module(name)
-            print(f"import {name}：OK")
+            ok(f"import {name}：OK")
         except Exception as exc:  # noqa: BLE001 - 自检要把所有失败都收上来
             problems.append(f"import {name} 失败：{exc!r}")
 
@@ -72,7 +75,7 @@ def main() -> int:
             importlib.import_module(name)
             problems.append(f"包里混进了 {name}，它在 Windows 上不可用也不该被打进来。")
         except ImportError:
-            print(f"确认没有 {name}：OK")
+            ok(f"确认没有 {name}：OK")
 
     python_dir = Path(sys.executable).parent
     missing_dlls = [
@@ -86,15 +89,14 @@ def main() -> int:
             "在一台没装过 VC 运行库的机器上双击会毫无反应。"
         )
     else:
-        print("MSVC 运行库：在位")
+        ok("MSVC 运行库：在位")
 
-    print()
     if problems:
-        print("自检发现问题：")
+        fail("自检发现问题：")
         for item in problems:
-            print(f"  - {item}")
+            fail(f"  - {item}")
         return 1
-    print("自检通过。")
+    ok("自检通过。")
     return 0
 
 

@@ -1,7 +1,7 @@
 """游戏榜单接口（只读）。
 
-数据源与游戏检索是同一个独立只读库 `<根路径>/db/game.db`（`make index` 构建、服务启动时
-就地补载），所以路径挂在 `/api/games/search/ranking` 下——既和检索同源，也避免在
+数据源与游戏名录是同一个独立只读库 `<运行时根>/db/game.db`（`make index` 构建、启动只建空结构），
+所以路径挂在 `/api/games/search/ranking` 下——既和游戏名录同源，也避免在
 `/api/games` 下新增单段路径与 `games_router` 的 `/{game_id}/…` 撞车。
 两条都是 GET（自动免 CSRF），都要登录。
 """
@@ -10,6 +10,7 @@ from fastapi import APIRouter, Query
 
 from backend.deps import CurrentUser, GameRankingServiceDep
 from backend.errors import IndexUnavailableError
+from backend.games.search_service import PAGE_SIZE_DEFAULT
 from backend.http import json_err, json_ok
 
 router = APIRouter(prefix="/api/games/search/ranking", tags=["games"])
@@ -20,31 +21,57 @@ def game_ranking(
     _user: CurrentUser,
     service: GameRankingServiceDep,
     console: str = Query(""),
+    keyword: str = Query(""),
+    in_library: bool | None = Query(None),
+    page: int = Query(1),
+    page_size: int = Query(PAGE_SIZE_DEFAULT),
 ):
-    """取某个机种的整份榜单（`console` 是统一机种键，取自 `/consoles`）。
+    """取榜单的一页（`console` 是统一机种键，取自 `/consoles`；不传则跨机种）。
 
+    关键词与库存三态（全部/之内/之外）都由服务端过滤。`page` / `page_size` 越界在 service 收敛。
     榜单没加载时返回 `has_ranking: false` + 空列表（不是错误）。
-    与平台库存关联上的行会多两个字段（`game_id` / `path`，没命中都是 null）——前端据此把游戏名
-    渲染成真的 `<a href>`，单击进播放页、Ctrl/中键开新标签页。关联规则见 service。
+    每行返回 `cartridges` 列表：一行最多两个卡带，每一项独立给出是否在库存、对应的
+    `game_id` / 播放路径 `path` / 是否有本体 `has_body`，以及**当前登录用户**的
+    `progress`（`not_started` / `in_progress` / `completed`；不在库存为 `null`）。
     """
     try:
-        page = service.get(console=console or None)
+        result = service.get(
+            console=console or None,
+            page=page,
+            page_size=page_size,
+            keyword=keyword,
+            in_library=in_library,
+        )
     except IndexUnavailableError as exc:
         return json_err(str(exc), 503)
     return json_ok(
         {
-            "indexed": page.indexed,
-            "has_ranking": page.has_ranking,
-            "console": page.console,
+            "indexed": result.indexed,
+            "has_ranking": result.has_ranking,
+            "console": result.console,
+            "page": result.page,
+            "page_size": result.page_size,
+            "total": result.total,
+            "matched_total": result.matched_total,
             "items": [
                 {
-                    "rank": item.rank,
-                    "title": item.title,
-                    "cartridge_ids": list(item.cartridge_ids),
-                    "game_id": item.game_id,
-                    "path": item.path,
+                    "score": item.score,
+                    "zh": item.zh,
+                    "en": item.en,
+                    "platform": item.platform,
+                    "cartridges": [
+                        {
+                            "game_id": cartridge.game_id,
+                            "cartridge_id": cartridge.cartridge_id,
+                            "in_library": cartridge.in_library,
+                            "progress": cartridge.progress,
+                            "path": cartridge.path,
+                            "has_body": cartridge.has_body,
+                        }
+                        for cartridge in item.cartridges
+                    ],
                 }
-                for item in page.items
+                for item in result.items
             ],
         }
     )
@@ -52,10 +79,11 @@ def game_ranking(
 
 @router.get("/consoles")
 def game_ranking_consoles(_user: CurrentUser, service: GameRankingServiceDep):
-    """机种下拉的候选项（只列榜单 CSV 里出现过的机种）与默认机种。
+    """机种下拉的候选项（只列榜单 CSV 里出现过的机种）。
 
     每项 `{platform, label, playable}`：`platform` 是统一机种键（请求榜单时原样回传），
-    `label` 是与游戏管理/检索共用的统一显示名，`playable` 表示本平台是否已收录该机种。
+    `label` 是与游戏管理/游戏名录共用的统一显示名，`playable` 表示本平台是否已收录该机种。
+    页面默认不选中任何类型。
     """
     try:
         result = service.list_consoles()
@@ -73,6 +101,5 @@ def game_ranking_consoles(_user: CurrentUser, service: GameRankingServiceDep):
                 }
                 for item in result.consoles
             ],
-            "default_console": result.default_console,
         }
     )

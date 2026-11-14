@@ -1,9 +1,17 @@
 from pathlib import Path
+from typing import NoReturn
 
 import click
 
-from backend.config import RANKING_CSV_PATH, SEARCH_CSV_DIR, get_settings
-from backend.database import ensure_data_dir, init_db, make_engine
+from backend.config import RANKING_CSV_DIR, SEARCH_CSV_DIR, get_settings
+from backend.console import Progress, fail, info, ok
+from backend.database import ensure_data_dir, has_business_tables, init_db, make_engine
+
+
+def _stop(message: str) -> NoReturn:
+    """CLI 的统一失败出口：打 [FAIL] 并返回非零退出码。"""
+    fail(message)
+    raise SystemExit(1)
 
 
 @click.group()
@@ -13,12 +21,14 @@ def cli() -> None:
 
 @cli.command("init-db")
 def init_db_cmd() -> None:
-    """创建数据库表。"""
+    """初始化一个全新的数据库；已有库请用 make upgrade 升级。"""
     settings = get_settings()
     ensure_data_dir(settings)
     engine = make_engine(settings)
+    if has_business_tables(engine):
+        _stop("数据库已存在，结构升级请运行 make upgrade。")
     init_db(engine)
-    click.echo("数据库已初始化。")
+    ok("数据库已初始化。")
 
 
 @cli.command("serve")
@@ -69,63 +79,111 @@ def serve_cmd(
     if static_dir is not None:
         os.environ["STATIC_DIR"] = str(static_dir.resolve())
 
-    click.echo(f"数据根：{os.environ.get('STORAGE_ROOT', '(默认)')}")
-    click.echo(f"运行时根：{os.environ.get('RUNTIME_ROOT', '(同数据根)')}")
-    click.echo(f"前端：{os.environ.get('STATIC_DIR', '(不托管，交给 nginx)')}")
-    click.echo(f"访问：http://{host}:{port}")
+    info(f"数据根：{os.environ.get('STORAGE_ROOT', '(默认)')}")
+    info(f"运行时根：{os.environ.get('RUNTIME_ROOT', '(同数据根)')}")
+    info(f"前端：{os.environ.get('STATIC_DIR', '(不托管，交给 nginx)')}")
+    info(f"访问：http://{host}:{port}")
     uvicorn.run("backend.asgi:app", host=host, port=port)
 
 
 @cli.command("index")
 @click.option("--csv-dir", type=click.Path(path_type=Path), default=None)
-@click.option("--out", "out_path", type=click.Path(path_type=Path), default=None)
 @click.option(
-    "--ranking-csv",
+    "--out",
+    "out_path",
     type=click.Path(path_type=Path),
     default=None,
-    help=f"游戏榜单 CSV（默认 {RANKING_CSV_PATH.name}）。",
+    help="目标库路径；必须已由启动或 make upgrade 建好当前结构。",
 )
-@click.option("--skip-ranking", is_flag=True, help="只重建检索索引，不加载游戏榜单。")
+@click.option(
+    "--ranking-dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help=f"游戏榜单 CSV 目录（默认 {RANKING_CSV_DIR.name}/）。",
+)
 def build_index_cmd(
     csv_dir: Path | None,
     out_path: Path | None,
-    ranking_csv: Path | None,
-    skip_ranking: bool,
+    ranking_dir: Path | None,
 ) -> None:
-    """构建游戏检索索引与游戏榜单（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。
+    """全量构建游戏名录与游戏榜单，并同步两边的库存/榜单标记。
 
-    服务启动时发现索引不存在也会自动补建一次（见 search_index.ensure_game_index），
-    榜单 CSV 变化时启动也会就地补一次；这个命令是手动重建/更新的入口：换了名录或榜单
-    CSV、改了分词规则之后用它覆盖。
+    每次都在已有的最新结构上整体重写数据；不改表结构、不建索引、不做结构迁移。
+    结构不符（缺失/旧版本）时直接报错，请先启动服务或执行 make upgrade。
+    执行前建议停止 api：本命令会写 app.db 的 in_ranking 标记。
     """
     # import 放在函数里：cli 的其它命令不该为了这个可选功能多拖依赖
-    from backend.games.search_index import IndexBuildError, build_index
+    from backend.database import make_engine, read_db_version
+    from backend.games.ranking_flags import FlagSyncError, refresh_all_flags
+    from backend.games.search_index import (
+        IndexBuildError,
+        build_index,
+        game_db_is_current,
+    )
+    from backend.system_config import LATEST_DB_VERSION
 
     settings = get_settings()
     ensure_data_dir(settings)
+
+    if settings.database_path.is_file():
+        version = read_db_version(make_engine(settings))
+        if version != LATEST_DB_VERSION:
+            _stop(
+                f"app.db 结构版本为 {version}，当前程序需要 {LATEST_DB_VERSION}；"
+                "请先停止服务并执行 make upgrade。"
+            )
+
     source = csv_dir or SEARCH_CSV_DIR
     target = out_path or settings.game_index_path
-    ranking_source = None if skip_ranking else (ranking_csv or RANKING_CSV_PATH)
-
-    click.echo(f"读取名录：{source}")
-    if ranking_source is None:
-        click.echo("跳过游戏榜单（--skip-ranking）。")
-    elif Path(ranking_source).is_file():
-        click.echo(f"读取榜单：{ranking_source}")
-    else:
-        click.echo(f"未找到榜单 CSV（{ranking_source}），本次只建检索索引。")
-
-    try:
-        stats = build_index(
-            source, target, ranking_csv=ranking_source, strict_ranking=not skip_ranking
+    ranking_source = ranking_dir or RANKING_CSV_DIR
+    if not target.is_file():
+        _stop(
+            f"game.db 尚未初始化：{target}；"
+            "请先启动一次服务（或执行 make upgrade）创建空结构。"
         )
-    except IndexBuildError as exc:
-        raise click.ClickException(str(exc)) from exc
+    if not game_db_is_current(target):
+        _stop(
+            f"game.db 结构版本与当前程序不一致：{target}；"
+            "make index 只更新数据，请先停止服务并执行 make upgrade。"
+        )
+    if not Path(ranking_source).is_dir():
+        _stop(
+            f"未找到游戏榜单 CSV 目录：{ranking_source}；"
+            "make index 需要同时构建游戏名录与游戏榜单。"
+        )
 
-    click.echo(
-        f"已写入 {stats.path}：{stats.rows} 行、{stats.consoles} 机种，"
-        f"榜单 {stats.ranking_rows} 条 / {stats.ranking_consoles} 机种，"
-        f"耗时 {stats.seconds:.1f} 秒，文件 {stats.size / 1024 / 1024:.1f} MB。"
+    info("开始构建游戏名录与游戏榜单。")
+    progress = Progress()
+    try:
+        try:
+            stats = build_index(
+                source,
+                target,
+                ranking_dir=ranking_source,
+                strict_ranking=True,
+                on_progress=progress.report,
+            )
+        except IndexBuildError as exc:
+            progress.finish()
+            _stop(str(exc))
+
+        progress.report("同步榜单与库存标记")
+        try:
+            sync = refresh_all_flags(settings.database_path, stats.path, strict=True)
+        except FlagSyncError as exc:
+            progress.finish()
+            _stop(str(exc))
+    finally:
+        progress.finish()
+
+    if sync is not None:
+        info(
+            f"已同步标记：库存表 {sync.games_changed} 行，榜单 {sync.rankings_changed} 行。"
+        )
+    ok(
+        f"构建完成：游戏名录 {stats.rows} 行 / {stats.consoles} 机种，"
+        f"游戏榜单 {stats.ranking_rows} 条 / {stats.ranking_consoles} 机种，"
+        f"索引 {stats.size / 1024 / 1024:.1f} MB，耗时 {stats.seconds:.1f} 秒。"
     )
 
 

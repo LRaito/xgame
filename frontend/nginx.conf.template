@@ -6,9 +6,9 @@ server {
     http2 on;
     server_name _;
     root /usr/share/nginx/html;
-    # 游戏本体经 /api 反代，上传限制在此网关生效。GBA 整卡可达 32MiB，
-    # NDS 本体则可达数百 MB，所以网关放宽到 512m；ZIP/PDF 的 128MB 是应用层自己的上限。
-    client_max_body_size 512m;
+    # 游戏本体超过 30MB 时前端改走 16MB 分片，每个请求都远小于网关；
+    # 这里放宽到 130m 是为了「128MB 内容 + multipart 表单余量」，攻略 ZIP/PDF 仍限 128MB。
+    client_max_body_size 130m;
 
     ssl_certificate     /etc/nginx/certs/cert.pem;
     ssl_certificate_key /etc/nginx/certs/cert.key;
@@ -22,8 +22,12 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        # 上传/下载都经后端流式代理：关闭响应缓冲，避免大文件被 nginx 整包缓冲后才下发
+        # 上传/下载都经后端流式代理：关闭响应缓冲，避免大文件被 nginx 整包缓冲后才下发；
+        # 同时关闭请求缓冲，分片请求边收边转发，nginx 不再把整个请求体落到 client_temp。
+        # proxy_http_version 1.1 让没有 Content-Length 的流式请求可以用 chunked 转给后端。
         proxy_buffering off;
+        proxy_request_buffering off;
+        proxy_http_version 1.1;
         proxy_read_timeout 300s;
     }
 
@@ -45,7 +49,7 @@ server {
         default_type application/javascript;
     }
 
-    # NDS BIOS 包（用户自备、文件名固定且随时可能被替换）。必须比下面的 /emulatorjs/
+    # 模拟器 BIOS 包（用户自备、文件名固定且随时可能被替换）。必须比下面的 /emulatorjs/
     # 更具体——更长的 ^~ 前缀优先命中，不继承父级的 immutable 长缓存。
     location ^~ /emulatorjs/bios/ {
         try_files $uri =404;
@@ -87,6 +91,11 @@ server {
     # （H5 游戏根目录的入口文件，见 backend/games/router.py:302），被当成静态文件而 404。
     location ~ ^/(index|emulator-host)\.html$ {
         add_header Cache-Control "no-cache";
+        # PSP / DOS 的线程核要 SharedArrayBuffer，只认带 COOP + COEP 的文档。
+        # 只加在 HTML 上：H5 资源由后端发 unsafe-none，静态核心资产是同源同站，
+        # 不受 require-corp 影响。
+        add_header Cross-Origin-Opener-Policy "same-origin";
+        add_header Cross-Origin-Embedder-Policy "require-corp";
     }
 
     # 版本探针：构建期随产物写出的纯文本小文件，前端定时拉取以判断服务端是否换了新构建。

@@ -1,7 +1,11 @@
-# 基础镜像固定到具体补丁版本 + 发行版代号（不用 python:3.12-slim 这类浮动标签）：
-# 浮动标签会在上游重发时悄悄换掉 Python 版本与 Debian 基线，构建产物跟着变、还难排查。
-# 升级请手动改这一行（改完跑一遍 pytest 再上线）。
-FROM python:3.12.15-slim-trixie
+# 基础镜像同时写 tag 与 digest：
+# - tag 让 BuildKit 先在本机镜像库里按名字命中，构建时不再向 Docker Hub 解析 metadata；
+# - digest 固定内容，上游重发 tag 时这里不会跟着换 Python 版本或 Debian 基线。
+# 只写 digest 时 BuildKit 每次构建都要联网解析（load metadata），本机有镜像也一样。
+# digest 必须与本机镜像的 RepoDigest 一致，否则 tag 命中后仍会去 Docker Hub 解析。
+# 升级请手动改这两处：docker buildx imagetools inspect python:3.12.15-slim-trixie 取新 digest
+# （改完跑一遍 pytest 再上线）。
+FROM python:3.12.15-slim-trixie@sha256:05cda9777409a9c3ffddd94a4c476b79f0769a0b4857f0c7ed9226b6800b0d6f
 
 WORKDIR /app
 
@@ -14,7 +18,7 @@ COPY backend/ ./backend/
 RUN chmod +x backend/entrypoint.sh
 
 # 两个根目录：宿主目录经 compose 挂到这两个固定路径（见根目录 docker-compose.yml）。
-# 游戏文件与检索索引在 STORAGE_ROOT 下面，SQLite 库在 RUNTIME_ROOT 下面的 db/ 里
+# 游戏文件与游戏发现索引在 STORAGE_ROOT 下面，SQLite 库在 RUNTIME_ROOT 下面的 db/ 里
 # （backend/config.py 的 DB_SUBDIR）；月度备份写在 STORAGE_ROOT 的 db/ 里。
 # 这是后端进程唯一认的**业务**环境变量，其余配置都写死在 backend/config.py。
 # （compose 另外会传 STORAGE_HOST_DIR / RUNTIME_HOST_DIR，只给启动时的哨兵判断用——
@@ -22,7 +26,7 @@ RUN chmod +x backend/entrypoint.sh
 ENV STORAGE_ROOT=/data
 ENV RUNTIME_ROOT=/runtime
 
-# 中国上海时区：日志时间、月度备份文件名（<YYYY-MM>.db）与索引里的时间戳都按本地时间走。
+# 中国上海时区：日志时间、月度备份文件名（app.db.<YYYY-MM>）与索引里的时间戳都按本地时间走。
 # 基础镜像自带 /usr/share/zoneinfo（tzdata），所以只设环境变量 + 指向时区文件即可；
 # 库里的 created_at 等仍是 UTC（代码用 datetime.now(timezone.utc)），不受影响。
 ENV TZ=Asia/Shanghai

@@ -1,15 +1,10 @@
 <template>
     <div class="layout">
-        <aside
-            class="sider"
-            :class="{ 'sider--open': siderOpen }"
-            @mouseenter="openSider"
-            @mouseleave="closeSider"
-        >
+        <!-- 常驻侧栏：占据真实布局空间、不可收缩；播放页（meta.playerRoute）整体不渲染 -->
+        <aside v-if="showSider" class="sider">
             <div class="brand">
-                <span class="brand-mark">X</span>
-                <span class="brand-name">GAME</span>
-                <span class="brand-version" :title="`构建版本 ${APP_VERSION}`">{{ APP_VERSION }}</span>
+                <div class="brand-name"><span class="brand-mark-x">X</span>GAME</div>
+                <div class="brand-version">{{ DISPLAY_VERSION }}</div>
             </div>
             <nav class="nav">
                 <router-link
@@ -23,14 +18,11 @@
                 </router-link>
             </nav>
             <div class="sider-footer">
-                <app-button variant="secondary" tone="dark" block @click="onLogout">
+                <app-button variant="secondary" block @click="onLogout">
                     退出登录
                 </app-button>
             </div>
         </aside>
-
-        <!-- 收起状态下贴着屏幕左边缘的感应区：鼠标靠近即滑出侧栏 -->
-        <div class="sider-edge" @mouseenter="openSider"></div>
 
         <div class="main">
             <section class="content">
@@ -41,31 +33,32 @@
 </template>
 
 <script setup>
-import { computed, ref, watch } from "vue";
+import { computed, onMounted } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { APP_VERSION } from "@/constants/version";
+import { DISPLAY_VERSION } from "@/constants/version";
 import { buildMenuFromRoutes } from "@/router";
 import { useAuthStore } from "@/store/auth";
+import { useGameTypesStore } from "@/store/gameTypes";
+import { useShortcutsStore } from "@/store/shortcuts";
 
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
+const gameTypes = useGameTypesStore();
 const menus = buildMenuFromRoutes();
 
-// 侧栏常驻收起、以浮层形式盖在内容之上（不占位、不挤压页面），
-// 鼠标靠近屏幕左边缘或移到侧栏上时滑出，移开即收起。
-const siderOpen = ref(false);
+// 类型注册表只拉一次：各页面直接读缓存；失败静默，页面各自有回退
+onMounted(() => {
+    void gameTypes.ensureLoaded();
+    // 快捷键覆盖配置也只在整页加载时拉一次；失败时各页面继续用默认键位
+    void useShortcutsStore()
+        .ensureLoaded()
+        .catch(() => {});
+});
 
-function openSider() {
-    siderOpen.value = true;
-}
-
-function closeSider() {
-    siderOpen.value = false;
-}
-
-// 跳转后立即收起，避免浮层挡住刚打开的页面
-watch(() => route.fullPath, closeSider);
+// 播放页（模拟器 / Flash / H5，meta.playerRoute）要全屏沉浸，无侧栏；
+// 其余页面（含不进菜单的机型详情页）侧栏常驻、无收缩态。
+const showSider = computed(() => !route.meta.playerRoute);
 
 // 取匹配到的「最长」菜单路径：/games/manage 下只高亮游戏管理，不再同时点亮游戏中心
 const activePath = computed(() => {
@@ -83,84 +76,66 @@ async function onLogout() {
 </script>
 
 <style scoped>
+/* flex 双列：侧栏占据真实宽度，内容区自然向右衔接；播放页 v-if 掉侧栏后自动铺满 */
 .layout {
+    display: flex;
     min-height: 100vh;
     background: #f1f5f9;
 }
 
-/* 浮层侧栏：平时整体移到屏幕外，展开时盖在内容之上 */
+/* 侧栏固定在视口左列，长页面滚动时也不跟着走 */
 .sider {
-    position: fixed;
+    position: sticky;
     top: 0;
-    left: 0;
-    z-index: 60;
-    width: 232px;
     height: 100vh;
-    padding: 24px 14px;
+    flex-shrink: 0;
+    width: var(--app-sider-width);
     box-sizing: border-box;
+    padding: 0;
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
-    color: #fff;
-    white-space: nowrap;
-    overflow: hidden;
-    transform: translateX(-100%);
-    transition: transform 0.22s ease, box-shadow 0.22s ease;
+    background: var(--app-sider-bg);
+    border-right: 1px solid var(--app-sider-border);
 }
 
-.sider--open {
-    transform: translateX(0);
-    box-shadow: 8px 0 28px rgba(15, 23, 42, 0.32);
-}
-
-/* 最左侧的悬停感应区（收起时才需要，展开后由侧栏自身的 mouseleave 负责收起） */
-.sider-edge {
-    position: fixed;
-    top: 0;
-    bottom: 0;
-    left: 0;
-    z-index: 59;
-    width: 14px;
-}
-
-.brand {
-    display: flex;
-    align-items: center;
-    padding: 0 10px 28px;
-}
-
-.brand-mark {
-    width: 40px;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    border-radius: 11px;
-    background: rgba(255, 255, 255, 0.1);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    font-size: 20px;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    flex-shrink: 0;
-    margin-right: 12px;
-}
-
-.brand-name {
-    font-size: 16px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    color: #f8fafc;
-    flex-shrink: 0;
-}
-
-/* 标题后面的构建版本号：窄侧栏里放不下就省略，完整值在 title 提示里（也见 /version.txt） */
-.brand-version {
-    margin-left: 6px;
+.main {
+    flex: 1;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* 页头色带：整块比栏身深一档 + 底部细线，与下方面向内容的导航区拉开层次；
+   XGAME 与版本号水平居中 */
+.brand {
+    padding: 18px 10px 14px;
+    text-align: center;
+    background: var(--app-sider-head-bg);
+    border-bottom: 1px solid var(--app-sider-border);
+    flex-shrink: 0;
+}
+
+/* 品牌字标：X 用主色加重做品牌点缀 */
+.brand-name {
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: #0f172a;
+    white-space: nowrap;
+}
+
+.brand-mark-x {
+    color: var(--brand-accent);
+}
+
+/* 版本号独立成行：只显示 vx.x.x（见 constants/version.js 的 DISPLAY_VERSION） */
+.brand-version {
+    margin-top: 3px;
     font-size: 11px;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    color: rgba(148, 163, 184, 0.95);
+    letter-spacing: 0.04em;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -170,59 +145,57 @@ async function onLogout() {
 .nav {
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
     flex: 1;
     min-height: 0;
+    /* 上内边距归零：第一项从品牌区底边起排（贴上），且不同页面间不再差出 12px */
+    padding: 0 8px 12px;
     overflow-y: auto;
     overscroll-behavior: contain;
 }
 
-.nav::-webkit-scrollbar {
-    width: 6px;
-}
-
-.nav::-webkit-scrollbar-thumb {
-    background: rgba(148, 163, 184, 0.35);
-    border-radius: 3px;
-}
-
-.nav::-webkit-scrollbar-thumb:hover {
-    background: rgba(148, 163, 184, 0.55);
-}
-
+/* 窄栏下的居中排版：一行一个菜单项，去掉大左右 padding */
 .nav-link {
     display: block;
-    color: #cbd5e1;
-    text-decoration: none;
-    padding: 11px 14px;
-    border-radius: 10px;
+    padding: 10px 4px;
+    border-radius: 8px;
+    text-align: center;
     font-size: 14px;
+    line-height: 1.4;
+    text-decoration: none;
+    color: var(--app-sider-fg);
     transition: background 0.15s ease, color 0.15s ease;
 }
 
-.nav-link.active {
-    background: rgba(0, 152, 238, 0.18);
-    color: #fff;
-    font-weight: 500;
-}
-
 .nav-link:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #fff;
+    margin: 0 -8px;
+    padding: 10px 8px;
+    border-radius: 0;
+    background: var(--app-sider-hover-bg);
+    color: var(--app-sider-fg-hover);
 }
 
-.main {
-    display: flex;
-    flex-direction: column;
-    min-width: 0;
-    min-height: 100vh;
+/* 激活态：与 hover 同款的全宽浅灰色带（直贴侧栏左右边界），加粗标题作区分；
+   背景与 hover 用同一个变量，两态不再差出一种样式 */
+.nav-link.active {
+    margin: 0 -8px;
+    padding: 10px 8px;
+    border-radius: 0;
+    background: var(--app-sider-hover-bg);
+    color: var(--app-sider-fg-hover);
+    font-weight: 600;
+}
+
+/* 选中项已经有深色底纹，不再额外画焦点环；否则浏览器默认的黑色外框会显得多余。 */
+.nav-link:focus-visible {
+    outline: none;
 }
 
 .sider-footer {
     margin-top: auto;
     flex-shrink: 0;
-    padding: 16px 10px 4px;
-    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    padding: 14px 8px 12px;
+    border-top: 1px solid var(--app-sider-border);
     display: flex;
     align-items: center;
     justify-content: center;

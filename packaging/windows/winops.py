@@ -20,6 +20,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import xgame_console
+
 logger = logging.getLogger("xgame.winops")
 
 LAUNCHER_SCRIPT = "launcher.py"
@@ -155,12 +157,22 @@ def run_action(action: str, root: Path | None = None) -> str:
     return handler(root or Path(__file__).resolve().parent)
 
 
+def action_level(message: str) -> str:
+    """把一句结果归到状态标签：失败用 FAIL，跳过用 WARN，其余算成功。"""
+    if "失败" in message or "拿不到" in message:
+        return "fail"
+    if "跳过" in message:
+        return "warn"
+    return "ok"
+
+
 def main(argv: list[str]) -> int:
     """直接运行本文件时用：`python winops.py create-shortcut`。"""
     if len(argv) != 1 or argv[0] not in _ACTIONS:
-        print(f"用法：{sys.argv[0]} {{{'|'.join(_ACTIONS)}}}", file=sys.stderr)
+        xgame_console.fail(f"用法：{sys.argv[0]} {{{'|'.join(_ACTIONS)}}}")
         return 2
-    print(run_action(argv[0]))
+    message = run_action(argv[0])
+    xgame_console.emit(action_level(message), message)
     return 0
 
 

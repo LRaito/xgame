@@ -27,9 +27,10 @@ curl / zip**。
 镜像 tag 是「Dockerfile + 上面这几个输入文件」的哈希：改了任一处就自动重建，没改就一直复用。
 要强制刷新（比如拿传递依赖的安全更新）：`WINBUILD_NO_CACHE=1 make win-image`。
 
-**NDS BIOS 不在这份预置资产里**：它是用户自备文件（`bios7.bin`、`bios9.bin`、`firmware.bin`
-打成 `nds.zip`），不随仓库提交。组装时如果宿主机有 `frontend/public/emulatorjs/bios/`，会原样拷进
-包里的 `web/emulatorjs/bios/`；没有就跳过，包里的 NDS 播放页会在启动前提示缺少 BIOS。
+**模拟器 BIOS 不在这份预置资产里**：它们是用户自备文件，完整清单与包内文件见根
+[`README.md`](../../README.md) 的「玩游戏」BIOS 表，不随仓库提交。组装时如果宿主机有
+`frontend/public/emulatorjs/bios/`，会原样拷进包里的 `web/emulatorjs/bios/`；没有就跳过，
+需要 BIOS 的机种会在启动前提示缺少对应 ZIP。
 
 由 `build-in-docker.sh` 驱动：容器以宿主机用户身份跑（产出的 `dist-win/` 与前端产物属主正常，
 不会变成 root 所有）；前端在容器内的临时目录里构建，**宿主机自己的 `frontend/node_modules`
@@ -40,7 +41,7 @@ EmulatorJS CDN），之后每次出包都是离线的。
 Windows 的 `python.exe`；宿主机不是 WSL 就跳过。
 
 版本号由 `scripts/version.sh` 从 git tag 算（就是 `xgame_v<版本>.zip` 里那个），
-规则见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。
+规则见 [`docs/modules/delivery-windows.md`](../../docs/modules/delivery-windows.md)。
 
 ## 包里是什么
 
@@ -49,15 +50,17 @@ Windows 的 `python.exe`；宿主机不是 WSL 就跳过。
 
 ```
 python/                  python-build-standalone 的可重定位 CPython 3.12（含 MSVC 运行库）
-backend/                 后端源码（含 search/csv 名录与 search/ranking 榜单）
+backend/                 后端源码（含 search/catalog 名录与 search/rankings 榜单）
+upgrade/                 数据库结构升级工具（包内副本，供「升级数据库.cmd」调用）
 web/                     前端构建产物（vite dist）
-launcher.py              启动器：自检 → 起 uvicorn → 开浏览器
+launcher.py              启动器：自检 → 起 uvicorn → 开浏览器；也负责数据库升级动作
 winops.py                桌面快捷方式 / 开机自启 / 解除 MOTW 锁定
 smoke_win.py             自检脚本（构建后由宿主机跑一遍）
 xgame.ico                快捷方式图标（由 make_icon.py 从 xgame.png 生成，不进构建流程）
 xgame.ini                数据目录、监听地址、端口、是否开浏览器
 version.txt              构建版本号（启动横幅上显示）
 启动游戏平台.cmd          双击入口
+升级数据库.cmd            停服后双击，升级 data/runtime/db/app.db 的结构
 允许局域网访问.bat + allow-lan.ps1   防火墙放行（只放行这个包的 python.exe）
 创建桌面快捷方式.bat / 设置开机自启.bat / 解除锁定.bat
 说明.txt                 给最终用户看的说明
@@ -88,17 +91,30 @@ make_icon.py / xgame.png  从源图生成 xgame.ico（换图标 = 替换 xgame.p
 - 上传闸门由 `backend/request_limit.py` 顶替 nginx 的 `client_max_body_size`。
 
 完整对照、代价与原因见
-[`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。
+[`docs/modules/delivery-windows.md`](../../docs/modules/delivery-windows.md)。
 
 ## 升级
 
 升级是手动的：关窗口 → 解压新包到新目录 → 搬 `data`。
 
-- 没有自动升级代码。
+- 没有自动升级代码；换包不会自动改数据库结构。
+- 新版本改了数据库结构时，搬完 `data` 后先双击「升级数据库.cmd」，再启动服务。
+- 升级只迁移结构；游戏名录、游戏榜单与标记仍需人工构建：
+  在包根设 `STORAGE_ROOT` / `RUNTIME_ROOT` 后执行 `python\python.exe -m backend.cli index`。
+- 服务启动只建空的 game.db 结构，不写游戏名录/榜单数据。
+- 同一卡带 ID 出现在多行榜单时，升级的映射迁移与 index 都会报错，需先修 CSV。
+- 脚本读取 `xgame.ini` 的 `data_dir` / `runtime_dir`，先确认服务没在运行，再调用
+  `python -m upgrade`；升级前默认备份为 `app.db.bak-v<旧版本>-<时间戳>`。
+- 服务运行中，或因版本不匹配正在阻塞时（不监听端口），脚本会拒绝执行并提示先关窗口。
+- 已是最新时输出 `app.db 结构已是最新（版本 N）`；未启动过服务时提示尚未初始化。
+- 失败会保留窗口输出；修好后可重新双击。
+- 改过 `xgame.ini` 的用户要把旧配置一起复制到新包，否则脚本会看默认的 `data`。
+- 手动兜底：在包根执行
+  `python\python.exe -m upgrade --storage-root data --runtime-root data\runtime`。
 - 停止服务 = 关掉控制台窗口；硬杀不会坏库。
 - 桌面快捷方式与开机自启要重新跑一次对应的 `.bat`。
 
-完整步骤见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)
+完整步骤见 [`docs/modules/delivery-windows.md`](../../docs/modules/delivery-windows.md)
 与包内 `说明.txt`。
 
 ## 构建细节
@@ -142,4 +158,4 @@ make win                                   # 重新组装
 - 面向用户的中文由 Python 或 PowerShell 输出。
 - 从网上下载的 zip 会带 MOTW，处理办法见包内 `说明.txt` 第一节。
 
-细节与原因见 [`docs/specs/delivery-windows.md`](../../docs/specs/delivery-windows.md)。
+细节与原因见 [`docs/modules/delivery-windows.md`](../../docs/modules/delivery-windows.md)。

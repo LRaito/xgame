@@ -22,14 +22,18 @@ from backend.games.models import (
     GameGalleryImage,
     GameScreenshot,
 )
+from backend.games.platforms import playable_platforms
 from backend.games.service import (
     GAME_TYPES,
     GameItem,
     GameService,
     GameUpload,
     detect_game_type,
+    game_types_of_extension,
     normalize_cartridge_id,
     play_path,
+    require_body_type_for_current,
+    resolve_game_type,
     sanitize_game_name,
     validate_cartridge_id,
     validate_game_name,
@@ -64,7 +68,7 @@ def _files(storage_root) -> set[str]:
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
         if p.is_file()
-        # db/ 里是备份与检索索引，不属于游戏素材
+        # db/ 里是备份与游戏发现索引，不属于游戏素材
         and p.relative_to(root).parts[0] != DB_SUBDIR
     }
 
@@ -100,11 +104,12 @@ def _create_game(
     cover: tuple[str, bytes, str] | None = None,
     cartridge_id: str | None = None,
     description: str = "",
-    cover_type: str | None = None,
+    game_type: str | None = None,
 ):
-    """按新流程建游戏：一次请求提交名称/卡带ID/描述/本体（可选封面），类型由后端识别。
+    """按新流程建游戏：一次请求提交名称/卡带ID/描述/本体（可选封面）。
 
-    `cover_type` 只是给「新建不接受这个字段」的用例硬塞用的，正常调用别传。
+    类型由后端按「后缀候选集 + `game_type`」判定；`.d64` / `.prg` 这类多候选后缀
+    必须传 `game_type`，唯一候选可省略。
     """
     files = {"file": (filename, body, mime)}
     if cover is not None:
@@ -114,8 +119,8 @@ def _create_game(
         "cartridge_id": cartridge_id or _next_cartridge_id(),
         "description": description,
     }
-    if cover_type is not None:
-        data["cover_type"] = cover_type
+    if game_type is not None:
+        data["body_game_type"] = game_type
     return client.post("/api/games/manage", data=data, files=files)
 
 
@@ -130,10 +135,68 @@ def test_detect_game_type_by_extension():
     assert detect_game_type("demo.gbc") == "gb"
     assert detect_game_type("demo.gba") == "gba"
     assert detect_game_type("demo.nds") == "nds"
+    assert detect_game_type("demo.a52") == "atari5200"
+    assert detect_game_type("demo.lnx") == "lynx"
+    assert detect_game_type("demo.col") == "coleco"
+    assert detect_game_type("demo.z64") == "n64"
+    assert detect_game_type("demo.n64") == "n64"
+    assert detect_game_type("demo.v64") == "n64"
+    assert detect_game_type("demo.pbp") == "psx"
     assert detect_game_type("demo.md") == "segaMD"
     assert detect_game_type("demo.gen") == "segaMD"
     assert detect_game_type("demo.gg") == "segaGG"
     assert detect_game_type("demo.sms") == "segaMS"
+    assert detect_game_type("demo.d71") == "c128"
+    assert detect_game_type("demo.tap") == "c64"
+    assert detect_game_type("demo.crt") == "c64"
+    # Commodore 的 .d64 / .prg 跨机种重叠：不带选择时有歧义
+    with pytest.raises(Exception):
+        detect_game_type("demo.d64")
+    with pytest.raises(Exception):
+        detect_game_type("demo.prg")
+    assert game_types_of_extension(".d64") == (
+        "c64",
+        "c128",
+        "pet",
+        "plus4",
+        "vic20",
+    )
+    assert resolve_game_type(".d64", "c128") == "c128"
+    assert resolve_game_type(".prg", "vic20") == "vic20"
+    # CD 镜像跨机种：.chd 五候选、.iso 三候选，不带选择时有歧义
+    with pytest.raises(Exception):
+        detect_game_type("demo.chd")
+    with pytest.raises(Exception):
+        detect_game_type("demo.iso")
+    with pytest.raises(Exception) as cue_error:
+        detect_game_type("demo.cue")
+    assert "多文件" in str(cue_error.value)
+    assert game_types_of_extension(".chd") == (
+        "segaCD",
+        "segaSaturn",
+        "psx",
+        "pcfx",
+        "3do",
+    )
+    assert game_types_of_extension(".iso") == ("psx", "psp", "3do")
+    assert game_types_of_extension(".zip") == ("h5", "dos", "arcade")
+    # .zip 不选类型时保持历史默认 h5；DOS / 街机必须显式选
+    assert detect_game_type("demo.zip") == "h5"
+    assert resolve_game_type(".zip", "dos") == "dos"
+    assert resolve_game_type(".zip", "arcade") == "arcade"
+    assert resolve_game_type(".jsdos") == "dos"
+    assert resolve_game_type(".cso") == "psp"
+    assert resolve_game_type(".chd", "psx") == "psx"
+    assert resolve_game_type(".iso", "3do") == "3do"
+    assert require_body_type_for_current(".chd", "pcfx") == "pcfx"
+    with pytest.raises(Exception):
+        resolve_game_type(".d64", "nes")
+    with pytest.raises(Exception):
+        resolve_game_type(".d64")
+    # 换本体：当前类型在候选集内即可
+    assert require_body_type_for_current(".d64", "c128") == "c128"
+    with pytest.raises(Exception):
+        require_body_type_for_current(".d64", "nes")
     with pytest.raises(Exception):
         detect_game_type("demo.txt")
     with pytest.raises(Exception):
@@ -206,7 +269,7 @@ def test_games_list_empty(logged_in):
 
 def test_games_list_orders(game_service):
     """游戏中心按名称升序；管理页按更新时间倒序（最近动过的排最前）。"""
-    # 故意打乱插入顺序；中心列表只收已传本体的游戏
+    # 故意打乱插入顺序；中心列表不按有无本体过滤
     for name in ("delta", "bravo", "charlie"):
         game_service.create(
             name, "", _upload("g.swf", b"swf"), cartridge_id=_next_cartridge_id()
@@ -348,6 +411,23 @@ def test_manage_api_rejects_unknown_body_format(logged_in_games, storage_root):
     assert _files(storage_root) == set()
 
 
+def test_create_rejects_file_and_body_url_together(logged_in_games, storage_root):
+    """本地文件与网络直链同时提交：400，且不落任何文件。"""
+    response = logged_in_games.post(
+        "/api/games/manage",
+        data={
+            "name": "双来源",
+            "cartridge_id": _next_cartridge_id(),
+            "body_url": "https://example.com/a.nes",
+        },
+        files={"file": ("a.nes", b"nes-body", "application/octet-stream")},
+    )
+    assert response.status_code == 400
+    assert "一种上传方式" in response.json()["message"]
+    assert logged_in_games.get("/api/games/manage").json()["data"]["items"] == []
+    assert _files(storage_root) == set()
+
+
 def test_create_rolls_back_when_cover_invalid(logged_in_games, storage_root):
     """封面校验失败：整体回滚，条目与已上传的本体对象都不留。"""
     response = _create_game(
@@ -440,6 +520,52 @@ def test_manage_search_and_filter(logged_in_games):
     assert len(typed.json()["data"]["items"]) == 2
 
 
+def _insert_game(app, name, cartridge_id, *, in_ranking=False, game_type="flash"):
+    with Session(app.state.engine) as session:
+        session.add(
+            Game(
+                name=name,
+                cartridge_id=cartridge_id,
+                game_type=game_type,
+                in_ranking=in_ranking,
+            )
+        )
+        session.commit()
+
+
+def test_manage_filter_by_in_ranking(app, logged_in_games):
+    _insert_game(app, "榜单内", "RANK-IN", in_ranking=True)
+    _insert_game(app, "榜单外", "RANK-OUT", in_ranking=False)
+
+    inside = logged_in_games.get(
+        "/api/games/manage", params={"in_ranking": "true"}
+    ).json()["data"]
+    assert inside["total"] == 1
+    assert [item["name"] for item in inside["items"]] == ["榜单内"]
+    assert inside["items"][0]["in_ranking"] is True
+
+    outside = logged_in_games.get(
+        "/api/games/manage", params={"in_ranking": "false"}
+    ).json()["data"]
+    assert outside["total"] == 1
+    assert [item["name"] for item in outside["items"]] == ["榜单外"]
+
+    all_rows = logged_in_games.get("/api/games/manage").json()["data"]
+    assert all_rows["total"] == 2
+
+
+def test_manage_search_escapes_like_wildcards(app, logged_in_games):
+    _insert_game(app, "100%完成", "LIKE-PCT")
+    _insert_game(app, "100X完成", "LIKE-X")
+
+    data = logged_in_games.get(
+        "/api/games/manage", params={"q": "%"}
+    ).json()["data"]
+
+    assert data["total"] == 1
+    assert [item["name"] for item in data["items"]] == ["100%完成"]
+
+
 def test_manage_list_is_paged(logged_in_games):
     """管理列表服务端分页：默认每页 5 条，载荷是 {total, page, page_size, items}。"""
     for name in ("n06", "n02", "n09", "n04", "n01", "n08", "n03", "n10", "n05", "n07"):
@@ -496,7 +622,7 @@ def test_manage_pagination_params_are_clamped(logged_in_games):
 
 
 def test_manage_page_beyond_range_returns_empty_items(logged_in_games):
-    """页码越界不是错误：items 空、total 照给（与检索页同一口径），页码收敛交给前端。"""
+    """页码越界不是错误：items 空、total 照给（与游戏名录页同一口径），页码收敛交给前端。"""
     for name in ("a", "b", "c"):
         _create_game(logged_in_games, name, "a.swf")
 
@@ -535,6 +661,23 @@ def test_manage_filter_combines_with_pagination(logged_in_games):
         ("gb", ".gbc"),
         ("gba", ".gba"),
         ("nds", ".nds"),
+        ("atari5200", ".a52"),
+        ("lynx", ".lnx"),
+        ("coleco", ".col"),
+        ("n64", ".z64"),
+        ("n64", ".n64"),
+        ("n64", ".v64"),
+        ("segaSaturn", ".chd"),
+        ("psx", ".chd"),
+        ("psx", ".pbp"),
+        ("psx", ".iso"),
+        ("psp", ".iso"),
+        ("psp", ".cso"),
+        ("dos", ".jsdos"),
+        ("dos", ".zip"),
+        ("pcfx", ".chd"),
+        ("3do", ".chd"),
+        ("3do", ".iso"),
         ("segaMD", ".md"),
         ("segaMD", ".gen"),
         ("segaGG", ".gg"),
@@ -543,7 +686,13 @@ def test_manage_filter_combines_with_pagination(logged_in_games):
 )
 def test_emulator_types_upload_and_play(logged_in_games, game_type, extension):
     """各主机平台：上传本体即按扩展名定类型，中心 path 走通用播放路由，本体 octet-stream 下发。"""
-    create = _create_game(logged_in_games, "平台测试", f"demo{extension}", b"rom-body")
+    create = _create_game(
+        logged_in_games,
+        "平台测试",
+        f"demo{extension}",
+        b"rom-body",
+        game_type=game_type,
+    )
     assert create.status_code == 201
     assert create.json()["data"]["game_type"] == game_type
     assert create.json()["data"]["game_path"].endswith(f"/game{extension}")
@@ -559,6 +708,126 @@ def test_emulator_types_upload_and_play(logged_in_games, game_type, extension):
     assert play.status_code == 200
     assert play.content == b"rom-body"
     assert play.headers.get("content-type") == "application/octet-stream"
+
+
+def test_play_with_filename_suffix_streams_body(logged_in_games):
+    """播放 URL 末段带落盘名：供 EmulatorJS 识别 ROM 格式，内容与 /play 一致。"""
+    create = _create_game(
+        logged_in_games,
+        "PS1 镜像",
+        "demo.chd",
+        b"chd-body",
+        game_type="psx",
+    )
+    game_id = create.json()["data"]["id"]
+
+    play = logged_in_games.get(f"/api/games/{game_id}/play/game.chd")
+    assert play.status_code == 200
+    assert play.content == b"chd-body"
+    assert play.headers.get("content-type") == "application/octet-stream"
+
+    head = logged_in_games.head(f"/api/games/{game_id}/play/game.chd")
+    assert head.status_code == 200
+    assert head.headers.get("content-length") == str(len(b"chd-body"))
+
+    # 文件名必须与落盘名一致，避免 EJS 缓存/格式识别错位
+    wrong = logged_in_games.get(f"/api/games/{game_id}/play/game.bin")
+    assert wrong.status_code == 404
+
+
+def test_arcade_keeps_romset_filename_and_plays(logged_in_games, storage_root):
+    """街机：ZIP 落盘名必须是 ROM 集合名，FBNeo 才能按 URL 末段找到集合。"""
+    create = _create_game(
+        logged_in_games,
+        "街机 ROM",
+        "mslug.zip",
+        b"romset-body",
+        game_type="arcade",
+    )
+    assert create.status_code == 201, create.text
+    body = create.json()["data"]
+    assert body["game_type"] == "arcade"
+    assert body["body_kind"] == "file"
+    cid = body["cartridge_id"]
+    assert body["game_path"] == f"game/arcade/{cid}/mslug.zip"
+    assert _read(storage_root, body["game_path"]) == b"romset-body"
+
+    game_id = body["id"]
+    listing = logged_in_games.get("/api/games").json()["data"]
+    item = next(game for game in listing if game["id"] == game_id)
+    assert item["category"] == "arcade"
+    assert item["threads"] is False
+
+    play = logged_in_games.get(f"/api/games/{game_id}/play/mslug.zip")
+    assert play.status_code == 200
+    assert play.content == b"romset-body"
+    # 不能是统一的 game.zip，否则 FBNeo 会找一个不存在的集合
+    assert logged_in_games.get(f"/api/games/{game_id}/play/game.zip").status_code == 404
+
+    manifest = logged_in_games.get(f"/api/games/{game_id}/play/manifest")
+    assert manifest.status_code == 200
+    assert manifest.json()["data"]["entry"] == "mslug.zip"
+    assert logged_in_games.get(f"/api/games/{game_id}/play/files/mslug.zip").status_code == 200
+
+
+def test_arcade_rejects_remote_body_and_bad_filename(logged_in_games):
+    """街机只收本地上传；文件名必须是安全集合名，且不能占用 guide.zip。"""
+    remote = logged_in_games.post(
+        "/api/games/manage",
+        data={
+            "name": "远程街机",
+            "cartridge_id": "ARC-REMOTE",
+            "body_url": "https://example.com/mslug.zip",
+            "body_game_type": "arcade",
+        },
+    )
+    assert remote.status_code == 400
+    assert "街机" in remote.json()["message"]
+
+    bad = _create_game(
+        logged_in_games,
+        "坏名字",
+        "Metal Slug.zip",
+        b"romset",
+        game_type="arcade",
+    )
+    assert bad.status_code == 400
+    assert "集合名" in bad.json()["message"]
+
+    reserved = _create_game(
+        logged_in_games,
+        "保留名",
+        "guide.zip",
+        b"romset",
+        game_type="arcade",
+    )
+    assert reserved.status_code == 400
+    assert "保留" in reserved.json()["message"]
+
+
+def test_zip_does_not_allow_changing_game_type(logged_in_games):
+    """ZIP 在 HTML5 / DOS / 街机之间含义不同，改类型只会得到打不开的游戏。"""
+    arcade = _create_game(
+        logged_in_games,
+        "街机不改型",
+        "kof98.zip",
+        b"romset",
+        game_type="arcade",
+    ).json()["data"]
+    response = logged_in_games.put(
+        f"/api/games/manage/{arcade['id']}/game-type",
+        json={"game_type": "h5"},
+    )
+    assert response.status_code == 400
+    assert "ZIP" in response.json()["message"]
+
+    h5 = _upload_h5(logged_in_games, name="H5 不改型")
+    response = logged_in_games.put(
+        f"/api/games/manage/{h5}/game-type",
+        json={"game_type": "dos"},
+    )
+    assert response.status_code == 400
+    assert "ZIP" in response.json()["message"]
 
 
 def test_replacing_body_cross_type_rejected(logged_in_games, storage_root):
@@ -840,15 +1109,17 @@ def test_map_for_cartridge_ids_normalizes_and_keeps_raw_keys(game_service):
     assert links["nes-sm"].path == f"/games/play/{links['nes-sm'].game_id}"
 
 
-def test_map_for_cartridge_ids_skips_games_without_body(game_service, app):
-    """没有本体的条目不给链接（与游戏中心列表同口径）。"""
+def test_map_for_cartridge_ids_includes_games_without_body(game_service, app):
+    """无本体条目同样关联，用 has_body=False 标记，由前端决定是否拦下跳转。"""
     with Session(app.state.engine) as session:
         session.add(
             Game(name="本体丢了", cartridge_id="NES-SM", game_type="nes", game_path="")
         )
         session.commit()
 
-    assert game_service.map_for_cartridge_ids(["NES-SM"]) == {}
+    links = game_service.map_for_cartridge_ids(["NES-SM"])
+    assert links["NES-SM"].game_id is not None
+    assert links["NES-SM"].has_body is False
 
 
 def test_map_for_cartridge_ids_without_ids_does_not_query(game_service):
@@ -1338,6 +1609,377 @@ def test_rename_cartridge_id_keeps_crc32_and_cover_type(
     assert body["cover_type"] == "nes"
 
 
+def _change_type(client, game_id: int, game_type: str):
+    return client.put(
+        f"/api/games/manage/{game_id}/game-type",
+        json={"game_type": game_type},
+    )
+
+
+def test_local_multi_candidate_requires_game_type(logged_in_games, storage_root):
+    """`.d64` 有 5 个候选：不选类型直接拒绝，不落任何文件。"""
+    response = _create_game(logged_in_games, "多候选", "demo.d64")
+    assert response.status_code == 400
+    assert "游戏类型" in response.json()["message"]
+    assert _files(storage_root) == set()
+
+
+def test_local_multi_candidate_accepts_selected_type(logged_in_games, storage_root):
+    """用户选了 c128：按所选类型落库，目录与后缀都用它。"""
+    response = _create_game(
+        logged_in_games,
+        "选 C128",
+        "demo.d64",
+        b"d64-body",
+        cartridge_id="TYPE-1",
+        game_type="c128",
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()["data"]
+    assert body["game_type"] == "c128"
+    assert body["game_path"] == "game/c128/TYPE-1/game.d64"
+    assert _read(storage_root, "game/c128/TYPE-1/game.d64") == b"d64-body"
+
+
+def test_local_unique_candidate_auto_and_rejects_wrong_selection(logged_in_games):
+    """.tap 只属于 c64：不传类型自动确定，传别的类型拒绝。"""
+    ok = _create_game(logged_in_games, "TAP", "demo.tap", cartridge_id="TAP-1")
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["data"]["game_type"] == "c64"
+
+    bad = _create_game(
+        logged_in_games, "错选", "other.tap", game_type="c128", cartridge_id="TAP-2"
+    )
+    assert bad.status_code == 400
+    assert "康懋达 64" in bad.json()["message"]
+
+
+def test_local_d71_is_c128_and_d64_wrong_type_rejected(logged_in_games):
+    d71 = _create_game(logged_in_games, "D71", "a.d71", cartridge_id="D71-1")
+    assert d71.status_code == 201
+    assert d71.json()["data"]["game_type"] == "c128"
+
+    wrong = _create_game(
+        logged_in_games, "D64 错选", "a.d64", game_type="nes", cartridge_id="D64-1"
+    )
+    assert wrong.status_code == 400
+    assert "任天堂 FC" in wrong.json()["message"]
+
+
+def test_create_game_from_body_url_multi_candidate(logged_in_games, remote_files):
+    """直链 `.d64` + 用户选的类型：按所选类型落库，后缀保留 .d64。"""
+    remote_files["https://cdn.test/roms/demo.d64"] = b"d64-rom"
+    response = _create_from_url(
+        logged_in_games, "网络 D64", "https://cdn.test/roms/demo.d64", "pet"
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()["data"]
+    assert body["game_type"] == "pet"
+    assert body["game_path"].endswith("/game.d64")
+
+
+def test_change_game_type_moves_dirs_and_rewrites_paths(
+    logged_in_games, app, storage_root
+):
+    """改类型 = 搬游戏目录 + 各账号的存档/截图目录，并把库里的路径列全部改写。"""
+    created = _create_game(
+        logged_in_games,
+        "改类型主用例",
+        "a.d64",
+        b"d64-body",
+        cartridge_id="MOVE-1",
+        game_type="c64",
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_image(logged_in_games, "/api/games/gallery", game_id)
+    _upload_image(logged_in_games, "/api/games/screenshots", game_id)
+    _upload_save(logged_in_games, game_id)
+
+    before = _files(storage_root)
+    assert any(path.startswith("game/c64/MOVE-1/") for path in before)
+    assert any(path.startswith("save/alice/c64/MOVE-1/") for path in before)
+    assert any(path.startswith("image/alice/c64/MOVE-1/") for path in before)
+
+    response = _change_type(logged_in_games, game_id, "c128")
+    assert response.status_code == 200, response.text
+    body = response.json()["data"]
+    assert body["game_type"] == "c128"
+    assert body["game_path"] == "game/c128/MOVE-1/game.d64"
+
+    after = _files(storage_root)
+    assert any(path.startswith("game/c128/MOVE-1/") for path in after)
+    assert any(path.startswith("save/alice/c128/MOVE-1/") for path in after)
+    assert any(path.startswith("image/alice/c128/MOVE-1/") for path in after)
+    assert not any("/c64/MOVE-1/" in path for path in after)
+    assert all("c128" in value for value in _path_rows(app, game_id))
+
+
+def test_change_game_type_moves_historical_type_dirs(
+    logged_in_games, app, storage_root
+):
+    """存档/截图目录里的类型是写入当时的：按 file_path 反推，不能按当前类型拼。"""
+    created = _create_game(
+        logged_in_games,
+        "历史类型",
+        "a.d64",
+        b"x",
+        cartridge_id="HIST-T1",
+        game_type="c64",
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_image(logged_in_games, "/api/games/screenshots", game_id)
+    _upload_save(logged_in_games, game_id)
+
+    # 造出「历史换过类型」的状态：游戏目录仍是 c64，存档/截图却在 nes 下
+    for prefix in ("save/alice", "image/alice"):
+        src = Path(storage_root) / prefix / "c64" / "HIST-T1"
+        dst = Path(storage_root) / prefix / "nes" / "HIST-T1"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        src.rename(dst)
+    with Session(app.state.engine) as session:
+        for model in (GameScreenshot, GameCloudSnapshotFile):
+            query = select(model)
+            if model is GameScreenshot:
+                query = query.where(GameScreenshot.game_id == game_id)
+            else:
+                query = query.join(
+                    GameCloudSnapshot,
+                    GameCloudSnapshot.id == GameCloudSnapshotFile.snapshot_id,
+                ).where(GameCloudSnapshot.game_id == game_id)
+            for row in session.exec(query).all():
+                row.file_path = row.file_path.replace("/c64/", "/nes/")
+                session.add(row)
+        session.commit()
+    assert any(path.startswith("save/alice/nes/HIST-T1/") for path in _files(storage_root))
+
+    response = _change_type(logged_in_games, game_id, "c128")
+    assert response.status_code == 200, response.text
+    files = _files(storage_root)
+    assert any(path.startswith("save/alice/c128/HIST-T1/") for path in files)
+    assert any(path.startswith("image/alice/c128/HIST-T1/") for path in files)
+    assert not any("/nes/HIST-T1/" in path for path in files)
+
+
+def test_change_game_type_rejects_unique_extension(logged_in_games, storage_root):
+    """.tap 只有 c64 一个候选：类型不可改（改到 c128 直接 400，磁盘不动）。"""
+    created = _create_game(
+        logged_in_games, "TAP 不可改", "a.tap", cartridge_id="TAP-U1"
+    ).json()["data"]
+    before = _files(storage_root)
+    response = _change_type(logged_in_games, created["id"], "c128")
+    assert response.status_code == 400
+    assert "康懋达 64" in response.json()["message"]
+    assert _files(storage_root) == before
+
+
+def test_change_game_type_same_value_is_noop(logged_in_games, storage_root):
+    created = _create_game(
+        logged_in_games,
+        "同类型",
+        "a.d64",
+        cartridge_id="SAME-1",
+        game_type="c64",
+    ).json()["data"]
+    before = _files(storage_root)
+    response = _change_type(logged_in_games, created["id"], "c64")
+    assert response.status_code == 200
+    assert response.json()["data"]["updated_at"] == created["updated_at"]
+    assert _files(storage_root) == before
+
+
+def test_change_game_type_rejects_name_conflict(logged_in_games, storage_root):
+    """目标类型下已有同名游戏：400，且两边目录都不动。"""
+    _create_game(
+        logged_in_games,
+        "同名游戏",
+        "a.d64",
+        cartridge_id="CONF-1",
+        game_type="c128",
+    )
+    other = _create_game(
+        logged_in_games,
+        "同名游戏",
+        "b.d64",
+        cartridge_id="CONF-2",
+        game_type="c64",
+    ).json()["data"]
+    before = _files(storage_root)
+    response = _change_type(logged_in_games, other["id"], "c128")
+    assert response.status_code == 400
+    assert "同名游戏" in response.json()["message"]
+    assert _files(storage_root) == before
+
+
+def test_change_game_type_rolls_back_when_move_fails(
+    logged_in_games, app, storage_root, monkeypatch
+):
+    """搬存档目录时失败：游戏目录要搬回去，库里的类型与路径一个字节都不能变。"""
+    from backend.games import service as games_service
+    from backend.storage.local import LocalStorage
+
+    created = _create_game(
+        logged_in_games,
+        "搬不动类型",
+        "a.d64",
+        b"x",
+        cartridge_id="FAIL-T1",
+        game_type="c64",
+    ).json()["data"]
+    game_id = created["id"]
+    _upload_save(logged_in_games, game_id)
+    before = _files(storage_root)
+
+    original = LocalStorage.move_tree
+    calls = {"n": 0}
+
+    def flaky(self, source_key, target_key):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise games_service.StorageError("磁盘炸了")
+        return original(self, source_key, target_key)
+
+    monkeypatch.setattr(LocalStorage, "move_tree", flaky)
+    with Session(app.state.engine) as session:
+        service = GameService(session, app.state.storage, app.state.runtime_storage)
+        with pytest.raises(games_service.StorageError):
+            service.change_game_type(game_id, "c128")
+
+    assert calls["n"] == 3
+    assert _files(storage_root) == before
+    with Session(app.state.engine) as session:
+        row = session.get(Game, game_id)
+        assert row.game_type == "c64"
+        assert row.game_path == "game/c64/FAIL-T1/game.d64"
+
+
+def test_change_game_type_unknown_game(logged_in_games):
+    response = _change_type(logged_in_games, 99999, "c128")
+    assert response.status_code == 404
+
+
+def test_status_exposes_type_metadata_and_extension_candidates(logged_in_games):
+    """`/status` 下发类型元数据与后缀候选，前端不再自己维护映射。"""
+    status = logged_in_games.get("/api/games/status").json()["data"]
+    types = {item["id"]: item for item in status["types"]}
+    assert types["c64"]["label"] == "康懋达 64"
+    assert types["c64"]["extensions"] == [".crt", ".d64", ".prg", ".tap"]
+    assert types["c64"]["default_extension"] == ".d64"
+    assert types["atari5200"]["extensions"] == [".a52"]
+    assert types["lynx"]["extensions"] == [".lnx"]
+    assert types["coleco"]["extensions"] == [".col"]
+    assert types["atari5200"]["bios"]["optional"] is True
+    assert types["lynx"]["bios"]["required_files"] == ["lynxboot.img"]
+    assert types["coleco"]["bios"]["required_files"] == ["colecovision.rom"]
+    assert types["n64"]["extensions"] == [".n64", ".v64", ".z64"]
+    assert types["n64"]["bios"] is None
+    assert types["psx"]["extensions"] == [".chd", ".iso", ".pbp"]
+    assert types["psx"]["bios"]["required_files"] == [
+        "scph5500.bin",
+        "scph5501.bin",
+        "scph5502.bin",
+    ]
+    assert types["segaSaturn"]["bios"]["file"] == "segaSaturn.zip"
+    assert types["pcfx"]["bios"]["required_files"] == ["pcfx.rom"]
+    assert types["3do"]["bios"]["required_files"] == ["panafz1.bin"]
+    assert types["nes"]["bios"] is None
+    assert types["flash"]["kind"] == "flash"
+    # 多文件本体的字段从词表派生
+    assert types["segaCD"]["multi_file"] is True
+    assert types["segaCD"]["extensions"] == [".chd"]
+    assert types["segaCD"]["bundle_extensions"] == [".cue", ".bin", ".m3u", ".chd"]
+    assert types["segaCD"]["bundle_entries"] == [".m3u", ".cue", ".chd"]
+    assert types["segaCD"]["upload_extensions"] == [".chd", ".cue", ".bin", ".m3u"]
+    assert types["amiga"]["multi_file"] is True
+    assert types["amiga"]["extensions"] == [".adf", ".hdf"]
+    assert types["amiga"]["bundle_extensions"] == [".adf", ".hdf", ".m3u"]
+    assert types["amiga"]["bundle_entries"] == [".m3u", ".adf", ".hdf"]
+    # 线程核与 ZIP 三义
+    assert types["psp"]["extensions"] == [".cso", ".iso"]
+    assert types["psp"]["threads"] is True
+    assert types["psp"]["bios"] is None
+    assert types["dos"]["extensions"] == [".jsdos", ".zip"]
+    assert types["dos"]["threads"] is True
+    assert types["arcade"]["extensions"] == [".zip"]
+    assert types["arcade"]["threads"] is False
+    assert types["arcade"]["bios"]["file"] == "arcade.zip"
+    assert types["arcade"]["bios"]["optional"] is True
+    assert types["nes"]["multi_file"] is False
+    assert types["nes"]["bundle_extensions"] == []
+    assert types["flash"]["multi_file"] is False
+    assert status["extension_candidates"][".d64"] == [
+        "c64",
+        "c128",
+        "pet",
+        "plus4",
+        "vic20",
+    ]
+    assert status["extension_candidates"][".chd"] == [
+        "segaCD",
+        "segaSaturn",
+        "psx",
+        "pcfx",
+        "3do",
+    ]
+    assert status["extension_candidates"][".iso"] == ["psx", "psp", "3do"]
+    assert status["extension_candidates"][".zip"] == ["h5", "dos", "arcade"]
+    assert status["extension_candidates"][".jsdos"] == ["dos"]
+    assert status["extension_candidates"][".cso"] == ["psp"]
+    assert status["default_game_type_by_extension"][".d71"] == "c128"
+    # 候选顺序按词表，默认项由覆盖表指定为更常见的 PS1；.zip 保持历史默认 h5
+    assert status["default_game_type_by_extension"][".chd"] == "psx"
+    assert status["default_game_type_by_extension"][".iso"] == "psx"
+    assert status["default_game_type_by_extension"][".zip"] == "h5"
+
+
+def test_status_bios_metadata_matches_registry(logged_in_games):
+    """/status 的 BIOS 元数据必须与词表逐项一致。"""
+    status = logged_in_games.get("/api/games/status").json()["data"]
+    types = {item["id"]: item for item in status["types"]}
+    for platform in playable_platforms():
+        expected = (
+            {
+                "file": platform.bios.file,
+                "required_files": list(platform.bios.required_files),
+                "optional": platform.bios.optional,
+            }
+            if platform.bios
+            else None
+        )
+        assert types[platform.id]["bios"] == expected, platform.id
+
+
+def test_games_list_exposes_bios_metadata(logged_in_games):
+    """BIOS 随游戏列表下发，播放页不依赖 /status 是否加载成功。"""
+    nds = _create_game(logged_in_games, "NDS 游戏", "a.nds", b"nds-body").json()["data"]
+    nes = _create_game(logged_in_games, "FC 游戏", "b.nes", b"nes-body").json()["data"]
+    games = {
+        item["id"]: item
+        for item in logged_in_games.get("/api/games").json()["data"]
+    }
+    assert games[nds["id"]]["bios"] == {
+        "file": "nds.zip",
+        "required_files": ["bios7.bin", "bios9.bin", "firmware.bin"],
+        "optional": False,
+    }
+    assert games[nes["id"]]["bios"] is None
+    psx = _create_game(
+        logged_in_games,
+        "PS1 游戏",
+        "c.chd",
+        b"psx-body",
+        game_type="psx",
+    ).json()["data"]
+    games = {
+        item["id"]: item
+        for item in logged_in_games.get("/api/games").json()["data"]
+    }
+    assert games[psx["id"]]["bios"] == {
+        "file": "psx.zip",
+        "required_files": ["scph5500.bin", "scph5501.bin", "scph5502.bin"],
+        "optional": False,
+    }
+
+
 def test_sanitize_game_name_for_import():
     """搬运来的标题只做无害化，不整单失败。"""
     assert sanitize_game_name("魂斗罗 / 30 条命:特别版.") == "魂斗罗 _ 30 条命_特别版"
@@ -1429,20 +2071,16 @@ def test_failed_same_type_upload_keeps_old_asset(game_service, storage_root):
 
 
 def test_create_leaves_cover_type_empty(logged_in_games):
-    """新建一律没有封面类型（表单里硬塞也当没给）：只有编辑与美化封面才写它。"""
-    nes = _create_game(logged_in_games, "CT 空", "a.nes", b"nes-body").json()["data"]
-    assert nes["cover_type"] is None
-
-    sneaky = _create_game(
-        logged_in_games, "CT 硬塞", "b.gb", b"gb-body", cover_type="gb"
+    """新建不写封面类型：即使带封面，也要建好后由编辑弹框或「美化封面」设置。"""
+    created = _create_game(
+        logged_in_games,
+        "CT 封面",
+        "b.nes",
+        b"nes-body",
+        cover=("cover.png", b"png-body", "image/png"),
     )
-    assert sneaky.status_code == 201, sneaky.text
-    assert sneaky.json()["data"]["cover_type"] is None
-
-    center = logged_in_games.get("/api/games").json()["data"]
-    assert [item["cover_type"] for item in center] == [None, None]
-    detail = logged_in_games.get(f"/api/games/manage/{nes['id']}").json()["data"]
-    assert detail["cover_type"] is None
+    assert created.status_code == 201, created.text
+    assert created.json()["data"]["cover_type"] is None
 
 
 def test_update_cover_type(logged_in_games):
@@ -1469,18 +2107,34 @@ def test_update_cover_type(logged_in_games):
     assert cleared.json()["data"]["cover_type"] is None
 
 
+def test_cover_type_accepts_snes_cart(logged_in_games):
+    """SFC 卡带只有一种样式 sfc；别的类型的样式一律不认。"""
+    snes = _create_game(logged_in_games, "CT SFC", "a.sfc", b"sfc-body").json()["data"]
+    updated = logged_in_games.put(
+        f"/api/games/manage/{snes['id']}", json={"cover_type": "sfc"}
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["data"]["cover_type"] == "sfc"
+
+    rejected = logged_in_games.put(
+        f"/api/games/manage/{snes['id']}", json={"cover_type": "fc"}
+    )
+    assert rejected.status_code == 400
+    assert "封面类型" in rejected.json()["message"]
+
+
 def test_cover_type_rejects_for_unsupported_type(logged_in_games):
-    """不支持美化封面的类型（snes）永远没有封面类型：设值 400、空值照收。"""
-    snes = _create_game(logged_in_games, "CT SNES", "a.sfc", b"sfc-body").json()["data"]
+    """不支持美化封面的类型（n64）永远没有封面类型：设值 400、空值照收。"""
+    n64 = _create_game(logged_in_games, "CT N64", "a.z64", b"n64-body").json()["data"]
     for value in ("gb", "fc", "xx"):
         rejected = logged_in_games.put(
-            f"/api/games/manage/{snes['id']}", json={"cover_type": value}
+            f"/api/games/manage/{n64['id']}", json={"cover_type": value}
         )
         assert rejected.status_code == 400, value
         assert "封面类型" in rejected.json()["message"]
     # 空值合法：编辑弹框对这类游戏根本不显示那一行，表单照样会把空串发上来
     blank = logged_in_games.put(
-        f"/api/games/manage/{snes['id']}", json={"cover_type": ""}
+        f"/api/games/manage/{n64['id']}", json={"cover_type": ""}
     )
     assert blank.status_code == 200
     assert blank.json()["data"]["cover_type"] is None
@@ -1559,109 +2213,6 @@ def test_assets_ignores_cover_type_for_game_kind(logged_in_games):
     )
     assert uploaded.status_code == 201, uploaded.text
     assert uploaded.json()["data"]["cover_type"] is None
-
-
-def test_init_db_adds_missing_cover_type_column(tmp_path):
-    """老库的 games 表没有 cover_type：启动时补上这一列，旧行是空（可空列）。"""
-    from sqlalchemy import inspect as sa_inspect
-    from sqlmodel import create_engine
-
-    from backend.database import init_db
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
-    with engine.begin() as conn:
-        conn.exec_driver_sql(
-            "CREATE TABLE games ("
-            "id INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL, "
-            "cartridge_id VARCHAR(64) NOT NULL, description VARCHAR(200) NOT NULL, "
-            "game_type VARCHAR(50) NOT NULL, size INTEGER NOT NULL, "
-            "crc32 VARCHAR(8) NOT NULL, game_path VARCHAR(500) NOT NULL, "
-            "cover_path VARCHAR(500), created_at DATETIME NOT NULL, "
-            "updated_at DATETIME NOT NULL)"
-        )
-        conn.exec_driver_sql(
-            "INSERT INTO games (id, name, cartridge_id, description, game_type, size, "
-            "crc32, game_path, created_at, updated_at) VALUES "
-            "(1, '老游戏', 'OLD1', '', 'nes', 0, '', '', "
-            "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
-        )
-
-    init_db(engine)
-
-    columns = {c["name"]: c for c in sa_inspect(engine).get_columns("games")}
-    assert "cover_type" in columns
-    assert columns["cover_type"]["nullable"] is True
-    with Session(engine) as session:
-        assert session.get(Game, 1).cover_type is None
-
-
-def test_init_db_adds_missing_guide_kind_column(tmp_path):
-    """老库的 games 表没有 guide_kind：启动时补上非空列，旧行是空串（不回填磁盘）。"""
-    from sqlalchemy import inspect as sa_inspect
-    from sqlmodel import create_engine
-
-    from backend.database import init_db
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
-    with engine.begin() as conn:
-        conn.exec_driver_sql(
-            "CREATE TABLE games ("
-            "id INTEGER PRIMARY KEY, name VARCHAR(255) NOT NULL, "
-            "cartridge_id VARCHAR(64) NOT NULL, description VARCHAR(200) NOT NULL, "
-            "game_type VARCHAR(50) NOT NULL, size INTEGER NOT NULL, "
-            "crc32 VARCHAR(8) NOT NULL, game_path VARCHAR(500) NOT NULL, "
-            "cover_path VARCHAR(500), created_at DATETIME NOT NULL, "
-            "updated_at DATETIME NOT NULL)"
-        )
-        conn.exec_driver_sql(
-            "INSERT INTO games (id, name, cartridge_id, description, game_type, size, "
-            "crc32, game_path, created_at, updated_at) VALUES "
-            "(1, '老游戏', 'OLD1', '', 'nes', 0, '', '', "
-            "'2026-01-01 00:00:00', '2026-01-01 00:00:00')"
-        )
-
-    init_db(engine)
-
-    columns = {c["name"]: c for c in sa_inspect(engine).get_columns("games")}
-    assert "guide_kind" in columns
-    assert columns["guide_kind"]["nullable"] is False
-    with Session(engine) as session:
-        assert session.get(Game, 1).guide_kind == ""
-
-
-def test_init_db_adds_missing_snapshot_parent_column_and_index(tmp_path):
-    """老库的 game_cloud_snapshots 表没有 parent_id / sort_order：启动时补列与索引。"""
-    from sqlalchemy import inspect as sa_inspect
-    from sqlmodel import create_engine
-
-    from backend.database import init_db
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
-    with engine.begin() as conn:
-        conn.exec_driver_sql(
-            "CREATE TABLE game_cloud_snapshots ("
-            "id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, "
-            "game_id INTEGER NOT NULL, remark VARCHAR(100) NOT NULL, "
-            "created_at DATETIME NOT NULL)"
-        )
-
-    init_db(engine)
-
-    columns = {
-        c["name"]: c for c in sa_inspect(engine).get_columns("game_cloud_snapshots")
-    }
-    assert "parent_id" in columns
-    assert columns["parent_id"]["nullable"] is True
-    # sort_order 带默认值，所以老库补列时可以是 NOT NULL（旧行一律 0）
-    assert "sort_order" in columns
-    assert columns["sort_order"]["nullable"] is False
-
-    indexes = sa_inspect(engine).get_indexes("game_cloud_snapshots")
-    assert any(index["column_names"] == ["parent_id"] for index in indexes)
-    assert any(
-        index["column_names"] == ["user_id", "game_id", "sort_order"]
-        for index in indexes
-    )
 
 
 def test_update_ignores_manual_game_type(logged_in_games):
@@ -1743,6 +2294,9 @@ def test_h5_upload_and_serve(logged_in_games, storage_root, runtime_root):
     assert "allow-same-origin" not in entry.headers["content-security-policy"]
     assert entry.headers["x-content-type-options"] == "nosniff"
     assert entry.headers["access-control-allow-origin"] == "*"
+    # 播放页外层带 COEP require-corp；H5 沙箱页显式退出隔离，外链资源才不会被拦
+    assert entry.headers["cross-origin-embedder-policy"] == "unsafe-none"
+    assert entry.headers["cross-origin-resource-policy"] == "cross-origin"
 
     # 首次访问之后才有解包产物，垃圾条目被跳过
     assert _exists(runtime_root, f"game/h5/{cid}/h5/index.html")
@@ -3186,12 +3740,13 @@ def test_create_game_from_body_url_type_mismatch_rejected(logged_in_games, remot
 
 
 def test_create_game_from_body_url_requires_game_type(logged_in_games, remote_files):
-    """没选类型就提交：直接拒绝，不去下载。"""
+    """多候选后缀没选类型：直接拒绝，不去下载。"""
     response = _create_from_url(
-        logged_in_games, "缺类型", "https://cdn.test/whatever.gba", ""
+        logged_in_games, "缺类型", "https://cdn.test/whatever.d64", ""
     )
     assert response.status_code == 400
     assert "游戏类型" in response.json()["message"]
+    assert remote_files == {}
 
 
 def test_create_game_from_body_url_rejects_download_failure(
@@ -3252,14 +3807,101 @@ def test_create_game_with_cover_url_must_be_image(logged_in_games, remote_files)
     assert "png" in response.json()["message"]
 
 
-def test_create_game_requires_body_or_url(logged_in_games):
-    """本体既没给文件也没给地址：400 而不是崩。"""
+def test_create_game_without_body(logged_in_games):
+    """本体可选：只给类型也能建条目；中心可见、本体字段为空、播放接口提示尚未上传。"""
     response = logged_in_games.post(
         "/api/games/manage",
-        data={"name": "空手", "description": "", "cartridge_id": "EMPTY1"},
+        data={
+            "name": "本体待补",
+            "description": "",
+            "cartridge_id": "NOBODY1",
+            "body_game_type": "nes",
+        },
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()["data"]
+    assert body["game_path"] == ""
+    assert body["size"] == 0
+    assert body["crc32"] == ""
+    assert body["path"] == f"/games/play/{body['id']}"
+
+    center = logged_in_games.get("/api/games").json()["data"]
+    assert [item["name"] for item in center] == ["本体待补"]
+
+    play = logged_in_games.get(f"/api/games/{body['id']}/play")
+    assert play.status_code == 400
+    assert "尚未上传" in play.json()["message"]
+
+
+def test_create_game_without_body_requires_game_type(logged_in_games):
+    """无本体时必须显式选类型：没有后缀可供推断。"""
+    response = logged_in_games.post(
+        "/api/games/manage",
+        data={"name": "无类型", "description": "", "cartridge_id": "NOBODY2"},
     )
     assert response.status_code == 400
-    assert "本体" in response.json()["message"]
+    assert "游戏类型" in response.json()["message"]
+
+
+def test_create_game_without_body_rejects_unknown_game_type(logged_in_games):
+    response = logged_in_games.post(
+        "/api/games/manage",
+        data={
+            "name": "未知类型",
+            "description": "",
+            "cartridge_id": "NOBODY3",
+            "body_game_type": "not-a-type",
+        },
+    )
+    assert response.status_code == 400
+    assert "不支持的游戏类型" in response.json()["message"]
+
+
+def test_game_without_body_can_be_given_body_on_edit(logged_in_games):
+    """先登记信息、之后补传同类型本体：字段更新，播放接口转为可下载。"""
+    created = logged_in_games.post(
+        "/api/games/manage",
+        data={
+            "name": "后补本体",
+            "description": "",
+            "cartridge_id": "NOBODY4",
+            "body_game_type": "nes",
+        },
+    ).json()["data"]
+
+    response = logged_in_games.post(
+        f"/api/games/manage/{created['id']}/assets",
+        data={"kind": "game"},
+        files={"file": ("a.nes", b"nes-body", "application/octet-stream")},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()["data"]
+    assert body["game_path"] == "game/nes/NOBODY4/game.nes"
+    assert body["size"] == len(b"nes-body")
+    assert body["crc32"] == _crc32_of(b"nes-body")
+    assert logged_in_games.get(f"/api/games/{created['id']}/play").status_code == 200
+
+
+def test_game_without_body_can_be_deleted_and_renamed(logged_in_games):
+    """空 game_path 不影响目录级操作：改卡带 ID 与删除都照常工作。"""
+    created = logged_in_games.post(
+        "/api/games/manage",
+        data={
+            "name": "空本体",
+            "description": "",
+            "cartridge_id": "NOBODY5",
+            "body_game_type": "nes",
+        },
+    ).json()["data"]
+
+    renamed = logged_in_games.put(
+        f"/api/games/manage/{created['id']}/cartridge-id",
+        json={"cartridge_id": "NOBODY6"},
+    )
+    assert renamed.status_code == 200, renamed.text
+    assert renamed.json()["data"]["cartridge_id"] == "NOBODY6"
+
+    assert logged_in_games.delete(f"/api/games/manage/{created['id']}").status_code == 200
 
 
 def test_upload_body_from_url_on_edit(logged_in_games, storage_root, remote_files):
@@ -3403,24 +4045,3 @@ def test_download_file_without_limit_is_unchanged(tmp_path):
     assert Path(path).read_bytes() == b"payload"
     assert size == 7
     assert [p.name for p in tmp_path.iterdir()] == ["a.nes"]
-
-
-def test_init_db_drops_removed_tables(tmp_path):
-    """老库里遗留的 game_h5_files 表：启动时清掉（清单表已经没有任何代码读写）。"""
-    from sqlalchemy import inspect as sa_inspect
-    from sqlmodel import create_engine
-
-    from backend.database import init_db
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
-    with engine.begin() as conn:
-        conn.exec_driver_sql(
-            "CREATE TABLE game_h5_files ("
-            "id INTEGER PRIMARY KEY, game_id INTEGER NOT NULL, path VARCHAR(512) NOT NULL, "
-            "file_path VARCHAR(700) NOT NULL, size INTEGER NOT NULL, "
-            "mime VARCHAR(200), created_at DATETIME NOT NULL)"
-        )
-
-    init_db(engine)
-
-    assert not sa_inspect(engine).has_table("game_h5_files")

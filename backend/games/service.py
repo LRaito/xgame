@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 import tempfile
+import uuid
 import zlib
 from collections.abc import Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
@@ -16,11 +19,21 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from backend.errors import NotFoundError, StorageError, ValidationError
-from backend.games import archive, importer, paths, remote
+from backend.games import archive, body_bundle, importer, paths, ranking_flags, remote
+from backend.games.cartridge import normalize_cartridge_id
 from backend.games.archive import (
     guess_asset_mime,
     normalize_guide_path,
     normalize_h5_path,
+)
+from backend.games.body_bundle import (
+    MAX_BUNDLE_FILES,
+    MAX_MANIFEST_TEXT_BYTES,
+    BodyBundle,
+    StagedBundleFile,
+    build_bundle,
+    normalize_bundle_name,
+    normalize_romset_name,
 )
 from backend.games.models import (
     CARTRIDGE_ID_MAX_LENGTH,
@@ -37,22 +50,36 @@ from backend.games.models import (
     GameUserStat,
     cover_types_for,
 )
-from backend.games.platforms import playable_platforms
+from backend.games.platforms import (
+    PLATFORM_BY_ID,
+    all_body_extensions,
+    all_bundle_extensions,
+    bundle_platforms,
+    default_playable_platform_for_extension,
+    normalize_extension,
+    platform_bundle_entries,
+    platform_bundle_extensions,
+    platform_threads,
+    platform_upload_extensions,
+    playable_platforms,
+)
 from backend.games.runtime_assets import RuntimeAssets
+from backend.games.uploads import SINGLE_FILE_MAX, StagedUpload
 from backend.storage.types import StorageBackend
 
 logger = logging.getLogger(__name__)
 
 GAME_TYPE_FLASH = "flash"
 GAME_TYPE_H5 = "h5"
+GAME_TYPE_ARCADE = "arcade"
 
 # 游戏类型（game_type 落库值）。顺序即 /status 与前端下拉/分组顺序。
 # h5 走 ZIP 解包 + 沙箱 iframe 播放；flash 走 Ruffle；其余为 EmulatorJS。
 #
 # **机种那部分从 `backend/games/platforms.py` 的机种词表派生**（id 就是 EJS 的 system key，
 # 也就是 game_type 的值），所以「哪些机种能上传」只需要改那张表——但 `extensions` 非空的
-# 机种才会出现在这里：词表里还有 28 个 EJS 支持、本项目还没打包 core 的机种（n64/psx…），
-# 它们只用来给游戏发现的外部名录「对上号」，不开放上传。
+# 机种才会出现在这里：词表里还有 `sega` / `mame` 两个兜底 key，只用来给外部名录
+# 「对上号」，不开放上传。
 #
 # flash 与 h5 **不是机种**（是载体类型），所以不来自词表、写在这里，永远排在最前。
 GAME_TYPES: tuple[str, ...] = (
@@ -62,13 +89,26 @@ GAME_TYPES: tuple[str, ...] = (
 )
 
 # 各类型允许的本体扩展名白名单（封面统一走 _COVER_EXTENSIONS）。
-# 只收单文件 ROM；不开放 .bin（GB/MD/SMS 等多机种歧义）与压缩/多碟格式。
-# h5 收 ZIP 压缩包，由后端解包为多文件。
+# 单文件 ROM 之外，h5 / dos / arcade 都收 .zip：同一个后缀有三种含义，
+# 创建时由用户显式选类型；不选时按 _DEFAULT_GAME_TYPES_BY_EXTENSION 回到 h5。
 _GAME_TYPE_EXTENSIONS: dict[str, frozenset[str]] = {
     GAME_TYPE_FLASH: frozenset({".swf"}),
     GAME_TYPE_H5: frozenset({".zip"}),
     **{platform.id: frozenset(platform.extensions) for platform in playable_platforms()},
 }
+
+# 多候选后缀的默认类型（只在用户没传 body_game_type 时生效）。
+# `.zip` 历史上一直自动判成 h5，保留这个默认，社区里已有的 H5 上传不受影响；
+# DOS / 街机必须显式选类型，避免把静态站 zip 当 romset 存进去。
+_DEFAULT_GAME_TYPES_BY_EXTENSION: dict[str, str] = {".zip": GAME_TYPE_H5}
+
+# 只能作为多文件本体成员、不能单独成盘的后缀（cue/bin/m3u）。
+_BUNDLE_ONLY_EXTENSIONS = frozenset(all_bundle_extensions()) - frozenset(
+    all_body_extensions()
+)
+# 直链里出现这些后缀说明用户想传多文件本体，但直链只能给一个文件，直接拒绝。
+# `.bin` 不在此列：它也可能是某个机种的裸 ROM，沿用「退回类型默认后缀」的旧规则。
+_BUNDLE_ENTRY_ONLY_EXTENSIONS = _BUNDLE_ONLY_EXTENSIONS - {".bin"}
 
 # 网络上传时地址看不出扩展名（如网盘直链），用各类型最常用的那个后缀补上
 _DEFAULT_EXTENSIONS: dict[str, str] = {
@@ -78,8 +118,7 @@ _DEFAULT_EXTENSIONS: dict[str, str] = {
 }
 
 # 各类型的显示名，只用于后端拼中文报错文案（与 COVER_TYPE_LABELS 同一用途）。
-# 前端展示层镜像在 `frontend/src/constants/gameTypes.js` 的 label 字段（可玩机种那 7 条），
-# 两边必须逐字一致，由 `tests/test_platforms.py` 钉住。
+# 前端展示层的 label 与扩展名由 `/api/games/status` 从词表派生，不在这里维护镜像。
 GAME_TYPE_LABELS: dict[str, str] = {
     GAME_TYPE_FLASH: "Flash",
     GAME_TYPE_H5: "HTML5",
@@ -93,7 +132,7 @@ RECENT_LIMIT_DEFAULT = 20
 RECENT_LIMIT_MAX = 50
 
 # 管理列表一页多少条（前端分页条每页 5 行，与 views/games/manage 的 PAGE_SIZE 一致），
-# 上限防手改 query。检索那套在 search_service.py 里另有一组同款常量。
+# 上限防手改 query。游戏名录那套在 search_service.py 里另有一组同款常量。
 MANAGE_PAGE_SIZE_DEFAULT = 5
 MANAGE_PAGE_SIZE_MAX = 100
 
@@ -104,7 +143,7 @@ _IMPORT_CARTRIDGE_PREFIX = "F-"
 # 同一个游戏同时只保留一种，上传一种会删掉另一种。
 GUIDE_KIND_ZIP = "zip"
 GUIDE_KIND_PDF = "pdf"
-# PDF 与 ZIP 一样是应用层 128MB 上限（网关已放宽到 512m，给 NDS 本体留余量）。
+# PDF 与 ZIP 一样是应用层 128MB 上限（网关 130m 只给 multipart 留余量）。
 GUIDE_PDF_MAX_SIZE = 128 * 1024 * 1024
 _GUIDE_PDF_MAGIC = b"%PDF-"
 # PDF 规范允许 `%PDF-` 前有少量垃圾字节，按 1024 字节内出现即认可。
@@ -115,17 +154,41 @@ _GUIDE_PDF_HEADER_BYTES = 1024
 
 
 def allowed_body_extensions() -> tuple[str, ...]:
-    """全部允许的本体扩展名（供前端 accept 与错误提示使用，已排序）。"""
-    extensions = {ext for exts in _GAME_TYPE_EXTENSIONS.values() for ext in exts}
+    """全部允许的本体扩展名（供前端 accept 与错误提示使用，已排序）。
+
+    机种部分只从词表取，flash / h5 这两个载体类型各补自己的后缀。
+    """
+    extensions = set(all_body_extensions())
+    extensions.update(_GAME_TYPE_EXTENSIONS[GAME_TYPE_FLASH])
+    extensions.update(_GAME_TYPE_EXTENSIONS[GAME_TYPE_H5])
     return tuple(sorted(extensions))
 
 
+def game_types_of_extension(extension: str) -> tuple[str, ...]:
+    """该后缀的全部候选类型，顺序即 `GAME_TYPES` 顺序（第 1 个是默认项）。
+
+    后缀可以跨机种重叠（Commodore 的 `.d64` / `.prg`），所以这里返回的是候选集，
+    不再假设「一个后缀只对应一个类型」。
+    """
+    normalized = (extension or "").strip().lower()
+    if normalized and not normalized.startswith("."):
+        normalized = f".{normalized}"
+    if not normalized:
+        return ()
+    return tuple(
+        game_type for game_type, extensions in _GAME_TYPE_EXTENSIONS.items() if normalized in extensions
+    )
+
+
 def game_type_of_extension(extension: str) -> str | None:
-    """扩展名对应的游戏类型；不是已收录的本体格式时返回 None。"""
-    for game_type, extensions in _GAME_TYPE_EXTENSIONS.items():
-        if extension in extensions:
-            return game_type
-    return None
+    """兼容旧调用：候选集的第 1 个；不是已收录的本体格式时返回 None。"""
+    candidates = game_types_of_extension(extension)
+    return candidates[0] if candidates else None
+
+
+def _type_labels(game_types: Sequence[str]) -> str:
+    """把类型键拼成中文显示名，供报错文案用（不用 `nes` / `segaMD` 这种内部键）。"""
+    return "、".join(f"「{GAME_TYPE_LABELS.get(item, item)}」" for item in game_types)
 
 
 def _remote_extension(url: str) -> str:
@@ -143,46 +206,182 @@ def _remote_extension(url: str) -> str:
 def _remote_body_filename(url: str, game_type: str) -> str:
     """按用户选定的类型定远程本体的文件名（这里只用到它的扩展名）。
 
-    网络上传时类型以下拉选择为准：地址自带的扩展名能认出类型就必须与所选一致，
-    不一致当场报错（选错存进去也是放不出来）；认不出（没扩展名，或不是已收录的
-    格式）就用该类型的默认后缀补上。
+    地址自带已收录的后缀时保留它（`.d64` 仍存成 `.d64`）；看不出（没有后缀或
+    不是已收录格式）就用所选类型的默认后缀补上。类型与后缀是否匹配由
+    `resolve_game_type()` 在下载前统一校验。
     """
-    extensions = _GAME_TYPE_EXTENSIONS.get(game_type)
-    if extensions is None:
+    if game_type not in _GAME_TYPE_EXTENSIONS:
         raise ValidationError("请选择游戏类型。")
-    extension = _remote_extension(url)
-    detected = game_type_of_extension(extension) if extension else None
-    if detected is not None and detected != game_type:
-        # 报错文案用显示名（任天堂 FC / 世嘉 MD…），不用 `nes`/`segaMD` 这种内部键值
+    if game_type == GAME_TYPE_ARCADE:
+        # FBNeo 用 URL 末段当集合名；直链下载只能存成 remote.zip，必然对不上。
         raise ValidationError(
-            f"该地址的文件属于「{GAME_TYPE_LABELS[detected]}」，"
-            f"与所选的「{GAME_TYPE_LABELS[game_type]}」不符，请确认后重试。"
+            "街机 ROM 请使用本地上传：文件名必须是 ROM 集合名（如 mslug.zip），"
+            "网络直链无法保证集合名。"
         )
-    return f"remote{extension if detected else _DEFAULT_EXTENSIONS[game_type]}"
+    extension = _remote_extension(url)
+    if extension in _BUNDLE_ENTRY_ONLY_EXTENSIONS:
+        raise ValidationError("多文件本体请使用本地上传：网络直链只支持单个文件。")
+    if not extension or not game_types_of_extension(extension):
+        extension = _DEFAULT_EXTENSIONS[game_type]
+    return f"remote{extension}"
+
+
+def resolve_game_type(
+    extension: str,
+    requested: str = "",
+    *,
+    allow_unknown_extension: bool = False,
+) -> str:
+    """创建时判型的唯一入口：后缀候选集 + 用户选择。
+
+    - 后缀没有候选：本地文件直接拒绝；直链在 `allow_unknown_extension=True` 时
+      允许用户任选一个已收录类型（地址可能根本看不出后缀）。
+    - 候选唯一：自动确定；用户传了不同的类型仍拒绝。
+    - 候选多个：有默认覆盖的（`.zip` → h5）先取默认；其余必须由用户选择，
+      且必须落在候选集内。
+    """
+    candidates = game_types_of_extension(extension)
+    if not candidates:
+        if allow_unknown_extension and requested:
+            return validate_game_type(requested)
+        if normalize_extension(extension) in _BUNDLE_ONLY_EXTENSIONS:
+            raise ValidationError(
+                "该格式需要作为多文件本体上传：请一次选择 cue 与它引用的 bin，"
+                "或选择 m3u / 多个分盘文件。"
+            )
+        allowed = "、".join(allowed_body_extensions())
+        raise ValidationError(f"无法识别的游戏文件格式，仅支持 {allowed}。")
+    if requested:
+        value = validate_game_type(requested)
+        if value not in candidates:
+            raise ValidationError(
+                f"该文件属于{_type_labels(candidates)}，与所选的"
+                f"「{GAME_TYPE_LABELS.get(value, value)}」不符，请确认后重试。"
+            )
+        return value
+    if len(candidates) == 1:
+        return candidates[0]
+    default = _DEFAULT_GAME_TYPES_BY_EXTENSION.get(normalize_extension(extension))
+    if default and default in candidates:
+        return default
+    raise ValidationError(f"该后缀对应多个机种（{_type_labels(candidates)}），请选择游戏类型。")
 
 
 def detect_game_type(filename: str) -> str:
-    """按本体文件名判定游戏类型——类型只由本体决定，不接受手动指定。
+    """按本体文件名判定游戏类型。
 
-    各类型的扩展名互不重叠（见 _GAME_TYPE_EXTENSIONS），因此判定无歧义；
-    未收录的扩展名一律拒绝，并在提示里列出支持的格式。
+    后缀只有一个候选时自动确定；多个候选（Commodore）时不带选择直接报错，
+    需要走 `resolve_game_type()` 并由用户指定类型。
     """
-    game_type = game_type_of_extension(Path(filename or "").suffix.lower())
-    if game_type is None:
+    return resolve_game_type(Path(filename or "").suffix.lower())
+
+
+def require_body_type_for_current(extension: str, current: str) -> str:
+    """换本体：只要当前类型在该后缀的候选集内就接受（多候选后缀也能正常换本）。"""
+    candidates = game_types_of_extension(extension)
+    if not candidates:
         allowed = "、".join(allowed_body_extensions())
         raise ValidationError(f"无法识别的游戏文件格式，仅支持 {allowed}。")
-    return game_type
+    if current not in candidates:
+        raise _body_type_mismatch(current, candidates)
+    return current
 
 
-def _body_type_mismatch(current: str, detected: str) -> ValidationError:
-    """换本体时新文件与游戏当前类型不一致的中文错误（类型创建后不可变）。"""
+def validate_game_type(raw: str) -> str:
+    """校验一个类型键是否可上传/可落库（flash / h5 / 可玩机种）。"""
+    value = (raw or "").strip()
+    if not value:
+        raise ValidationError("请选择游戏类型。")
+    if value not in _GAME_TYPE_EXTENSIONS:
+        raise ValidationError("不支持的游戏类型。")
+    return value
+
+
+def bios_descriptor(game_type: str) -> dict | None:
+    """一个类型的 BIOS 元数据；没有 BIOS 需求返回 None。
+
+    `/status.types[]` 与游戏列表条目共用这一份，播放页不必依赖状态接口。
+    """
+    platform = PLATFORM_BY_ID.get(game_type or "")
+    spec = platform.bios if platform else None
+    if spec is None:
+        return None
+    return {
+        "file": spec.file,
+        "required_files": list(spec.required_files),
+        "optional": spec.optional,
+    }
+
+
+def game_type_descriptors() -> list[dict]:
+    """`/status` 用的类型元数据，顺序与 `GAME_TYPES` 一致。
+
+    前端据此渲染下拉、上传 accept 与类型提示，不再自己维护镜像表。
+    """
+    descriptors: list[dict] = []
+    for game_type in GAME_TYPES:
+        if game_type == GAME_TYPE_FLASH:
+            kind = "flash"
+        elif game_type == GAME_TYPE_H5:
+            kind = "h5"
+        else:
+            kind = "emulator"
+        descriptors.append(
+            {
+                "id": game_type,
+                "label": GAME_TYPE_LABELS[game_type],
+                "kind": kind,
+                "extensions": sorted(_GAME_TYPE_EXTENSIONS[game_type]),
+                "default_extension": _DEFAULT_EXTENSIONS[game_type],
+                "bios": bios_descriptor(game_type),
+                # 线程核（PSP / DOS）：播放页据此给宿主页传 threads=1
+                "threads": platform_threads(game_type),
+                # 多文件本体：前端据此决定文件框是否多选、accept 与类型候选
+                "multi_file": bool(platform_bundle_extensions(game_type)),
+                "bundle_extensions": list(platform_bundle_extensions(game_type)),
+                "bundle_entries": list(platform_bundle_entries(game_type)),
+                "upload_extensions": list(
+                    platform_upload_extensions(game_type)
+                    or sorted(_GAME_TYPE_EXTENSIONS[game_type])
+                ),
+            }
+        )
+    return descriptors
+
+
+def extension_candidates() -> dict[str, list[str]]:
+    """后缀 → 候选类型（顺序即 `GAME_TYPES` 顺序），供前端创建时弹下拉。"""
+    result: dict[str, list[str]] = {}
+    for game_type in GAME_TYPES:
+        for extension in sorted(_GAME_TYPE_EXTENSIONS[game_type]):
+            result.setdefault(extension, []).append(game_type)
+    return result
+
+
+def default_game_types_by_extension() -> dict[str, str]:
+    """后缀 → 默认类型（先看 `.zip` 覆盖表，再取词表默认机种，最后取候选第 1 个）。"""
+    result: dict[str, str] = {}
+    for extension, candidates in extension_candidates().items():
+        override = _DEFAULT_GAME_TYPES_BY_EXTENSION.get(extension)
+        if override in candidates:
+            result[extension] = override
+            continue
+        platform = default_playable_platform_for_extension(extension)
+        result[extension] = platform.id if platform else candidates[0]
+    return result
+
+
+def _body_type_mismatch(current: str, detected: str | Sequence[str]) -> ValidationError:
+    """换本体时新文件与游戏当前类型不一致的中文错误。"""
     current_label = GAME_TYPE_LABELS.get(current, current)
-    detected_label = GAME_TYPE_LABELS.get(detected, detected)
+    detected_labels = (
+        _type_labels([detected]) if isinstance(detected, str) else _type_labels(detected)
+    )
     allowed = "、".join(sorted(_GAME_TYPE_EXTENSIONS.get(current, ())))
     suffix = f"（支持 {allowed}）" if allowed else ""
     return ValidationError(
         f"该游戏的本体类型是「{current_label}」，只能更换同一游戏类型的本体{suffix}；"
-        f"上传的文件是「{detected_label}」，类型不一致，已拒绝。"
+        f"上传的文件属于{detected_labels}，类型不一致，已拒绝。"
     )
 
 
@@ -196,15 +395,12 @@ _WINDOWS_RESERVED_NAMES = archive.WINDOWS_RESERVED_NAMES
 _CARTRIDGE_ID_RE = re.compile(CARTRIDGE_ID_PATTERN)
 
 
-def normalize_cartridge_id(raw: str) -> str:
-    """卡带ID 的**比对归一**：去首尾空白 + 转大写。只归一，不校验、不抛异常。
-
-    落库（`validate_cartridge_id`）与榜单关联（`map_for_cartridge_ids`）共用它，
-    保证「库里存的大写」与「拿来比对的大写」永远是同一行代码。
-    外面来的文本（榜单 CSV 的卡带 ID 列）可能有空格、小写、甚至根本不是合法卡带ID，
-    所以这里**绝不能**换成 `validate_cartridge_id()`——它会 raise，把只读的榜单接口打挂。
-    """
-    return (raw or "").strip().upper()
+def _like_pattern(text: str) -> str:
+    """把用户输入转成 LIKE 字面量：`%` / `_` / `\\` 不当通配符。"""
+    escaped = (
+        text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    )
+    return f"%{escaped}%"
 
 
 def validate_cartridge_id(raw: str) -> str:
@@ -288,12 +484,17 @@ def sanitize_game_name(raw: str, *, fallback: str = "未命名游戏") -> str:
 
 @dataclass(frozen=True)
 class GameUpload:
-    """一次上传的输入：文件名决定游戏类型与落盘后缀，流由调用方负责关闭。"""
+    """一次上传的输入：文件名决定游戏类型与落盘后缀，流由调用方负责关闭。
+
+    `source` 区分本地浏览器上传（`local`）与服务端自己打开的文件（`server`，
+    网络直链/搬运）：只有本地单文件本体受 30MB 阈值约束，超过时要走分片上传。
+    """
 
     filename: str
     stream: BinaryIO
     size: int
     mime: str | None
+    source: str = "local"
 
 
 @dataclass(frozen=True)
@@ -318,10 +519,11 @@ def play_path(game_type: str, game_id: int) -> str:
 
 @dataclass(frozen=True)
 class GameLink:
-    """一条「榜单行 → 平台库存游戏」的关联结果：游戏 id 与它的播放页路径。"""
+    """一条「榜单行 → 平台库存游戏」的关联结果：游戏 id、播放页路径与是否有本体。"""
 
     game_id: int
     path: str
+    has_body: bool = True
 
 
 @dataclass(frozen=True)
@@ -340,10 +542,17 @@ class GameItem:
     updated_at: datetime
     # ""（没有攻略）/ "zip"（静态站点）/ "pdf"
     guide_kind: str = ""
+    # 是否命中 game.db 的榜单（由 make index 全量对账、增删改增量维护）
+    in_ranking: bool = False
 
     @property
     def path(self) -> str:
         return play_path(self.game_type, self.id)
+
+    @property
+    def body_kind(self) -> str:
+        """`bundle` = 多文件本体（body/ 布局），`file` = 单个 game.{ext}。"""
+        return "bundle" if paths.is_bundle_body(self.game_path) else "file"
 
 
 @dataclass(frozen=True)
@@ -382,12 +591,21 @@ def _manage_order_clauses() -> tuple:
 
 class GameService:
     def __init__(
-        self, session: Session, storage: StorageBackend, runtime_storage: StorageBackend
+        self,
+        session: Session,
+        storage: StorageBackend,
+        runtime_storage: StorageBackend,
+        *,
+        game_index_path: Path | None = None,
+        database_path: Path | None = None,
     ) -> None:
         self._session = session
         self._storage = storage  # 数据根：本体/封面/图集/两个 zip
         self._runtime_storage = runtime_storage  # 运行时根：H5 与攻略的解包产物
         self._assets = RuntimeAssets(storage, runtime_storage)
+        # 生产环境注入两个库路径；直接构造（老测试）不传就跳过榜单标记同步
+        self._game_index_path = game_index_path
+        self._database_path = database_path
 
     def _storage_root(self) -> str | None:
         """数据根的绝对路径，只用来算 Windows 的完整路径长度（见 `archive.ensure_path_fits`）。
@@ -398,10 +616,30 @@ class GameService:
         root = getattr(self._storage, "root", None)
         return str(root) if root is not None else None
 
+    def _ranking_ids_for(self, raw_ids: Sequence[str]) -> dict[str, int]:
+        """查映射表；game.db 缺失/过旧时返回空，不阻断游戏操作。"""
+        if self._game_index_path is None:
+            return {}
+        try:
+            return ranking_flags.read_ranking_ids(self._game_index_path, raw_ids) or {}
+        except Exception as exc:  # noqa: BLE001 - 标记是派生数据，失败只记日志
+            logger.warning("读取榜单标记失败（不影响游戏操作）：%s", exc)
+            return {}
+
+    def _refresh_ranking_flags(self, raw_ids: Sequence[str]) -> None:
+        if self._game_index_path is None or self._database_path is None:
+            return
+        try:
+            ranking_flags.refresh_ranking_flags(
+                self._database_path, self._game_index_path, raw_ids
+            )
+        except Exception as exc:  # noqa: BLE001 - 标记失败不影响主操作
+            logger.warning("同步榜单库存标记失败（不影响游戏操作）：%s", exc)
+
     def list_center(self) -> list[GameItem]:
+        """游戏中心列表：包含尚未上传本体的条目（前端据此弹「请先上传游戏本体」）。"""
         rows = self._session.exec(
             select(Game)
-            .where(Game.game_path != "")
             .order_by(*_game_order_clauses())
         ).all()
         return [self._to_item(row) for row in rows]
@@ -409,8 +647,7 @@ class GameService:
     def list_recent(self, user_id: int, *, limit: int = RECENT_LIMIT_DEFAULT) -> list[GameItem]:
         """当前用户最近玩过的游戏，按最近一次开玩时间倒序。
 
-        只返回仍可游玩的条目（game_path != ''），与中心列表口径一致：本体被清空或
-        游戏已删的记录不该出现在 rail 里。
+        不按有无本体过滤：最近游玩与统计一样，覆盖只登记信息、尚未补传本体的条目。
         """
         # 越界值在这里收敛而不是靠 Query(ge=, le=)：参数校验失败走 FastAPI 的 422，
         # 会绕开本仓库统一的 {ok, message} 错误信封（同 settings_router 的处理）。
@@ -418,7 +655,7 @@ class GameService:
         rows = self._session.exec(
             select(Game)
             .join(GameRecentPlay, GameRecentPlay.game_id == Game.id)
-            .where(GameRecentPlay.user_id == user_id, Game.game_path != "")
+            .where(GameRecentPlay.user_id == user_id)
             # 同一时刻记两条时用 id 兜底，保证顺序稳定（与 _game_order_clauses 同思路）
             .order_by(col(GameRecentPlay.played_at).desc(), col(GameRecentPlay.id).desc())
             .limit(limit)
@@ -433,11 +670,11 @@ class GameService:
         与落库时的大写形式对齐。**键是原样回传的入参字符串**——调用方 `links.get(原始ID)`
         就完事，不必知道这条归一规则；没命中的入参不出现在结果里。
 
-        只认**有本体**的游戏（`game_path != ''`），与 `list_center` / `list_recent` 同口径：
-        没有本体的条目点进去只会 404，不该给链接。
+        不区分有无本体：无本体条目同样返回关联（`has_body=False`），由前端决定
+        是进播放页还是提示先上传。
 
-        不分块：榜单一个机种最多 100 行、每行最多 2 个卡带ID（见 `search_index._RANKING_ID_SPLIT`），
-        也就是最多 200 个宿主参数，离 SQLite 的 999 还差一个数量级。
+        不分块：调用方（榜单 service）会把每批压到 `_CARTRIDGE_LOOKUP_CHUNK`（500）以内，
+        低于 SQLite 老版本的 999 宿主参数上限；本方法自身不再分批。
         """
         # 归一后的 ID -> 原样入参（可能多个入参归一到同一个 ID，都要能查到）
         wanted: dict[str, list[str]] = {}
@@ -449,13 +686,17 @@ class GameService:
             return {}
         rows = self._session.exec(
             select(Game)
-            .where(col(Game.cartridge_id).in_(list(wanted)), Game.game_path != "")
+            .where(col(Game.cartridge_id).in_(list(wanted)))
             # 卡带ID 有唯一索引，正常只会有一行；老库若缺索引（create_all 不补索引）就按 id 取第一条
             .order_by(col(Game.id))
         ).all()
         links: dict[str, GameLink] = {}
         for row in rows:
-            link = GameLink(game_id=row.id, path=play_path(row.game_type, row.id))
+            link = GameLink(
+                game_id=row.id,
+                path=play_path(row.game_type, row.id),
+                has_body=bool(row.game_path),
+            )
             for raw in wanted.get(row.cartridge_id, ()):
                 links[raw] = link
         return links
@@ -463,7 +704,7 @@ class GameService:
     def mark_played(self, user_id: int, game_id: int) -> None:
         """记录一次开玩：没有则插入，已有则刷新 played_at（一个游戏只留一行）。"""
         row = self._session.get(Game, game_id)
-        if row is None or not row.game_path:
+        if row is None:
             raise NotFoundError("游戏不存在。")
         try:
             self._touch_play(user_id, game_id)
@@ -490,6 +731,7 @@ class GameService:
         *,
         game_type: str | None = None,
         keyword: str | None = None,
+        in_ranking: bool | None = None,
         page: int = 1,
         page_size: int = MANAGE_PAGE_SIZE_DEFAULT,
     ) -> ManagePage:
@@ -498,7 +740,7 @@ class GameService:
         越界参数在这里收敛而不是靠 Query(ge=, le=)：参数校验失败走 FastAPI 的 422，
         会绕开本仓库统一的 {ok, message} 错误信封（同 list_recent 与 search_service 的处理）。
 
-        页码越界**不算错误**：items 空、total 照给，页码收敛交给前端（与检索页同一口径）。
+        页码越界**不算错误**：items 空、total 照给，页码收敛交给前端（与游戏名录页同一口径）。
         """
         page = max(1, int(page or 1))
         page_size = max(1, min(int(page_size or MANAGE_PAGE_SIZE_DEFAULT), MANAGE_PAGE_SIZE_MAX))
@@ -506,10 +748,13 @@ class GameService:
         filters = []
         if game_type:
             filters.append(col(Game.game_type) == game_type)
+        if in_ranking is not None:
+            filters.append(col(Game.in_ranking) == in_ranking)
         if keyword:
-            pattern = f"%{keyword.strip()}%"
+            pattern = _like_pattern(keyword.strip())
             filters.append(
-                (col(Game.name).like(pattern)) | (col(Game.description).like(pattern))
+                (col(Game.name).like(pattern, escape="\\"))
+                | (col(Game.description).like(pattern, escape="\\"))
             )
 
         # 总数单独查一条：带上同一套 where，否则 total 会变成全表数
@@ -547,60 +792,173 @@ class GameService:
         body_url: str = "",
         body_game_type: str = "",
         cover_url: str = "",
+        staged: StagedUpload | None = None,
+        staged_files: list[StagedUpload] | None = None,
     ) -> GameItem:
         """新建游戏：本体与封面一次入库，任一步失败即整体回滚。
 
-        卡带ID 必填、创建后不可改（只能删掉重建）；本体/封面各自可以是本地文件
-        （`body`/`cover`）或网络直链（`*_url`），走直链时先下到临时目录再走同一条
-        上传管线，原始文件名不落盘。
+        卡带ID 必填、创建后不可改（只能删掉重建）；本体可选：不给本体时按
+        `body_game_type` 直接建条目（大小 / CRC / 本体路径留空），之后再通过编辑补传。
+        本体/封面各自可以是本地文件（`body`/`cover`）、网络直链（`*_url`）、已完成
+        分片上传的单个暂存本体（`staged`）或一组暂存文件（`staged_files`，多文件本体）。
+        走直链时先下到临时目录再走同一条上传管线，原始文件名不落盘。
 
-        **不接受封面类型**：新建一律留空，只有编辑弹框手动选或美化封面时才落值。
+        封面类型不在创建时写入，建好后由编辑弹框或「美化封面」设置。
+
+        本体类型由「后缀候选集 + `body_game_type`」确定：后缀只有一个候选时可以不传；
+        Commodore 这种多候选后缀必须由用户选。多文件本体以用户选的类型为准，
+        后缀只用于校验与入口选择。
         """
         cartridge_id = validate_cartridge_id(cartridge_id)
         self._ensure_cartridge_free(cartridge_id)
+        if staged is not None and staged_files:
+            raise ValidationError("请只选择一种本体上传方式。")
+        uploads = list(staged_files or ())
+        if staged is not None:
+            uploads = [staged]
+        bundle: BodyBundle | None = None
+        if uploads:
+            staged = None
+            if body is not None or body_url:
+                raise ValidationError("请只选择一种本体上传方式。")
+            if self._should_use_bundle(uploads):
+                game_type = (body_game_type or "").strip() or self._infer_bundle_game_type(
+                    uploads
+                )
+                bundle = self._prepare_bundle(uploads, game_type)
+            else:
+                if len(uploads) != 1:
+                    raise ValidationError("请只选择一种本体上传方式。")
+                staged = uploads[0]
+                game_type = resolve_game_type(
+                    Path(staged.filename or "").suffix.lower(), body_game_type
+                )
+        elif body is not None:
+            game_type = resolve_game_type(
+                Path(body.filename or "").suffix.lower(), body_game_type
+            )
+        elif body_url:
+            # 直链在下载前就把类型定下来：看得出后缀就按候选校验，看不出则允许用户任选
+            game_type = resolve_game_type(
+                _remote_extension(body_url),
+                body_game_type,
+                allow_unknown_extension=True,
+            )
+        else:
+            # 无本体：类型只能由用户显式选择（没有后缀可供推断）
+            game_type = validate_game_type(body_game_type)
         if not (body_url or cover_url):
-            if body is None:
-                raise ValidationError("请选择本体文件或填写本体下载地址。")
             return self._create(
                 name,
                 description,
                 body,
                 cover,
                 cartridge_id=cartridge_id,
+                game_type=game_type,
+                staged=staged,
+                bundle=bundle,
             )
         # 下载来的文件要在整个上传期间保持可读，所以临时目录与句柄都包住 _create
         with tempfile.TemporaryDirectory(prefix="x-game-fetch-") as tmp:
             with ExitStack() as stack:
                 work = Path(tmp)
                 if body is None and body_url:
-                    body = self._remote_body(stack, work / "body", body_url, body_game_type)
+                    body = self._remote_body(stack, work / "body", body_url, game_type)
                 if cover is None and cover_url:
                     cover = self._remote_cover(stack, work / "cover", cover_url)
-                if body is None:
-                    raise ValidationError("请选择本体文件或填写本体下载地址。")
                 return self._create(
                     name,
                     description,
                     body,
                     cover,
                     cartridge_id=cartridge_id,
+                    game_type=game_type,
+                    staged=staged,
+                    bundle=bundle,
                 )
+
+    def _prepare_bundle(
+        self, uploads: list[StagedUpload], game_type: str
+    ) -> BodyBundle:
+        """把一组暂存文件校验成多文件本体计划；类型必须支持 bundle。"""
+        platform = PLATFORM_BY_ID.get(game_type or "")
+        if platform is None or not platform.bundle_extensions:
+            raise ValidationError("当前游戏类型不支持多文件本体。")
+        files = tuple(
+            StagedBundleFile(
+                name=normalize_bundle_name(upload.filename),
+                size=upload.size,
+                upload_id=upload.upload_id,
+            )
+            for upload in uploads
+        )
+        return build_bundle(files, platform, self._read_staged_manifest_text)
+
+    def _should_use_bundle(self, uploads: list[StagedUpload]) -> bool:
+        """一个文件时看后缀是否只属于多文件包（cue/bin/m3u）；多个文件一律走 bundle。"""
+        if len(uploads) > 1:
+            return True
+        if not uploads:
+            return False
+        extension = normalize_extension(Path(uploads[0].filename or "").suffix)
+        return extension in all_bundle_extensions() and extension not in set(
+            all_body_extensions()
+        )
+
+    def _infer_bundle_game_type(self, uploads: list[StagedUpload]) -> str:
+        """没显式选类型时，按「所有文件都在该机种的包内白名单里」求唯一候选。"""
+        extensions = {
+            normalize_extension(Path(upload.filename or "").suffix)
+            for upload in uploads
+        }
+        candidates = [
+            platform
+            for platform in bundle_platforms()
+            if extensions
+            <= {
+                normalize_extension(ext)
+                for ext in platform.bundle_extensions
+            }
+        ]
+        if len(candidates) == 1:
+            return candidates[0].id
+        if not candidates:
+            raise ValidationError("所选文件与任何支持多文件的游戏类型都不匹配。")
+        raise ValidationError("请选择游戏类型。")
+
+    def _read_staged_manifest_text(self, file: StagedBundleFile) -> bytes:
+        """读取暂存的 cue / m3u；超过上限直接拒绝。"""
+        stream = self._storage.open_download(paths.upload_part_path(file.upload_id))
+        try:
+            payload = stream.read(MAX_MANIFEST_TEXT_BYTES + 1)
+        finally:
+            stream.close()
+        if len(payload) > MAX_MANIFEST_TEXT_BYTES:
+            raise ValidationError(f"清单文件过大：{file.name}")
+        return payload
 
     def _create(
         self,
         name: str,
         description: str,
-        body: GameUpload,
+        body: GameUpload | None,
         cover: GameUpload | None = None,
         *,
         cartridge_id: str,
+        game_type: str,
+        staged: StagedUpload | None = None,
+        bundle: BodyBundle | None = None,
     ) -> GameItem:
-        """建条目并上传本体（可选封面）：类型由本体文件名判定，封面类型留空。"""
+        """建条目并上传本体（可选封面）：类型已在 `create()` 里判定。
+
+        本体可以缺失（只登记信息、稍后补传），此时 `size` / `crc32` / `game_path`
+        保持模型默认的空值，条目照常进入列表与统计。
+        """
         name = validate_game_name(name)
         description = validate_description(description)
-        game_type = detect_game_type(body.filename)
         self._ensure_name_free(game_type, name)
         now = datetime.now(timezone.utc)
+        ranking_ids = self._ranking_ids_for([cartridge_id])
         row = Game(
             name=name,
             cartridge_id=cartridge_id,
@@ -608,12 +966,19 @@ class GameService:
             game_type=game_type,
             created_at=now,
             updated_at=now,
+            in_ranking=bool(ranking_ids),
         )
         self._session.add(row)
         self._session.commit()
         self._session.refresh(row)
+        self._refresh_ranking_flags([cartridge_id])
         try:
-            self.upload_asset(row.id, kind="game", upload=body)
+            if bundle is not None:
+                self._commit_staged_bundle(row, bundle)
+            elif staged is not None:
+                self._commit_staged_asset(row, staged)
+            elif body is not None:
+                self.upload_asset(row.id, kind="game", upload=body)
             if cover is not None:
                 self.upload_asset(row.id, kind="cover", upload=cover)
         except Exception:
@@ -671,8 +1036,10 @@ class GameService:
 
         moves = self._plan_cartridge_rename(row, new_id)
         old_id = row.cartridge_id
+        new_ranking_ids = self._ranking_ids_for([new_id])
         done = self._move_dirs_for_rename(moves)
         row.cartridge_id = new_id
+        row.in_ranking = bool(new_ranking_ids)
         row.updated_at = datetime.now(timezone.utc)
         self._session.add(row)
         try:
@@ -683,10 +1050,142 @@ class GameService:
             self._rollback_dirs_for_rename(done)
             raise ValidationError(f"卡带 ID「{new_id}」已经被占用，换一个吧。") from None
         self._session.refresh(row)
+        self._refresh_ranking_flags([old_id, new_id])
         # 解包产物按卡带ID 分目录，改完名旧的那份作废（下次访问自动重新解包）。
         # 数据根那棵树已经被 move_tree 搬走了，这里只管运行时根。
         self._assets.drop_tree(paths.game_dir(row.game_type, old_id))
         return self._to_item(row)
+
+    def change_game_type(self, game_id: int, game_type: str) -> GameItem:
+        """改游戏类型：游戏目录与各账号的存档/截图目录一起迁到新类型下。
+
+        类型是路径的一级目录，所以这是一次**显式迁移**，与改卡带ID 同一套做法：
+        先校验、查重、算清目录清单并把行里的路径改成新值，再搬目录
+        （中途失败按相反顺序搬回来），最后提交。
+
+        目标类型必须属于当前本体后缀的候选集；唯一候选的后缀因此不能改类型。
+        """
+        row = self._session.get(Game, game_id)
+        if row is None:
+            raise NotFoundError("游戏不存在。")
+        target = validate_game_type(game_type)
+        if target == row.game_type:
+            # 没变就是空操作：不碰磁盘，也不刷 updated_at
+            return self._to_item(row)
+        if not row.game_path:
+            raise ValidationError("该游戏还没有本体，不能修改类型。")
+        if paths.is_bundle_body(row.game_path):
+            raise ValidationError("多文件本体不支持修改游戏类型，请删除后重新上传。")
+        extension = Path(row.game_path).suffix.lower()
+        if extension == ".zip":
+            # 同一个 ZIP 在 HTML5 / DOS / 街机里含义完全不同；迁移只会得到打不开的游戏。
+            raise ValidationError(
+                "ZIP 本体在 HTML5、DOS 与街机之间含义不同，不支持修改类型，"
+                "请删除后重新上传。"
+            )
+        candidates = game_types_of_extension(extension)
+        if target not in candidates:
+            raise ValidationError(
+                f"该游戏的本体后缀 {extension} 只支持{_type_labels(candidates)}，"
+                f"不能改成「{GAME_TYPE_LABELS[target]}」。"
+            )
+        self._ensure_name_free(target, row.name, exclude_id=row.id)
+
+        old_type = row.game_type
+        cartridge_id = row.cartridge_id
+        old_dir = paths.game_dir_of(row.game_path, cartridge_id) or paths.game_dir(
+            old_type, cartridge_id
+        )
+        new_dir = paths.game_dir(target, cartridge_id)
+
+        moves = self._plan_type_moves(row, target, old_dir, new_dir)
+        done = self._move_dirs_for_rename(moves)
+        try:
+            self._apply_type_change(row, target)
+            self._session.add(row)
+            self._session.commit()
+        except IntegrityError:
+            # 并发下目标类型里刚有人占了同名：唯一索引兜底，磁盘搬回去、行不留痕
+            self._session.rollback()
+            self._rollback_dirs_for_rename(done)
+            raise ValidationError(
+                f"「{GAME_TYPE_LABELS[target]}」下已经有叫「{row.name}」的游戏了，换个名字吧。"
+            ) from None
+        except Exception:
+            self._session.rollback()
+            self._rollback_dirs_for_rename(done)
+            raise
+        self._session.refresh(row)
+        # 解包产物按类型分目录，旧类型的那份作废（下次访问按新类型重新解包）。
+        # 数据根那棵树已经被 move_tree 搬走了，这里只管运行时根。
+        self._assets.drop_tree(old_dir)
+        return self._to_item(row)
+
+    def _plan_type_moves(
+        self, row: Game, target: str, old_dir: str, new_dir: str
+    ) -> list[_CartridgeMove]:
+        """算清改类型要搬哪些目录；源目录一律从 `file_path` 反推，不按当前类型硬拼。"""
+        moves: list[_CartridgeMove] = []
+        seen: set[str] = set()
+        targets: dict[str, str] = {}
+
+        def add(source: str | None, destination: str | None) -> None:
+            if not source or not destination or source == destination or source in seen:
+                return
+            seen.add(source)
+            if destination in targets and targets[destination] != source:
+                raise ValidationError(
+                    f"改类型会把「{source}」和「{targets[destination]}」合并到同一目录"
+                    f"「{destination}」，请先手工整理这两个目录再重试。"
+                )
+            targets[destination] = source
+            self._fit_type_path(source)
+            self._fit_type_path(destination)
+            moves.append(_CartridgeMove(source=source, target=destination))
+
+        add(old_dir, new_dir)
+        for asset in (*self._snapshot_file_rows(row.id), *self._screenshot_rows(row.id)):
+            source = paths.scoped_dir_of(asset.file_path, row.cartridge_id)
+            add(source, paths.retarget_game_type(source, target) if source else None)
+
+        # 运行时根的新目录也先算长度，免得搬完才在解包时撞长度上限
+        for maker in (paths.h5_dir, paths.guide_dir):
+            self._fit_type_path(maker(target, row.cartridge_id), root=self._assets.root())
+        return moves
+
+    def _apply_type_change(self, row: Game, target: str) -> None:
+        """把行与各资产路径列里的类型段改成新类型（只改内存，提交由调用方负责）。"""
+        row.game_type = target
+        row.updated_at = datetime.now(timezone.utc)
+        for attr in ("game_path", "cover_path"):
+            value = getattr(row, attr)
+            if value:
+                setattr(row, attr, self._fit_type_path(paths.retarget_game_type(value, target)))
+        for asset in self._gallery_rows(row.id):
+            if asset.file_path:
+                asset.file_path = self._fit_type_path(
+                    paths.retarget_game_type(asset.file_path, target)
+                )
+                self._session.add(asset)
+        for asset in (*self._snapshot_file_rows(row.id), *self._screenshot_rows(row.id)):
+            if asset.file_path:
+                asset.file_path = self._fit_type_path(
+                    paths.retarget_game_type(asset.file_path, target)
+                )
+                self._session.add(asset)
+        # 新类型不支持美化封面，或现有样式不在新类型里，就清空（封面文件随目录搬走）
+        if row.cover_type and row.cover_type not in cover_types_for(target):
+            row.cover_type = None
+
+    def _fit_type_path(self, value: str, *, root: str | None = None) -> str:
+        """改类型后的路径过一遍 Windows 总长守卫，原样返回。"""
+        archive.ensure_path_fits(
+            root if root is not None else self._storage_root(),
+            value,
+            where="改类型后",
+            hint="或把卡带 ID 改短一点",
+        )
+        return value
 
     def _plan_cartridge_rename(self, row: Game, new_id: str) -> list[_CartridgeMove]:
         """算清这次改名要搬哪些目录，并把行里所有引用旧卡带ID 的路径改成新值。
@@ -806,6 +1305,7 @@ class GameService:
         row = self._session.get(Game, game_id)
         if row is None:
             raise NotFoundError("游戏不存在。")
+        old_cartridge_id = row.cartridge_id
         recent_rows = self._recent_rows(row.id)
         stat_rows = self._stat_rows(row.id)
         snapshot_rows = self._snapshot_rows(row.id)
@@ -842,6 +1342,7 @@ class GameService:
             self._session.delete(stat)
         self._session.delete(row)
         self._session.commit()
+        self._refresh_ranking_flags([old_cartridge_id])
         for directory in save_dirs | image_dirs:
             self._safe_remove_tree(directory)
 
@@ -854,6 +1355,15 @@ class GameService:
         except StorageError:
             pass
 
+    def _delete_storage_tree(self, key: str | None) -> None:
+        """删一棵目录；失败只吞掉，不影响主流程（调用方已经拿到想要的结果）。"""
+        if not key:
+            return
+        try:
+            self._storage.remove_tree(key)
+        except StorageError:
+            pass
+
     def upload_asset(
         self,
         game_id: int,
@@ -863,18 +1373,47 @@ class GameService:
         url: str = "",
         game_type: str = "",
         cover_type: str = "",
+        staged: StagedUpload | None = None,
+        staged_files: list[StagedUpload] | None = None,
     ) -> GameItem:
         """一步完成：校验类型/后缀 → 分块上传 → 更新行 → 删旧对象。
 
-        换本体只接受与游戏当前 `game_type` 相同的本体（类型创建后不可变），成功后
+        换本体只接受与游戏当前 `game_type` 相同的本体（改类型走 `change_game_type()`），成功后
         重算并覆盖 `crc32`/`size`/`game_path`；失败整体回滚，旧档不动。
-        来源可以是本地文件（`upload`）或网络直链（`url`，本体要带上 `game_type`）。
+        来源可以是本地文件（`upload`）、网络直链（`url`，本体要带上 `game_type`）、
+        已完成分片上传的单个暂存本体（`staged`）或一组暂存文件（`staged_files`，
+        多文件本体），后两者只支持 kind="game"。
 
         `cover_type` 只在 kind="cover" 且非空时生效——美化封面时把所选样式 id 与
         封面文件一次写进去（分两步会有「封面换了、类型没跟上」的中间态）。
         """
         if kind not in ("game", "cover"):
             raise ValidationError("无效的上传类型。")
+        if staged is not None and staged_files:
+            raise ValidationError("请只选择一种上传方式。")
+        sources = (
+            int(upload is not None)
+            + int(bool(url))
+            + int(staged is not None)
+            + int(bool(staged_files))
+        )
+        if sources > 1:
+            raise ValidationError("请只选择一种上传方式。")
+        uploads = list(staged_files or ())
+        if staged is not None:
+            uploads = [staged]
+        if uploads:
+            if kind != "game":
+                raise ValidationError("只有游戏本体支持分片上传。")
+            row = self._session.get(Game, game_id)
+            if row is None:
+                raise NotFoundError("游戏不存在。")
+            if self._should_use_bundle(uploads):
+                bundle = self._prepare_bundle(uploads, row.game_type)
+                return self._commit_staged_bundle_now(game_id, bundle)
+            if len(uploads) != 1:
+                raise ValidationError("请只选择一种上传方式。")
+            return self._commit_staged_now(game_id, uploads[0])
         if not url:
             if upload is None:
                 raise ValidationError("请选择要上传的文件或填写下载地址。")
@@ -909,6 +1448,26 @@ class GameService:
             raise NotFoundError("游戏不存在。")
         try:
             return self._upload_asset(row, kind=kind, upload=upload, cover_type=cover_type)
+        except Exception:
+            self._session.rollback()
+            raise
+
+    def _commit_staged_now(self, game_id: int, staged: StagedUpload) -> GameItem:
+        row = self._session.get(Game, game_id)
+        if row is None:
+            raise NotFoundError("游戏不存在。")
+        try:
+            return self._commit_staged_asset(row, staged)
+        except Exception:
+            self._session.rollback()
+            raise
+
+    def _commit_staged_bundle_now(self, game_id: int, bundle: BodyBundle) -> GameItem:
+        row = self._session.get(Game, game_id)
+        if row is None:
+            raise NotFoundError("游戏不存在。")
+        try:
+            return self._commit_staged_bundle(row, bundle)
         except Exception:
             self._session.rollback()
             raise
@@ -949,12 +1508,19 @@ class GameService:
         extension = Path(filename).suffix.lower()
         if upload.size is None or upload.size <= 0:
             raise ValidationError("文件大小无效。")
+        if kind == "game" and extension in _BUNDLE_ONLY_EXTENSIONS:
+            raise ValidationError(
+                "该格式需要作为多文件本体上传：请一次选择 cue 与它引用的 bin，"
+                "或选择 m3u / 多个分盘文件。"
+            )
+        if kind == "game" and upload.source == "local" and upload.size > SINGLE_FILE_MAX:
+            limit_mb = SINGLE_FILE_MAX // (1024 * 1024)
+            raise ValidationError(f"本体超过 {limit_mb} MB，请使用分片上传。")
         crc32 = ""
         if kind == "game":
-            # 类型创建后不可变：先按扩展名判类型，跨类型时连流都不读、旧档不动
-            detected = detect_game_type(filename)
-            if detected != row.game_type:
-                raise _body_type_mismatch(row.game_type, detected)
+            # 换本体不改变类型：只看当前类型是否在该后缀的候选集内
+            # （Commodore 的 .d64 有 5 个候选，当前是哪个就仍用哪个）
+            require_body_type_for_current(extension, row.game_type)
             # 同类型才算摘要；它只是当前本体的记录，不再作为更换的锁
             crc32 = _crc32_stream(upload.stream)
             _rewind(upload.stream)
@@ -962,7 +1528,16 @@ class GameService:
                 return self._upload_h5_zip(
                     row, stream=upload.stream, size=upload.size, mime=upload.mime, crc32=crc32
                 )
-            path = paths.body_path(row.game_type, row.cartridge_id, extension)
+            if row.game_type == GAME_TYPE_ARCADE:
+                # FBNeo 用文件名匹配 romset，不能统一改名 game.zip
+                romset = PurePosixPath(filename.replace("\\", "/")).name
+                path = paths.named_body_path(
+                    row.game_type,
+                    row.cartridge_id,
+                    normalize_romset_name(romset),
+                )
+            else:
+                path = paths.body_path(row.game_type, row.cartridge_id, extension)
         elif kind == "cover":
             if extension not in _COVER_EXTENSIONS:
                 raise ValidationError("封面仅支持 jpg、png、gif、webp 图片。")
@@ -973,13 +1548,10 @@ class GameService:
         else:
             raise ValidationError("无效的上传类型。")
         self._storage.upload(path, upload.stream, upload.size, upload.mime)
-        old = row.game_path if kind == "game" else row.cover_path
         if kind == "game":
-            row.game_path = path
-            row.size = upload.size
-            row.crc32 = crc32
-        else:
-            row.cover_path = path
+            return self._finish_body(row, path, upload.size, crc32)
+        old = row.cover_path
+        row.cover_path = path
         row.updated_at = datetime.now(timezone.utc)
         self._session.add(row)
         self._session.commit()
@@ -989,10 +1561,282 @@ class GameService:
             self._delete_storage_key(old)
         return self._to_item(row)
 
+    def _finish_body(
+        self, row: Game, path: str, size: int, crc32: str
+    ) -> GameItem:
+        """本体已就位后统一收尾：更新行 → commit → 删旧文件。"""
+        old = row.game_path
+        row.game_path = path
+        row.size = size
+        row.crc32 = crc32
+        row.updated_at = datetime.now(timezone.utc)
+        self._session.add(row)
+        self._session.commit()
+        self._session.refresh(row)
+        if old and old != path:
+            if paths.is_bundle_body(old):
+                # 旧的是多文件本体：整棵 body/ 都要删，不能只删入口
+                self._delete_storage_tree(
+                    paths.body_dir(row.game_type, row.cartridge_id)
+                )
+            else:
+                self._delete_storage_key(old)
+        return self._to_item(row)
+
+    def _commit_staged_asset(self, row: Game, staged: StagedUpload) -> GameItem:
+        """把已上传完的分片文件直接改名成正式本体。
+
+        暂存区与最终目录都在数据根下，`body.part` 改名就是 `os.replace`：
+        不再整包复制。H5 仍按原规则校验 ZIP 清单与包内路径长度。
+        """
+        extension = (staged.extension or "").strip().lower()
+        if not extension:
+            raise ValidationError("请选择要上传的文件。")
+        if extension in _BUNDLE_ONLY_EXTENSIONS:
+            raise ValidationError(
+                "该格式需要作为多文件本体上传：请一次选择 cue 与它引用的 bin，"
+                "或选择 m3u / 多个分盘文件。"
+            )
+        require_body_type_for_current(extension, row.game_type)
+        part = paths.upload_part_path(staged.upload_id)
+        try:
+            info = self._storage.stat(part)
+        except StorageError as exc:
+            raise ValidationError("暂存的本体文件不存在。") from exc
+        if info.size != staged.size:
+            raise ValidationError("暂存的本体文件大小不符。")
+
+        stream = self._storage.open_download(part)
+        try:
+            if row.game_type == GAME_TYPE_H5:
+                self._validate_h5_zip(stream, staged.size, row.game_type, row.cartridge_id)
+            crc32 = _crc32_stream(stream)
+        finally:
+            stream.close()
+
+        if row.game_type == GAME_TYPE_H5:
+            target = paths.h5_zip_path(row.game_type, row.cartridge_id)
+        elif row.game_type == GAME_TYPE_ARCADE:
+            target = paths.named_body_path(
+                row.game_type,
+                row.cartridge_id,
+                normalize_romset_name(staged.filename),
+            )
+        else:
+            target = paths.body_path(row.game_type, row.cartridge_id, extension)
+        if not self._storage.move(part, target):
+            raise ValidationError("暂存的本体文件不存在。")
+        if row.game_type == GAME_TYPE_H5:
+            # 新包已就位：运行时根的旧解包产物作废，下次播放重新解包
+            self._assets.drop_tree(paths.h5_dir(row.game_type, row.cartridge_id))
+        item = self._finish_body(row, target, staged.size, crc32)
+        self._discard_upload_session(staged.upload_id)
+        return item
+
+    def _commit_staged_bundle(self, row: Game, bundle: BodyBundle) -> GameItem:
+        """把一组已上传完的文件落成 `body/` + manifest.json。
+
+        先在同层 `.body-{token}` 里组装并算 CRC，再把旧 `body/` 改名备份、新目录改名就位，
+        最后提交数据库；任何一步失败都按相反顺序还原，旧本体不动。
+        """
+        if row.game_type != bundle.platform_id:
+            raise ValidationError("多文件本体的游戏类型与当前游戏不一致。")
+        entries = {
+            normalize_extension(ext) for ext in platform_bundle_entries(row.game_type)
+        }
+        if bundle.entry_extension not in entries:
+            raise ValidationError("入口文件不能用于当前游戏类型。")
+
+        token = uuid.uuid4().hex[:8]
+        temp_dir = paths.body_temp_dir(row.game_type, row.cartridge_id, token)
+        backup_dir = paths.body_temp_dir(
+            row.game_type, row.cartridge_id, f"old-{token}"
+        )
+        body_dir = paths.body_dir(row.game_type, row.cartridge_id)
+        new_path = paths.body_file_path(
+            row.game_type, row.cartridge_id, bundle.entry_name
+        )
+        old_path = row.game_path
+        had_body = self._storage.dir_exists(body_dir)
+        try:
+            # 1. 暂存文件逐个改名到 .body-{token}/；入口统一改名 game.{ext}
+            for file in bundle.files:
+                source = paths.upload_part_path(file.upload_id)
+                target = paths.body_temp_file_path(
+                    row.game_type,
+                    row.cartridge_id,
+                    token,
+                    bundle.final_name(file),
+                )
+                if not self._storage.move(source, target):
+                    raise ValidationError("暂存的本体文件不存在。")
+            if bundle.generated_m3u is not None:
+                self._storage.upload(
+                    paths.body_temp_file_path(
+                        row.game_type, row.cartridge_id, token, "game.m3u"
+                    ),
+                    BytesIO(bundle.generated_m3u),
+                    len(bundle.generated_m3u),
+                    "text/plain",
+                )
+
+            # 2. 逐个算 CRC，写 manifest；size 与 CRC 都按最终文件来
+            files_payload: list[dict] = []
+            for name, size, _source in bundle.final_files():
+                key = paths.body_temp_file_path(
+                    row.game_type, row.cartridge_id, token, name
+                )
+                files_payload.append(
+                    {"name": name, "size": size, "crc32": self._crc32_key(key)}
+                )
+            files_payload.sort(key=lambda item: item["name"])
+            manifest = {
+                "version": 1,
+                "entry": bundle.entry_name,
+                "files": files_payload,
+            }
+            payload = json.dumps(manifest, ensure_ascii=False, indent=2).encode("utf-8")
+            self._storage.upload(
+                paths.body_temp_file_path(
+                    row.game_type,
+                    row.cartridge_id,
+                    token,
+                    paths.BODY_MANIFEST_NAME,
+                ),
+                BytesIO(payload),
+                len(payload),
+                "application/json",
+            )
+
+            # 3. 旧 body/ 让位、新目录就位
+            if had_body and not self._storage.move_tree(body_dir, backup_dir):
+                raise StorageError("备份旧的多文件本体失败，请检查存储目录。")
+            try:
+                if not self._storage.move_tree(temp_dir, body_dir):
+                    raise StorageError("提交多文件本体失败，请检查存储目录。")
+            except Exception:
+                if had_body:
+                    self._storage.move_tree(backup_dir, body_dir)
+                raise
+
+            # 4. 提交数据库；失败还原目录
+            row.game_path = new_path
+            row.size = bundle.total_size
+            row.crc32 = _bundle_crc32(files_payload)
+            row.updated_at = datetime.now(timezone.utc)
+            self._session.add(row)
+            try:
+                self._session.commit()
+                self._session.refresh(row)
+            except Exception:
+                self._session.rollback()
+                self._storage.move_tree(body_dir, temp_dir)
+                if had_body:
+                    self._storage.move_tree(backup_dir, body_dir)
+                raise
+
+            # 5. 成功后再删旧目录/旧单文件与上传会话
+            if had_body:
+                self._delete_storage_tree(backup_dir)
+            if old_path and old_path != new_path and not paths.is_bundle_body(old_path):
+                self._delete_storage_key(old_path)
+            for file in bundle.files:
+                self._discard_upload_session(file.upload_id)
+            return self._to_item(row)
+        finally:
+            self._delete_storage_tree(temp_dir)
+
+    def _crc32_key(self, key: str) -> str:
+        stream = self._storage.open_download(key)
+        try:
+            return _crc32_stream(stream)
+        finally:
+            stream.close()
+
+    def _discard_upload_session(self, upload_id: str) -> None:
+        try:
+            self._storage.remove_tree(paths.upload_session_dir(upload_id))
+        except StorageError as exc:
+            logger.warning("删除上传暂存目录失败 upload_id=%s：%s", upload_id, exc)
+
     def open_asset(self, path: str):
         if not path:
             raise ValidationError("文件尚未上传。")
         return self._storage.open_download(path)
+
+    def body_manifest(self, row: Game) -> dict:
+        """播放用的多文件清单；单文件本体返回只有入口一条的等价结构。"""
+        key = paths.body_manifest_path(row.game_type, row.cartridge_id)
+        try:
+            stream = self._storage.open_download(key)
+        except StorageError:
+            if paths.is_bundle_body(row.game_path):
+                raise ValidationError("多文件本体清单缺失，请重新上传本体。") from None
+            name = PurePosixPath(row.game_path or "").name
+            if not name:
+                raise ValidationError("游戏文件尚未上传。") from None
+            return {
+                "entry": name,
+                "files": [{"name": name, "size": row.size}],
+                "total_size": row.size,
+            }
+        try:
+            raw = stream.read()
+        finally:
+            stream.close()
+        try:
+            document = json.loads(raw)
+        except (ValueError, TypeError) as exc:
+            raise ValidationError("多文件本体清单损坏，请重新上传本体。") from exc
+        if not isinstance(document, dict):
+            raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+        entry = str(document.get("entry") or "")
+        files = document.get("files")
+        if not entry or not isinstance(files, list) or not files:
+            raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+        cleaned: list[dict] = []
+        for item in files:
+            if not isinstance(item, dict):
+                raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+            name = str(item.get("name") or "")
+            size = item.get("size")
+            if (
+                not name
+                or name != PurePosixPath(name).name
+                or name in (".", "..")
+                or not isinstance(size, int)
+                or size < 0
+            ):
+                raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+            cleaned.append({"name": name, "size": size})
+        names = {item["name"] for item in cleaned}
+        if entry not in names:
+            raise ValidationError("多文件本体清单损坏，请重新上传本体。")
+        return {
+            "entry": entry,
+            "files": cleaned,
+            "total_size": sum(item["size"] for item in cleaned),
+        }
+
+    def open_body_file(self, row: Game, name: str):
+        """打开多文件本体里的一个文件；只允许清单里的安全 basename。"""
+        value = (name or "").strip()
+        if (
+            not value
+            or value != PurePosixPath(value).name
+            or value in (".", "..")
+            or "\\" in value
+        ):
+            raise NotFoundError("游戏文件不存在。")
+        manifest = self.body_manifest(row)
+        if value not in {item["name"] for item in manifest["files"]}:
+            raise NotFoundError("游戏文件不存在。")
+        if not paths.is_bundle_body(row.game_path):
+            # 单文件本体（含街机 romset）：清单里只有入口，直接开 game_path
+            return self._storage.open_download(row.game_path)
+        return self._storage.open_download(
+            paths.body_file_path(row.game_type, row.cartridge_id, value)
+        )
 
     def import_from_url(self, url: str) -> GameItem:
         """从 7k7k / 4399 / flash.homes 游戏页搬运：解析下载到临时目录，再走普通上传管线入库。
@@ -1243,6 +2087,24 @@ class GameService:
             ).all()
         )
 
+    def _validate_h5_zip(
+        self, stream, size: int, game_type: str, cartridge_id: str
+    ) -> None:
+        """校验 H5 的 ZIP 清单与包内路径长度；校验完把流绕回开头。"""
+        if size <= 0:
+            raise ValidationError("文件大小无效。")
+        if size > archive.MAX_ZIP_SIZE:
+            raise ValidationError("压缩包过大。")
+        entries = archive.read_manifest(stream, kind=archive.H5)
+        # 包内路径的深度只出现在运行时根下，所以按运行时根算 Windows 完整路径长度
+        for entry in entries:
+            archive.ensure_path_fits(
+                self._assets.root(),
+                paths.h5_asset_path(game_type, cartridge_id, entry.path),
+                where=archive.WHERE[archive.H5],
+            )
+        _rewind(stream)
+
     def _upload_h5_zip(
         self, row: Game, *, stream, size: int | None, mime: str | None, crc32: str
     ) -> GameItem:
@@ -1253,36 +2115,19 @@ class GameService:
         """
         if size is None or size <= 0:
             raise ValidationError("文件大小无效。")
-        if size > archive.MAX_ZIP_SIZE:
-            raise ValidationError("压缩包过大。")
-        entries = archive.read_manifest(stream, kind=archive.H5)
         game_type = row.game_type
         cartridge_id = row.cartridge_id
-        # 包内路径的深度只出现在运行时根下，所以按运行时根算 Windows 完整路径长度
-        for entry in entries:
-            archive.ensure_path_fits(
-                self._assets.root(),
-                paths.h5_asset_path(game_type, cartridge_id, entry.path),
-                where=archive.WHERE[archive.H5],
-            )
+        self._validate_h5_zip(stream, size, game_type, cartridge_id)
         zip_path = paths.h5_zip_path(game_type, cartridge_id)
-        _rewind(stream)
         self._storage.upload(zip_path, stream, size, mime or "application/zip")
         # 新包已就位：运行时根的旧解包产物作废，下次播放重新解包
         self._assets.drop_tree(paths.h5_dir(game_type, cartridge_id))
-        row.game_path = zip_path
-        row.size = size
-        row.crc32 = crc32
-        row.updated_at = datetime.now(timezone.utc)
-        self._session.add(row)
         try:
-            self._session.commit()
+            return self._finish_body(row, zip_path, size, crc32)
         except Exception as exc:  # noqa: BLE001 - commit 失败只回滚行，磁盘保持新包
             self._session.rollback()
             logger.warning("H5 资源落库失败 game_id=%s", row.id, exc_info=exc)
             raise StorageError("游戏资源保存失败。") from exc
-        self._session.refresh(row)
-        return self._to_item(row)
 
     def _safe_remove_tree(self, key: str) -> None:
         try:
@@ -1335,6 +2180,7 @@ class GameService:
             created_at=row.created_at,
             updated_at=row.updated_at,
             guide_kind=row.guide_kind,
+            in_ranking=row.in_ranking,
         )
 
 
@@ -1354,6 +2200,15 @@ def _crc32_stream(stream: BinaryIO) -> str:
             break
         value = zlib.crc32(block, value)
     return f"{value & 0xFFFFFFFF:08X}"
+
+
+def _bundle_crc32(files: list[dict]) -> str:
+    """多文件本体的聚合 CRC32：按文件名排序的 name\\tsize\\tcrc32 文本再算一次。"""
+    text = "".join(
+        f"{item['name']}\t{item['size']}\t{item['crc32']}\n"
+        for item in sorted(files, key=lambda item: item["name"])
+    )
+    return f"{zlib.crc32(text.encode('utf-8')) & 0xFFFFFFFF:08X}"
 
 
 def _rewind(stream: BinaryIO) -> None:
@@ -1379,7 +2234,16 @@ def _validate_pdf_header(stream: BinaryIO) -> None:
 
 
 def _open_upload(stack: ExitStack, path: Path, mime: str | None) -> GameUpload:
-    """打开本地文件构造上传项，句柄交给 ExitStack 统一关闭。"""
+    """打开本地文件构造上传项，句柄交给 ExitStack 统一关闭。
+
+    这是服务端自己下载/搬运来的文件，不受本地单文件 30MB 阈值约束。
+    """
     path = Path(path)
     handle = stack.enter_context(path.open("rb"))
-    return GameUpload(filename=path.name, stream=handle, size=path.stat().st_size, mime=mime)
+    return GameUpload(
+        filename=path.name,
+        stream=handle,
+        size=path.stat().st_size,
+        mime=mime,
+        source="server",
+    )

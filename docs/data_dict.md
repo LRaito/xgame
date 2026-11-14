@@ -4,19 +4,20 @@
 
 **准确性约定：** 以代码为准，本文件只是索引。
 
-- SQLite 结构源头：`backend/*/models.py`（SQLModel `table=True`）。
+- SQLite 结构源头：`backend/*/models.py` 与 `backend/system_config.py`
+  （SQLModel `table=True`）。
 - 文件路径规则源头：`backend/games/paths.py`。
-- 业务行为与边界见 [`specs/`](specs/README.md)。
+- 业务行为与边界见 [``](README.md)。
 
 ## 存储总览
 
 | 存储 | 位置 | 用途 |
 |---|---|---|
 | SQLite 业务库 | `<运行时根>/db/app.db` | 全部业务元数据 |
-| SQLite 备份 | `<数据根>/db/<YYYY-MM>.db` | 每月一份，整份重写 |
-| SQLite 发现索引 | `<数据根>/db/game.db` | 检索与榜单的派生只读库 |
+| SQLite 备份 | `<数据根>/db/app.db.<YYYY-MM>` | 每月一份，整份重写 |
+| SQLite 发现索引 | `<运行时根>/db/game.db` | 游戏名录与游戏榜单的派生只读库；缺失时启动建空结构 |
 | 数据根 | `STORAGE_ROOT` | 原始素材，整体备份 |
-| 运行时根 | `RUNTIME_ROOT` | SQLite 库 + 解包产物 |
+| 运行时根 | `RUNTIME_ROOT` | SQLite 业务库、发现索引 + 解包产物 |
 | 哨兵文件 | 每个根下的 `.mounted` | 人工创建；只拦启动 |
 
 分工原则：
@@ -26,17 +27,28 @@
 - 文件本身是普通文件，可直接拷走、备份、浏览。
 - 相对路径统一用 `/` 分隔，由 `LocalStorage` 拼上根路径。
 
-类型映射：`str(max_length=n)` → `VARCHAR(n)`；`str` → `TEXT`；
-`int` → `INTEGER`；`datetime` → `DATETIME`；整型主键即自增 `INTEGER PRIMARY KEY`。
+类型映射：`str(max_length=n)` → `VARCHAR(n)`；无长度 `str` → `VARCHAR`；
+`int` → `INTEGER`；`float` → `FLOAT`；`datetime` → `DATETIME`；
+整型主键即自增 `INTEGER PRIMARY KEY`；`games.id` 与 `system_config.id` 用显式
+`INTEGER PRIMARY KEY AUTOINCREMENT`，编号不复用。
 
 ## SQLite 结构
 
 - 库路径写死为 `<运行时根>/db/app.db`。
-- `create_app()` 启动时 `init_db()` 建全部表。
-- 没有迁移框架：
-  - 新列由 `backend/database.py` 的 `_ensure_columns()` 补。
-  - 已删除的表由 `_drop_tables()` 清理。
-- 数据根下的 `game.db` 是独立派生库，见文末「游戏发现索引」。
+- 启动时 `init_db()` 只做两件事：
+  - 全新库（除 `system_config` 外没有业务表）按当前模型建全部表，并写入
+    `system_config.db_version = LATEST_DB_VERSION`。
+  - 已有库只读 `system_config.db_version`，不建表、不补列、不改结构。
+- 结构版本与升级：
+  - 当前代码要求的最新版本是 `backend/system_config.py::LATEST_DB_VERSION`。
+  - 升级代码在根目录 `upgrade/versions/vN.py`，由 `upgrade/runner.py` 逐版本执行；
+    每个版本一个事务，迁移 SQL 与 `db_version` 更新一起提交。
+  - 只能手动升级：停服务后 Docker/仓库执行 `make upgrade`，Windows 包双击
+    「升级数据库.cmd」。重复执行会提示 `app.db 结构已是最新（版本 N）`。
+  - 版本不匹配时服务记录中文错误并永久阻塞，不监听端口。
+  - `backend/` 的模型只描述最新结构，不写任何兼容旧库的分支。
+  - 详细规格见 [`database-upgrade.md`](modules/database-upgrade.md)。
+- 运行时根下的 `game.db` 是独立派生库，见文末「游戏发现索引」。
 
 ### 表索引
 
@@ -44,7 +56,7 @@
 |---|---|---|---|
 | 1 | `users` | `backend/auth/models.py` | 平台账号 |
 | 2 | `login_attempts` | 同上 | 登录失败计数与锁定 |
-| 3 | `games` | `backend/games/models.py` | 游戏条目 |
+| 3 | `games` | `backend/games/models.py` | 库存条目 |
 | 4 | `game_cloud_snapshots` | 同上 | 云端存档快照 |
 | 5 | `game_cloud_snapshot_files` | 同上 | 快照内的单个存档文件 |
 | 6 | `game_screenshots` | 同上 | 按账号隔离的截图 |
@@ -52,9 +64,11 @@
 | 8 | `game_emulator_settings` | 同上 | 按账号与平台的模拟器设置 |
 | 9 | `game_recent_plays` | 同上 | 最近游玩 |
 | 10 | `game_user_stats` | 同上 | 游玩时长与进度 |
+| 11 | `user_shortcuts` | `backend/shortcuts/models.py` | 按账号保存的快捷键覆盖配置 |
+| 12 | `system_config` | `backend/system_config.py` | 平台级键值配置（含结构版本） |
 
 > `game_h5_files` 已删除：H5 改成「zip 存数据根、按需解到运行时根」，不再有清单表。
-> 老库里的空表由启动时的 `_drop_tables()` 清掉。
+> 老库里的空表由 `upgrade/versions/v1.py` 清掉。
 
 ### auth — 账号
 
@@ -63,7 +77,7 @@
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | id | INTEGER | PK 自增 | |
-| username | VARCHAR(32) | NOT NULL, UNIQUE | 登录名；规则见 [`auth.md`](specs/auth.md) |
+| username | VARCHAR(32) | NOT NULL, UNIQUE | 登录名；规则见 [`auth.md`](modules/auth.md) |
 | password_hash | VARCHAR(255) | NOT NULL | werkzeug 单向哈希 |
 | created_at | DATETIME | NOT NULL | UTC |
 
@@ -75,35 +89,72 @@
 | failed_count | INTEGER | NOT NULL | 累计失败次数 |
 | locked_until | DATETIME | NULL | 解锁时刻；NULL = 未锁定 |
 
-锁定阈值与行为见 [`auth.md`](specs/auth.md)。
+锁定阈值与行为见 [`auth.md`](modules/auth.md)。
 
-### games — 游戏中心
+### shortcuts — 用户快捷键
+
+**`user_shortcuts`**
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | INTEGER | PK 自增 | |
+| user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 归属用户 |
+| action_id | VARCHAR(64) | NOT NULL | 前端动作 id，如 `play.sync_cloud` |
+| binding | VARCHAR(64) | NOT NULL, 默认 `''` | 键位；空串 = 用户关闭该快捷键 |
+| updated_at | DATETIME | NOT NULL | UTC |
+
+- 唯一约束：`(user_id, action_id)`，每个动作每个账号只有一行。
+- 没有这一行 = 使用前端默认键位；`binding=''` = 主动关闭。
+- 键位格式见 [`frontend.md`](modules/frontend.md) 的「快捷键」。
+- 动作清单与默认值只在前端 `frontend/src/constants/shortcuts.js` 维护。
+
+### system — 系统配置
+
+**`system_config`**
+
+| 列 | 类型 | 约束 | 说明 |
+|---|---|---|---|
+| id | INTEGER | PK `AUTOINCREMENT` | |
+| key | VARCHAR(255) | NOT NULL, UNIQUE | 配置键 |
+| value | VARCHAR(1024) | NOT NULL | 配置值，按字符串存 |
+
+- 当前只有一项：`key = db_version`，`value` 是 `app.db` 的结构版本整数文本。
+- 键唯一索引：`ix_system_config_key`。
+- 结构版本与升级流程见本文「SQLite 结构」与
+  [`database-upgrade.md`](modules/database-upgrade.md)。
+
+### games — 库存表
 
 **`games`**
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| id | INTEGER | PK 自增 | 路由 `{game_id}`；与磁盘目录无关 |
+| id | INTEGER | PK `AUTOINCREMENT` | 路由 `{game_id}`；与磁盘目录无关；删除后编号不复用 |
 | name | VARCHAR(255) | NOT NULL, 唯一 `(game_type, name)` | 合法的 Windows / 网盘文件名 |
-| cartridge_id | VARCHAR(64) | NOT NULL, 唯一 | 大写；见 [`game-storage.md`](specs/game-storage.md) |
-| cover_type | VARCHAR(20) | NULL | 封面样式 id；见 [`game-storage.md`](specs/game-storage.md) |
+| cartridge_id | VARCHAR(64) | NOT NULL, 唯一 | 大写；见 [`game-storage.md`](modules/game-storage.md) |
+| cover_type | VARCHAR(20) | NULL | 封面样式 id；见 [`game-storage.md`](modules/game-storage.md) |
 | description | VARCHAR(200) | NOT NULL, 默认 `''` | 上限 200 字 |
 | game_type | VARCHAR(50) | NOT NULL, 索引 | `flash` / `h5` / 主机平台键 |
-| size | INTEGER | NOT NULL, 默认 0 | 本体字节数 |
-| crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | 当前本体 CRC32，8 位大写十六进制 |
-| game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径；空 = 未上传 |
+| size | INTEGER | NOT NULL, 默认 0 | 本体字节数；0 = 未上传。多文件本体为 `body/` 下全部文件之和 |
+| crc32 | VARCHAR(8) | NOT NULL, 默认 `''` | 当前本体 CRC32，8 位大写十六进制；空 = 未上传。多文件为清单聚合 CRC |
+| game_path | VARCHAR(500) | NOT NULL, 默认 `''` | 本体相对路径；空 = 未上传。多文件本体指向 `body/` 下的入口；街机指向保留集合名的 `{romset}.zip` |
 | cover_path | VARCHAR(500) | NULL | 封面相对路径；NULL = 无封面 |
 | guide_kind | VARCHAR(10) | NOT NULL, 默认 `''` | `''` / `zip` / `pdf` |
 | created_at | DATETIME | NOT NULL | |
 | updated_at | DATETIME | NOT NULL | |
+| in_ranking | BOOLEAN | NOT NULL, 默认 0, 索引 | 是否命中 game.db 榜单；由 make index 全量对账、增删改游戏时增量维护 |
 
 索引：
 
 - `uq_games_cartridge_id`：卡带 ID 全局唯一。
 - `uq_games_game_type_name`：同类型下游戏名唯一。
-- 中心列表按 `game_path != ''` 过滤。
+- `ix_games_name`：游戏名普通索引。
+- `ix_games_game_type`：游戏类型普通索引。
+- `ix_games_in_ranking`：榜单归属筛选。
+- `ix_games_in_ranking_updated`：`(in_ranking, updated_at, id)`，筛选后按更新时间分页。
+- 中心列表不按 `game_path` 过滤：无本体条目同样展示，点击时提示先上传本体。
 
-卡带 ID 改名、封面类型、命名规则见 [`game-storage.md`](specs/game-storage.md)。
+卡带 ID 改名、封面类型、命名规则见 [`game-storage.md`](modules/game-storage.md)。
 
 **`game_cloud_snapshots`**
 
@@ -113,13 +164,13 @@
 | user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 归属用户 |
 | game_id | INTEGER | NOT NULL, 索引 | 所属游戏；无 FK |
 | parent_id | INTEGER | NULL, 索引 | NULL = 顶层；无物理外键 |
-| sort_order | REAL | NOT NULL, 默认 0 | 展示分数，越小越靠前 |
+| sort_order | FLOAT | NOT NULL, 默认 0 | 展示分数，越小越靠前 |
 | remark | VARCHAR(100) | NOT NULL, 默认 `''` | 备注，上限 100 字 |
 | created_at | DATETIME | NOT NULL | 决定「最新一条」 |
 
 - 复合索引：`ix_game_cloud_snapshots_user_game_order`。
 - 父子关系、排序、删除父节点行为见
-  [`game-saves-stats.md`](specs/game-saves-stats.md)。
+  [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 **`game_cloud_snapshot_files`**
 
@@ -142,7 +193,7 @@
 | id | INTEGER | PK 自增 | |
 | user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 归属用户 |
 | game_id | INTEGER | NOT NULL, 索引 | 所属游戏；无 FK |
-| sort_order | REAL | NOT NULL, 默认 0 | 展示分数 |
+| sort_order | FLOAT | NOT NULL, 默认 0 | 展示分数 |
 | description | VARCHAR(15) | NOT NULL, 默认 `''` | 描述，上限 15 字 |
 | file_path | VARCHAR(500) | NOT NULL, 默认 `''` | 磁盘相对路径；不下发前端 |
 | size | INTEGER | NOT NULL, 默认 0 | 字节数 |
@@ -151,7 +202,7 @@
 
 - 复合索引：`ix_game_screenshots_user_game_order`。
 - 刻意不加唯一约束：分数排序靠中值插入。
-- 上传、删除、排序行为见 [`game-assets.md`](specs/game-assets.md)。
+- 上传、删除、排序行为见 [`game-assets.md`](modules/game-assets.md)。
 
 **`game_gallery_images`**
 
@@ -159,7 +210,7 @@
 |---|---|---|---|
 | id | INTEGER | PK 自增 | |
 | game_id | INTEGER | NOT NULL, 索引 | 所属游戏；无 FK |
-| sort_order | REAL | NOT NULL, 默认 0 | 展示分数 |
+| sort_order | FLOAT | NOT NULL, 默认 0 | 展示分数 |
 | description | VARCHAR(15) | NOT NULL, 默认 `''` | 描述，上限 15 字 |
 | file_path | VARCHAR(500) | NOT NULL, 默认 `''` | 磁盘相对路径；不下发前端 |
 | size | INTEGER | NOT NULL, 默认 0 | 字节数 |
@@ -168,7 +219,7 @@
 
 - 复合索引：`ix_game_gallery_images_game_order`。
 - 与截图相反：按游戏共享，不记上传者。
-- 行为见 [`game-assets.md`](specs/game-assets.md)。
+- 行为见 [`game-assets.md`](modules/game-assets.md)。
 
 **`game_emulator_settings`**
 
@@ -177,12 +228,12 @@
 | id | INTEGER | PK 自增 | |
 | user_id | INTEGER | NOT NULL, FK → `users.id`, 索引 | 归属用户 |
 | game_type | VARCHAR(50) | NOT NULL, 唯一 `(user_id, game_type)` | 平台键 |
-| payload | TEXT | NOT NULL, 默认 `''` | `{controlSettings, settings, cheats}` |
+| payload | VARCHAR | NOT NULL, 默认 `''` | `{controlSettings, settings, cheats}` |
 | updated_at | DATETIME | NOT NULL | |
 
-- 只覆盖 8 个主机平台，不含 flash/h5。
+- 只覆盖 34 个主机平台，不含 flash/h5。
 - 内容只存 SQLite，不落文件。
-- 行为见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- 行为见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 **`game_recent_plays`**
 
@@ -194,7 +245,7 @@
 | played_at | DATETIME | NOT NULL | 最近一次开玩时间 |
 
 - 每 (用户, 游戏) 一行；重玩只刷新时间。
-- 行为见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- 行为见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 **`game_user_stats`**
 
@@ -208,7 +259,7 @@
 | updated_at | DATETIME | NOT NULL | |
 
 - 与游戏类型无关：三类播放都往同一张表累加。
-- 心跳、覆盖式改写、进度规则见 [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- 心跳、覆盖式改写、进度规则见 [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 ## 文件存储结构
 
@@ -223,18 +274,19 @@
 - `app.state.runtime_storage`：运行时根。
 
 `LocalStorage._resolve()` 负责拼根并挡掉越界：绝对路径与 `..` 一律拒绝。
-浏览器从不直连磁盘，上传/下载都由 API 分块流式代理。
+浏览器从不直连磁盘，上传/下载都由 API 分块流式代理；超过 30MB 的本体由前端分片，
+后端按偏移直接写入暂存文件。
 
 根目录下可能有一个 `.mounted`：
 
 - 空文件，**人工创建**，代码不代建。
 - 只在宿主路径落在 `WINDOWS_MOUNT_PREFIX`（默认 `/mnt`）下时检查。
 - 数据根与运行时根各查一份；两个根相同时就是同一个文件。
-- 机制与排障见 [`delivery-docker.md`](specs/delivery-docker.md) 与
+- 机制与排障见 [`delivery-docker.md`](modules/delivery-docker.md) 与
   [`DEVELOP.md`](../DEVELOP.md)。
 
 目录名一律用「游戏类型键 + 卡带 ID」，不随游戏名变化。
-改卡带 ID 的迁移范围见 [`game-storage.md`](specs/game-storage.md)。
+改卡带 ID 与改游戏类型的迁移范围见 [`game-storage.md`](modules/game-storage.md)。
 
 ### 路径规则
 
@@ -242,13 +294,18 @@
 
 | 内容 | 相对路径 | 生成处 |
 |---|---|---|
-| 游戏本体 | `game/{game_type}/{卡带ID}/game.{后缀}` | `paths.py::body_path` / `h5_zip_path` |
+| 游戏本体（单文件） | `game/{game_type}/{卡带ID}/game.{后缀}` | `paths.py::body_path` / `h5_zip_path` |
+| 街机 romset | `game/arcade/{卡带ID}/{romset}.zip`（保留集合名） | `paths.py::named_body_path` |
+| 多文件本体 | `game/{game_type}/{卡带ID}/body/{文件名}`，入口 `game.{后缀}` | `paths.py::body_file_path` |
+| 多文件清单 | `game/{game_type}/{卡带ID}/body/manifest.json` | `paths.py::body_manifest_path` |
+| 多文件提交暂存 | `game/{game_type}/{卡带ID}/.body-{随机}` | `paths.py::body_temp_dir` |
 | 游戏封面 | `game/{game_type}/{卡带ID}/cover.{后缀}` | `paths.py::cover_path` |
 | 攻略包 | `game/{game_type}/{卡带ID}/guide.zip` | `paths.py::guide_zip_path` |
 | 攻略 PDF | `game/{game_type}/{卡带ID}/guide.pdf` | `paths.py::guide_pdf_path` |
 | 游戏图集 | `game/{game_type}/{卡带ID}/image/{uuid}.{后缀}` | `paths.py::gallery_file_path` |
 | 云端存档 | `save/{用户名}/{game_type}/{卡带ID}/{uuid}.state` | `paths.py::save_file_path` |
 | 游戏截图 | `image/{用户名}/{game_type}/{卡带ID}/{uuid}.{后缀}` | `paths.py::screenshot_file_path` |
+| 分片上传暂存 | `upload/{upload_id}/{meta.json,body.part,chunks/*}` | `paths.py::upload_session_dir` |
 
 **运行时根**（派生物，删了会自动重建）：
 
@@ -261,6 +318,8 @@
 说明：
 
 - **类型目录名**用 `game_type` 的键值，与 SQLite 字段一致。
+- **改类型**是显式迁移：游戏目录、存档目录、截图目录一起搬，并改写五处路径列；
+  旧运行时解包产物作废。
 - **本体 / 封面**路径固定，不随上传文件名变；同名重复上传会覆盖。
 - **换本体**只允许同类型；跨类型 400 且旧档不动。
 - **H5** 上传只校验不解压；播放时按需解到运行时根。
@@ -269,10 +328,12 @@
   绝不用当前类型拼目录。
 - **图集**在游戏目录内，随游戏类型迁移。
 - **云端存档**目录带快照当时的类型；同样按 `file_path` 反推。
-- 具体行为见 [`game-storage.md`](specs/game-storage.md)、
-  [`guide-and-h5.md`](specs/guide-and-h5.md)、
-  [`game-assets.md`](specs/game-assets.md)、
-  [`game-saves-stats.md`](specs/game-saves-stats.md)。
+- **分片上传暂存**是可丢弃的临时数据：提交后立即删除，未完成的会话在启动时按 24 小时 TTL 清理。
+  它和数据根在同一文件系统，提交只是把 `body.part` 改名进 `game/…`。
+- 具体行为见 [`game-storage.md`](modules/game-storage.md)、
+  [`guide-and-h5.md`](modules/guide-and-h5.md)、
+  [`game-assets.md`](modules/game-assets.md)、
+  [`game-saves-stats.md`](modules/game-saves-stats.md)。
 
 ## 游戏发现索引（`game.db`）
 
@@ -280,36 +341,45 @@
 
 | 项 | 值 |
 |---|---|
-| 路径 | `<数据根>/db/game.db`（`GAME_INDEX_FILENAME`） |
-| 写入方 | 只有 `backend/games/search_index.py` |
-| 写路径 | `build_index()` 整库重建；`ensure_ranking_loaded()` 就地补榜单 |
+| 路径 | `<运行时根>/db/game.db`（`GAME_INDEX_FILENAME`） |
+| 写入方 | 启动只建空结构；`backend/games/search_index.py` 构建游戏名录/榜单数据；`backend/games/ranking_flags.py` 运行期只更新标记 |
+| 写路径 | `make index` → `build_index()` 构建游戏名录、游戏榜单；结构只由启动初始化或 `make upgrade` 改变 |
 | 读取方 | `GameSearchService` / `GameRankingService` |
 | 连接 | `mode=ro` + `PRAGMA query_only=1`，每请求一条短连接 |
 | 是否备份 | 不备份；可从 CSV 重建 |
-| 源数据 | 37 个检索 CSV + `ranking.csv` |
-| 重建 | 整库重建 + `os.replace`；不开 WAL |
+| 源数据 | 37 个名录 CSV + 34 个机种榜单 CSV |
+| 重建 | `make index` 整库重写数据 + `os.replace`；要求结构已是当前版本，不开 WAL |
 
 ### 表
 
 | 表 | 用途 |
 |---|---|
-| `console` | 检索的统一机种：`id` / `name` / `platform_id` / `raw_names` |
+| `console` | 游戏名录的统一机种：`id` / `name` / `platform_id` / `raw_names` |
 | `game` | 名录一行：`id` / `console_id` / `zh` / `en` / `src` |
 | `game_fts` | FTS5 全文索引，contentless，`zh_uni` / `en_uni` |
-| `ranking` | 榜单一行：`platform` / `console` / `rank` / `title` / `cartridge_ids` |
-| `meta` | 键值元信息：检索版本、榜单版本与指纹 |
+| `ranking` | 榜单一行：`id` / `platform` / `console` / `score` / `zh` / `en` / `cartridge_ids` / `in_library` |
+| `ranking_cartridges` | 卡带 ID → `ranking.id` 映射：`cartridge_id` 主键 / `ranking_id` FK |
+| `meta` | 键值元信息：游戏名录版本、榜单版本与指纹 |
 | `idx_game_console` | `game(console_id, en)` 索引 |
 | `idx_console_platform` | `console(platform_id)` 索引 |
+| `uq_ranking_platform_en` | `ranking(platform, en)` 唯一索引，同一机种内英文名唯一 |
+| `idx_ranking_score` | `ranking(score DESC)`，跨机种按评分全局排序 |
+| `idx_ranking_platform_score` | `ranking(platform, score DESC)`，单机种按评分排序 |
+| `idx_ranking_in_library_score` | `ranking(in_library, score DESC)`，库存筛选后排序 |
+| `idx_ranking_platform_in_library_score` | `ranking(platform, in_library, score DESC)` |
+| `idx_ranking_cartridges_ranking` | `ranking_cartridges(ranking_id)`，反向查一行榜单的卡带 ID |
 
 ### 约定
 
 - 机种经 `backend/games/platforms.py` 的词表归一。
-- 检索引擎的机种合并：36 个原始机种 → 32 项。
+- 游戏名录的机种合并：36 个原始机种 → 32 项。
 - `game_fts` 存处理过的文本；`game.zh` / `game.en` 存原文。
 - 索引期与查询期共用 `search_text.py::index_text()`。
-- 按 `(机种, 中文, 英文)` 三元组去重。
-- 榜单版本独立于检索版本；加榜单表不 bump `SCHEMA_VERSION`。
-- 榜单与库存的关联在请求期做，不落库、不进索引、不缓存。
+- 按 `(机种原始名, 中文, 英文)` 三元组去重；机种原始名由名录 CSV 文件名映射得到。
+- 榜单版本独立于游戏名录版本；加榜单表不 bump `SCHEMA_VERSION`。
+- `ranking.in_library` 标记是否命中库存；`games.in_ranking` 标记是否命中榜单。
+- 两个标记由 `make index` 全量对账；新增/改卡带 ID/删除游戏时增量更新。
+- `ranking_cartridges.cartridge_id` 存归一后的大写值，一个卡带 ID 只能映射一行榜单。
 - 榜单 CSV 格式见
-  [`backend/search/ranking/README.md`](../backend/search/ranking/README.md)。
-- 详细行为见 [`game-discover.md`](specs/game-discover.md)。
+  [`backend/search/rankings/README.md`](../backend/search/rankings/README.md)。
+- 详细行为见 [`game-discover.md`](modules/game-discover.md)。

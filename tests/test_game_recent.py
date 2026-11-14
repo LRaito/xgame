@@ -20,7 +20,7 @@ def _make_game(app, name: str, *, game_type: str = "nes", game_path: str | None 
             name=name,
             cartridge_id=f"REC{_seq:04d}",
             game_type=game_type,
-            # 默认给个非空本体路径：中心列表与最近游玩都只认「有本体」的游戏
+            # 默认给个非空本体路径；最近游玩不按有无本体过滤，显式传空即可测无本体条目
             game_path=f"game/{game_type}/REC{_seq:04d}/game.nes" if game_path is None else game_path,
         )
         session.add(row)
@@ -45,6 +45,13 @@ def _recent_rows(app) -> list[GameRecentPlay]:
 def test_recent_requires_login(client):
     assert client.get(URL).status_code == 401
     assert client.post(URL, json={"game_id": 1}).status_code == 401
+
+
+def test_recent_missing_game_id_returns_envelope(logged_in):
+    """请求体缺字段时返回中文 400 信封，而不是 FastAPI 原生 422。"""
+    response = logged_in.post(URL, json={})
+    assert response.status_code == 400
+    assert response.json() == {"ok": False, "message": "请求参数不合法。"}
 
 
 def test_recent_empty_before_first_play(logged_in):
@@ -121,19 +128,20 @@ def test_recent_mark_unknown_game_404(logged_in):
     assert response.json()["message"]
 
 
-def test_recent_mark_game_without_body_404(logged_in, app):
+def test_recent_mark_game_without_body_ok(logged_in, app):
+    """最近游玩不区分有无本体：无本体条目也能记录开玩。"""
     game_id = _make_game(app, "Empty", game_path="")
     response = logged_in.post(URL, json={"game_id": game_id})
-    assert response.status_code == 404
-    assert _recent_rows(app) == []
+    assert response.status_code == 200
+    assert [row.game_id for row in _recent_rows(app)] == [game_id]
 
 
-def test_recent_skips_game_without_body(logged_in, app):
+def test_recent_keeps_game_without_body(logged_in, app):
+    """本体被清空后，旧记录仍留在 rail 里（前端点击时提示先上传本体）。"""
     game_id = _make_game(app, "Lost")
     logged_in.post(URL, json={"game_id": game_id})
-    # 本体被清空后，旧记录不该再出现在 rail 里
     _set_game_path(app, game_id, "")
-    assert logged_in.get(URL).json()["data"] == []
+    assert [item["id"] for item in logged_in.get(URL).json()["data"]] == [game_id]
 
 
 def test_recent_cleared_when_game_deleted(logged_in, app):

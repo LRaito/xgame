@@ -56,6 +56,12 @@ export default defineConfig(({ command }) => {
         },
         server: {
             port: 5173,
+            // PSP / DOS 的线程核要 SharedArrayBuffer，dev server 也要跨源隔离；
+            // H5 资源走 /api 代理，由后端发 unsafe-none。
+            headers: {
+                "Cross-Origin-Opener-Policy": "same-origin",
+                "Cross-Origin-Embedder-Policy": "require-corp",
+            },
             proxy: {
                 "/api": { target: "http://127.0.0.1:8910", changeOrigin: true },
                 "/health": { target: "http://127.0.0.1:8910", changeOrigin: true },

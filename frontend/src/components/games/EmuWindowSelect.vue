@@ -1,6 +1,5 @@
 <template>
     <div ref="rootRef" class="emu-window-select">
-        <span class="emu-window-select__text">窗口</span>
         <app-button
             class="emu-window-select__button"
             variant="secondary"
@@ -109,6 +108,8 @@ const WIDE = "wide";
 const props = defineProps({
     // 默认值与下面的 FIT 常量同一个字面量（defineProps 的默认值不能引用局部变量）
     modelValue: { type: String, default: "fit" },
+    // 收起按钮显示的实际窗口像素尺寸；为空时用帧缓冲尺寸兜底
+    displaySize: { type: Object, default: null },
     // 该平台的帧缓冲分辨率（像素）：倍率按它的高度换算窗口像素高度
     nativeSize: { type: Object, default: null },
     // 引擎上报的显示宽高比：窗口宽度按它推出（与播放页舞台同一套算法，否则显示的尺寸对不上）
@@ -221,29 +222,13 @@ function pickMode(modeId, value) {
     open.value = false;
 }
 
-// 收起状态下按钮上的文字 = 当前选择（真实窗口尺寸）
+// 收起状态下按钮只显示当前窗口像素尺寸，长度固定，标题栏不随选择跳动。
 const currentLabel = computed(() => {
-    if (isModeMatrix.value) {
-        const cols = props.modes || [];
-        const col = cols.find((item) => item.id === props.activeMode) || cols[0];
-        if (!col) {
-            return "适应窗口";
-        }
-        const value = scaleFor(col.id);
-        if (value === FIT) {
-            return `${col.label} 适应窗口`;
-        }
-        const size = modeCellText(col, value);
-        return size ? `${col.label} ${value}×（${size}）` : `${col.label} ${value}×`;
+    const size = props.displaySize || props.nativeSize;
+    if (!size?.width || !size?.height) {
+        return "— × —";
     }
-    const prefix = mode.value === WIDE ? "4:3 " : "";
-    if (scale.value === FIT) {
-        return mode.value === WIDE ? "适应窗口（4:3）" : "适应窗口";
-    }
-    const row = rows.value.find((item) => item.value === scale.value);
-    const size = row ? (mode.value === WIDE ? row.wide : row.pp) : "";
-    const value = scale.value;
-    return size ? `${prefix}${value}× （${size}）` : `${prefix}${value}×`;
+    return `${Math.round(size.width)} × ${Math.round(size.height)}`;
 });
 
 function isActive(value, target) {
@@ -293,17 +278,19 @@ onBeforeUnmount(() => {
     flex-shrink: 0;
 }
 
-.emu-window-select__text {
-    font-size: 13px;
-    color: #94a3b8;
+/* 窗口尺寸用等宽数字；按钮宽度由播放页标题栏统一控制 */
+.emu-window-select__button {
+    justify-content: center;
+    font-variant-numeric: tabular-nums;
     white-space: nowrap;
 }
 
-/* 面板挂在按钮下方、右对齐：标题栏靠右，右对齐才不会被视口切掉 */
+/* 面板挂在按钮下方，以按钮中心线左右对齐 */
 .emu-window-select__panel {
     position: absolute;
     top: calc(100% + 10px);
-    right: 0;
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 30;
     padding: 8px;
     border: 1px solid rgba(148, 163, 184, 0.3);
@@ -315,6 +302,11 @@ onBeforeUnmount(() => {
 
 .emu-window-select__fit {
     margin-bottom: 6px;
+}
+
+/* Element Plus 给相邻按钮加 12px 左边距，会把格子挤出面板；面板内一律贴齐 */
+.emu-window-select__panel :deep(.el-button) {
+    margin-left: 0;
 }
 
 .emu-window-select__grid {

@@ -2,6 +2,7 @@
     <game-shell
         ref="shellRef"
         :title="gameTitle"
+        uniform-actions
         @fullscreen-change="onFullscreenChange"
         @cursor-idle-change="onCursorIdleChange"
     >
@@ -9,6 +10,38 @@
             <span class="emulator-player__hint">{{ platformHint }}</span>
         </template>
         <template #actions>
+            <!-- 有洞对齐图的平台（GBA、FC、SFC、GBC、NDS）：把机壳图盖在画面上，洞正好露出游戏画面 -->
+            <app-button
+                v-if="supportsShell"
+                class="emulator-player__action"
+                variant="secondary"
+                tone="dark"
+                size="lg"
+                :pressed="shellOn"
+                @click="toggleShell"
+            >
+                显示机壳
+            </app-button>
+            <!-- 窗口：按钮只显示当前窗口像素尺寸，固定宽度，不随倍率/比例改文案 -->
+            <emu-window-select
+                v-if="baseNativeSize"
+                v-model="windowMode"
+                :native-size="baseNativeSize"
+                :display-size="stageSize || baseNativeSize"
+                :aspect="stageAspect"
+                :wide="wideMode"
+                :modes="ndsModeColumns"
+                :mode-scales="ndsModeScales"
+                :active-mode="ndsScreenMode"
+                @pick-mode="onPickNdsWindowMode"
+            />
+            <!-- 复古滤镜：CRT 着色器全机种可用，原生信号/LCD 选项按机种给；
+                 选择只记在本机（按机种），不随账号走。默认「无滤镜」。 -->
+            <playback-select
+                v-if="game && filterChoices.length"
+                v-model="filterId"
+                :options="filterChoices"
+            />
             <!-- 持续加速：按一次一直加速、再按恢复。开关的就是引擎自己的「Fast Forward」设置项，
                  所以与设置菜单里那一项同步、也会随「保存配置」进账号；关着时用户自己绑的
                  快进快捷键行为不变 -->
@@ -34,7 +67,7 @@
                 :disabled="!engineReady || shooting"
                 @click="onScreenshot"
             >
-                {{ shooting ? "截图中…" : "截图" }}
+                {{ shooting ? "保存中…" : "保存截图" }}
             </app-button>
             <!-- 把当前键位/画面/音量等模拟器配置整块存到账号 -->
             <app-button
@@ -47,37 +80,6 @@
                 @click="saveEngineSettings"
             >
                 {{ savingSettings ? "保存中…" : "保存配置" }}
-            </app-button>
-            <!-- 第一列（像素完美）恒用机种固有的帧缓冲；4:3 那一列自带另一套（见 WIDE_MODE） -->
-            <emu-window-select
-                v-if="baseNativeSize"
-                v-model="windowMode"
-                :native-size="baseNativeSize"
-                :aspect="stageAspect"
-                :wide="wideMode"
-                :modes="ndsModeColumns"
-                :mode-scales="ndsModeScales"
-                :active-mode="ndsScreenMode"
-                @pick-mode="onPickNdsWindowMode"
-            />
-            <!-- 复古滤镜（只有配了滤镜清单的机种显示）：内核选项 + 引擎内置着色器，
-                 清单见 constants/emuFilters.js，运行中切换走宿主页的 setFilter -->
-            <emu-filter-select
-                v-if="filters"
-                v-model="filterId"
-                :filters="filters"
-            />
-            <!-- 有洞对齐图的平台（GBA、FC、GBC、NDS）：把机壳图盖在画面上，洞正好露出游戏画面 -->
-            <app-button
-                v-if="supportsShell"
-                class="emulator-player__action"
-                variant="secondary"
-                tone="dark"
-                size="lg"
-                :pressed="shellOn"
-                @click="toggleShell"
-            >
-                显示机壳
             </app-button>
             <app-button
                 v-if="game"
@@ -119,6 +121,8 @@
                     referrerpolicy="same-origin"
                     @load="onFrameLoad"
                 />
+                <!-- 暂停遮罩盖在画面上，pointer-events:none 不挡引擎控制条与标题栏 -->
+                <pause-overlay v-if="pausedState" title="GAME PAUSED" :hint="pauseHint" />
                 <!-- 机壳盖在游戏画面上：洞外的部分是外壳本体，正好落在画面之外，
                      所以它不会挡住引擎自己的任何 UI；pointer-events: none 保证仍然能玩。
                      NDS 例外：iframe 被抬到机壳之上、只把画布的两块屏幕遮出来（见样式与
@@ -181,14 +185,15 @@ import {
     uploadScreenshotAPI,
 } from "@/api/games";
 import { EMU_NATIVE, NDS_NATIVE, NDS_SCREEN_MODES } from "@/constants/emulatorScreens";
-import { gameTypeMeta } from "@/constants/gameTypes";
 import {
-    EMU_FILTER_NONE,
-    EMU_FILTER_SETTING_KEYS,
+    EMU_FILTER_CORES,
+    emuFilterFor,
     emuFilterResets,
     emuFiltersFor,
-    filterForShader,
+    emuFilterSettingsPatch,
 } from "@/constants/emuFilters";
+import { gameTypeMeta } from "@/constants/gameTypes";
+import { useGameTypesStore } from "@/store/gameTypes";
 import {
     EMU_SAVE_FILENAME,
     emuBase64ToBlob,
@@ -200,16 +205,19 @@ import {
 import {
     engineSettingsKey,
     readEngineSettingsRaw,
+    stripEmuFilterSettings,
     stripNdsDisplayOptions,
     writeEngineSettings,
 } from "@/utils/emulatorSettings";
 import GameShell from "@components/games/GameShell.vue";
-import EmuFilterSelect from "@components/games/EmuFilterSelect.vue";
 import SaveManager from "@components/games/SaveManager.vue";
 import EmuWindowSelect from "@components/games/EmuWindowSelect.vue";
+import PauseOverlay from "@components/games/PauseOverlay.vue";
+import PlaybackSelect from "@components/games/PlaybackSelect.vue";
 import ScreenshotConfirmDialog from "@components/games/ScreenshotConfirmDialog.vue";
 import StartGate from "@components/games/StartGate.vue";
 import { hasUserGesture } from "@/utils/userActivation";
+import { matchesShortcut, shortcutLabel } from "@/utils/shortcuts";
 import { reportGamePlayed } from "@/utils/recentGames";
 import { startGamePlaytime, stopGamePlaytime } from "@/utils/gamePlaytime";
 // 机壳图用 import 取 URL（带内容哈希），几何见下面 SHELLS 表的说明
@@ -241,11 +249,28 @@ const ENGINE_LOADER = "/emulatorjs/data/loader.js";
 //     melonds_screen_gap（256×1437/840 − 384 ≈ 53.94，取 54），最大误差约 0.06px。
 //     原素材每块屏幕左右各有 8px 被补成了机身色（洞从 856 宽收到 840），洞才变成 4:3。
 //     素材已换成真实机壳，换图时同步改这里与 EMU_NATIVE.nds；
-//   FC 的电视机壳有两套，正好对应窗口选择器里的两列显示比例（见 WIDE_MODE）：
+//   FC / SFC 的电视机壳有两套，正好对应窗口选择器里的两列显示比例（见 WIDE_MODE）：
 //   `pp`（像素完美 8:7）那套是原素材把**屏幕那段纵向拉长 7/6 倍**（原素材洞 1084×813 = 4:3，
 //   拉长后 1084×948.5 = 8:7）得到的，下面 121 行的控制条（扬声器 / 按键）保持等比不变，
 //   最后裁掉四周透明留白（只顶部有 10 行是空的）；`wide`（4:3）那套就是原素材本身
 //   （4:3 的洞），只裁掉顶部 9 行留白。切比例时机壳跟着换成对应的那套，洞才与画面一致。
+//   FC 与 SFC 原生帧缓冲都是 256×224（8:7），所以 SFC 直接复用这两套电视机壳。
+const FC_SHELLS = {
+    // 像素完美（8:7）：素材是把原图屏幕那段纵向拉长 7/6 得到的
+    pp: {
+        url: nesShellUrl,
+        image: { width: 1326, height: 1237 },
+        // 带小数：这两个值来自原素材的洞坐标 × 7/6（纵向拉伸倍率）再减去裁掉的那 10 行
+        holes: [{ x: 121, y: 146.3333, width: 1084, height: 948.5 }],
+    },
+    // 4:3：用**未拉伸的原素材**，洞本来就是 4:3，只裁掉了顶部 9 行透明留白
+    wide: {
+        url: nesShell43Url,
+        image: { width: 1326, height: 1077 },
+        holes: [{ x: 121, y: 125, width: 1084, height: 813 }],
+    },
+};
+
 const SHELLS = {
     gba: {
         pp: {
@@ -315,21 +340,9 @@ const SHELLS = {
             },
         },
     },
-    nes: {
-        // 像素完美（8:7）：素材是把原图屏幕那段纵向拉长 7/6 得到的
-        pp: {
-            url: nesShellUrl,
-            image: { width: 1326, height: 1237 },
-            // 带小数：这两个值来自原素材的洞坐标 × 7/6（纵向拉伸倍率）再减去裁掉的那 10 行
-            holes: [{ x: 121, y: 146.3333, width: 1084, height: 948.5 }],
-        },
-        // 4:3：用**未拉伸的原素材**，洞本来就是 4:3，只裁掉了顶部 9 行透明留白
-        wide: {
-            url: nesShell43Url,
-            image: { width: 1326, height: 1077 },
-            holes: [{ x: 121, y: 125, width: 1084, height: 813 }],
-        },
-    },
+    nes: FC_SHELLS,
+    // SFC 与 FC 同为 256×224（8:7），机壳逻辑完全一致，直接复用同一套电视壳
+    snes: FC_SHELLS,
 };
 
 /**
@@ -351,17 +364,16 @@ const SHELL_STORAGE_KEY = "games.emu.shell";
 const NDS_SCREEN_STORAGE_KEY = "games.emu.nds.screen";
 // NDS 三种布局各自的窗口倍率（互相独立）：{ dual: "fit"|"1.5"|…, top: …, side: … }
 const NDS_WINDOW_STORAGE_KEY = "games.emu.nds.window";
-// 滤镜也按游戏类型各记一条（GBA 想用液晶、FC 想用 CRT），整张表存一个 JSON 里
-const FILTER_STORAGE_KEY = "games.emu.filter";
-// 引擎自带菜单里试出来的着色器：自动进表的那几条（同样按游戏类型各记一份）
-const FILTER_CUSTOM_STORAGE_KEY = "games.emu.filter.custom";
+// 复古滤镜按机种记，一个键存一张表：{ nes: "crt-lottes", gba: "lcd", … }。
+// 纯本地偏好，不随账号走；云端设置读写都会剔除滤镜键（见 stripEmuFilterSettings）。
+const FILTER_STORAGE_KEY = "games.emu.filters";
 
 // 显示比例模式（窗口选择器里那一列）：pp = 像素完美（1:1 方像素，画面比例 = 帧缓冲比例）；
-// wide = 4:3（真机 CRT 观感，把画面横向拉宽填满 4:3）。只有 FC 两种都提供
-// （内核选项 fceumm_aspect 可切，两套比例各有一张机壳素材，见 WIDE_MODE / SHELLS）。
+// wide = 4:3（真机 CRT 观感，把画面横向拉宽填满 4:3）。只有 FC / SFC 两种都提供
+// （FC 用 fceumm_aspect、SFC 用 snes9x_aspect，两套比例各有一张机壳素材，见 WIDE_MODE / SHELLS）。
 const ASPECT_PP = "pp";
 const ASPECT_WIDE = "wide";
-// 「4:3」那一列只有 FC 有，它同时改两件事（见 emulator-host.html 的 setDisplayMode）：
+// FC 的「4:3」那一列同时改两件事（见 emulator-host.html 的 setDisplayMode）：
 //   1) 内核显示比例 fceumm_aspect = 4:3；
 //   2) **关掉上下过扫描裁切**，帧缓冲变成完整的 256×240。
 // 必须用完整 240 行：224 行按内核的 4:3 摆放算出来是 ≈1.43（内核按完整帧归一化），
@@ -369,6 +381,9 @@ const ASPECT_WIDE = "wide";
 // 也正是 nes-shell-43.png（原素材，屏幕洞本来就 4:3）对应的画面。
 const WIDE_MODE = {
     nes: { aspect: 4 / 3, native: { width: 256, height: 240 } },
+    // SFC（snes9x）只切显示比例，不动帧缓冲：4:3 模式仍是 256×224 行，只是横向拉宽。
+    // pp 对应内核选项 snes9x_aspect = "uncorrected"（8:7），wide 对应 "4:3"。
+    snes: { aspect: 4 / 3, native: { width: 256, height: 224 } },
 };
 
 // 窗口取值是 `<倍率>|<显示比例>`（如 "2|pp" / "1.5|wide" / "fit|pp"）。
@@ -417,35 +432,6 @@ function persistNdsScreenMode(mode) {
     }
 }
 
-/** 读该游戏类型记住的滤镜 id；没记过、内容坏了都返回「无」，越界取值由 emuFilterFor 回落。 */
-function loadStoredFilter(gameType) {
-    if (!gameType) {
-        return "none";
-    }
-    try {
-        const raw = localStorage.getItem(FILTER_STORAGE_KEY);
-        const map = raw ? JSON.parse(raw) : null;
-        return typeof map?.[gameType] === "string" ? map[gameType] : "none";
-    } catch {
-        return "none";
-    }
-}
-
-function saveStoredFilter(gameType, id) {
-    if (!gameType) {
-        return;
-    }
-    try {
-        const raw = localStorage.getItem(FILTER_STORAGE_KEY);
-        const map = raw ? JSON.parse(raw) : null;
-        const next = map && typeof map === "object" && !Array.isArray(map) ? map : {};
-        next[gameType] = id;
-        localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(next));
-    } catch {
-        // 隐私模式等写失败场景忽略即可
-    }
-}
-
 /** 三种布局各自的倍率；缺省/非法值一律回落到「适应窗口」。 */
 function loadStoredNdsWindowScales() {
     const defaults = { dual: "fit", top: "fit", side: "fit" };
@@ -471,41 +457,34 @@ function persistNdsWindowScales(value) {
     }
 }
 
-/** 读该类型自动进表的滤镜（引擎自带菜单里试出来的着色器）；结构不对的条目丢掉。 */
-function loadStoredCustomFilters(gameType) {
+/** 读该机种在本地保存的滤镜 id；坏 JSON / 非法值一律回落到「无滤镜」。 */
+function loadStoredFilterId(gameType) {
     if (!gameType) {
-        return [];
+        return "none";
     }
     try {
-        const raw = localStorage.getItem(FILTER_CUSTOM_STORAGE_KEY);
-        const map = raw ? JSON.parse(raw) : null;
-        const stored = map ? map[gameType] : null;
-        if (!Array.isArray(stored)) {
-            return [];
-        }
-        return stored.filter(
-            (item) =>
-                item &&
-                typeof item.id === "string" &&
-                typeof item.label === "string" &&
-                typeof item.shader === "string" &&
-                (item.options === null || typeof item.options === "object"),
-        );
+        const map = JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || "{}");
+        const value = map?.[gameType];
+        return typeof value === "string" && value ? value : "none";
     } catch {
-        return [];
+        return "none";
     }
 }
 
-function saveStoredCustomFilters(gameType, list) {
+/** 保存该机种的滤镜选择；合并已有映射写回，写失败静默忽略。 */
+function persistFilterId(gameType, id) {
     if (!gameType) {
         return;
     }
     try {
-        const raw = localStorage.getItem(FILTER_CUSTOM_STORAGE_KEY);
-        const map = raw ? JSON.parse(raw) : null;
-        const next = map && typeof map === "object" && !Array.isArray(map) ? map : {};
-        next[gameType] = list;
-        localStorage.setItem(FILTER_CUSTOM_STORAGE_KEY, JSON.stringify(next));
+        const map = JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || "{}");
+        const next = map && typeof map === "object" ? { ...map } : {};
+        if (id && id !== "none") {
+            next[gameType] = id;
+        } else {
+            delete next[gameType];
+        }
+        localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify(next));
     } catch {
         // 隐私模式等写失败场景忽略即可
     }
@@ -547,13 +526,13 @@ const ndsScreenMode = ref(loadStoredNdsScreen());
 const switchingNdsMode = ref(false);
 // NDS 三种布局各自的窗口倍率（互相独立，见窗口选择器的三列矩阵）
 const ndsModeScales = ref(loadStoredNdsWindowScales());
+// 当前机种的复古滤镜 id（条目见 constants/emuFilters.js），取值来自本地保存
+const filterId = ref("none");
 // 是否处于持续加速（引擎自己的 Fast Forward 设置项）。真相在引擎里，这里只是它的镜像：
 // 进游戏时按引擎读到的值点亮，用户在引擎设置菜单里改过也会在下一秒跟上
 const fastForwardOn = ref(false);
-// 当前滤镜 id：进游戏时按该类型的记忆恢复（见 loadGame），取不到就是「无」
-const filterId = ref("none");
-// 引擎自带菜单里试出来、自动进表的滤镜（按游戏类型，见 loadStoredCustomFilters）
-const customFilters = ref([]);
+// 是否暂停。真相在引擎里，这里用于显示遮罩；引擎底部控制条改变暂停态也会在下一秒跟上
+const pausedState = ref(false);
 // 舞台在视口里的位置。机壳是 position: fixed（见样式里的说明），要用视口坐标，
 // 而这只能从 DOM 现读，滚动 / 缩放窗口 / 全屏之后都得重新同步一次
 const stageEl = ref(null);
@@ -575,6 +554,15 @@ let syncingCloud = false;
 let stageRaf = null;
 // 就绪后只按选中比例纠正内核一次（见 refreshEngineReady）
 let aspectSynced = false;
+// 滤镜：启动前是否已写进已有的设置块；没有设置块时才绪后要补一次 setFilter
+let filterPreloaded = false;
+let filterNeedsSync = false;
+// 本次 iframe 是否已经做过一次就绪补同步（换 iframe 时重置）
+let filterSynced = false;
+// 切换失败回滚下拉值时，避免 watch 再发一次反转请求
+let filterReverting = false;
+// 启动前预置时发现用户把默认内核切走了（原生选项会失效），就绪后提示一次
+let filterCoreWarning = false;
 // 截下来的那张图（等确认框点「确认」时才上传）；previewUrl 是它的 objectURL
 let shotBlob = null;
 // 宿主 iframe 的 window：快捷键要挂在它上面，见 bindFrameHotkey
@@ -692,21 +680,24 @@ const shell = computed(() => {
 });
 const supportsShell = computed(() => Boolean(shell.value));
 
-// 该机种的滤镜清单（没配就是 null → 标题栏不出现滤镜入口）：内置表 + 自动进表的那几条
-const filters = computed(() => {
-    const builtin = emuFiltersFor(game.value?.category);
-    if (!builtin) {
-        return null;
-    }
-    const extra = customFilters.value.filter((item) => !builtin.some((base) => base.id === item.id));
-    return [...builtin, ...extra];
-});
-// 当前生效的滤镜：id 找不到（换了清单、手改过 localStorage）就回落到「无」，
-// 所以运行中切换与设置块覆写都可以放心用它的 options/shader
-const filter = computed(() => {
-    const list = filters.value || [];
-    return list.find((item) => item.id === filterId.value) || list[0] || EMU_FILTER_NONE;
-});
+// 当前机种的滤镜表（未配置的机种回落到 full CRT，所以有游戏的机种总有入口）
+const filterEntries = computed(() =>
+    game.value ? emuFiltersFor(game.value.category) : [],
+);
+const filterChoices = computed(() =>
+    filterEntries.value.map((item) => ({ value: item.id, label: item.label })),
+);
+const currentFilter = computed(() =>
+    emuFilterFor(game.value?.category, filterId.value),
+);
+
+// 暂停提示里的按键名跟随按键管理页的自定义值；快捷键被关闭时只显示 GAME PAUSED
+const pauseKeyLabel = computed(() => shortcutLabel("play.toggle_pause"));
+const pauseHint = computed(() =>
+    pauseKeyLabel.value
+        ? `PRESS ${pauseKeyLabel.value.toUpperCase()} TO RESUME`
+        : "",
+);
 
 // 真正生效的机壳状态。偏好是全局记的，所以换到没有机壳的游戏上即使上次开着也不盖
 const shellOn = computed(() => supportsShell.value && shellVisible.value);
@@ -809,8 +800,6 @@ function refreshEngineReady() {
     if (!ready) {
         return;
     }
-    // 引擎自带菜单里换了着色器就跟着选中（试衣间 → 选择器），见 syncFilterFromEngine
-    syncFilterFromEngine();
     // 就绪时（以及之后每隔 1 秒）取一次引擎的显示宽高比：内核加载完才有值，
     // 用户在引擎设置里改了 aspect 也能跟着变；变了就重算舞台。
     // NDS 切换屏幕布局的过程中跳过：这时引擎可能还没换完，先按新模式的比例摆着，
@@ -820,11 +809,15 @@ function refreshEngineReady() {
         engineAspect.value = aspect;
         scheduleApplyStage();
     }
-    // 加速状态同理以引擎为准：设置文件里本来就开着（上次点过「保存配置」同步过来的），
-    // 或者用户刚在引擎设置菜单里改过，按钮都在这里跟上
+    // 加速状态以引擎为准：设置文件里开着，或用户刚在引擎设置菜单里改过，按钮都在这里跟上
     const fastForward = readEngineFastForward(rpc);
     if (fastForward !== null && fastForward !== fastForwardOn.value) {
         fastForwardOn.value = fastForward;
+    }
+    // 暂停状态同样以引擎为准：引擎底部控制条改变暂停态时，遮罩也在这里跟上
+    const paused = typeof rpc.paused === "boolean" ? rpc.paused : null;
+    if (paused !== null && paused !== pausedState.value) {
+        pausedState.value = paused;
     }
     // 就绪后按窗口选择器里选的那一列纠正一次显示比例：窗口选择器是显示比例的**唯一入口**，
     // 所以引擎自己存过的设置、或拉起 iframe 之后用户又改过比例，都在这里掰回来——机壳的洞
@@ -834,6 +827,24 @@ function refreshEngineReady() {
         if (wideMode.value && Math.abs(aspect - aspectForMode(aspectMode.value)) > 0.02) {
             void callRpc("setDisplayMode", aspectMode.value);
         }
+    }
+    // 首次进入没有设置块（或进游戏前就改了滤镜）时，就绪后补下发一次。
+    // 宿主页会顺手 saveSettings() 建块，下次启动就能在 iframe 之前预置。
+    if (!filterSynced) {
+        filterSynced = true;
+        if (filterNeedsSync) {
+            filterNeedsSync = false;
+            void callRpc("setFilter", filterPayload()).then((result) => {
+                if (!result?.ok) {
+                    ElMessage.error(result?.message || "切换滤镜失败。");
+                } else if (result.warning) {
+                    ElMessage.warning(result.warning);
+                }
+            });
+        } else if (filterCoreWarning) {
+            ElMessage.warning("当前内核不支持这组原生信号选项，仅着色器生效。");
+        }
+        filterCoreWarning = false;
     }
 }
 
@@ -864,8 +875,11 @@ function startEnginePoll() {
 
 function onFrameLoad() {
     engineReady.value = false;
-    // 新引擎起来之前加速状态无从谈起，先灭灯，就绪后由轮询按引擎实际值点亮
+    // 新引擎实例要重新判断是否需要补下发滤镜
+    filterSynced = false;
+    // 新引擎起来之前加速/暂停状态无从谈起，先复位，就绪后由轮询按引擎实际值同步
     fastForwardOn.value = false;
+    pausedState.value = false;
     // iframe 每次重挂都要重新挂快捷键：焦点在引擎画布上时事件只在 iframe 内部走
     bindFrameHotkey();
     // 指针活动（全屏闲置计时）与光标类同理，新文档要重新挂
@@ -1008,10 +1022,13 @@ function prefetchCloudSettings(gameType) {
 async function applyCloudSettings(gameType) {
     const remote = settingsPrefetch ? await settingsPrefetch : null;
     if (remote?.settings) {
-        // NDS 的双屏布局固定，云端旧值不能盖掉宿主页的默认值
-        const settings = gameType === "nds"
-            ? stripNdsDisplayOptions(remote.settings)
-            : remote.settings;
+        // NDS 的双屏布局固定，云端值与宿主页默认值冲突时以宿主页为准；
+        // 滤镜只认本机选择，云端残留的 shader / 内核滤镜键一并剔除
+        const settings = stripEmuFilterSettings(
+            gameType === "nds"
+                ? stripNdsDisplayOptions(remote.settings)
+                : remote.settings,
+        );
         writeEngineSettings(engineSettingsKeyValue, settings);
     }
 }
@@ -1035,93 +1052,59 @@ function sanitizeLocalNdsOptions(gameType) {
     }
 }
 
-/** 该类型记住的滤镜：合并清单里找得到就用它，否则「无」（进游戏时恢复选择用）。 */
-function filterForStored() {
-    const list = filters.value || [];
-    const stored = loadStoredFilter(game.value?.category);
-    return list.find((item) => item.id === stored) || EMU_FILTER_NONE;
-}
-
-/** 当前滤镜交给宿主页的参数：内核选项串（`k=v,k=v`）与着色器键名。 */
-function filterQuery() {
-    const current = filter.value;
-    return {
-        copts: Object.entries(current.options || {})
-            .map(([name, value]) => `${name}=${value}`)
-            .join(","),
-        shader: current.shader || "",
-    };
-}
-
 /**
- * 把当前滤镜写进引擎设置块。
+ * 把当前滤镜写进该游戏已有的引擎设置块，赶在 iframe 启动之前。
  *
- * 只在设置块**已经存在**时改写：没玩过就没必要凭一个滤镜给这个游戏留一份半成品配置。
- * 先按滤镜清单里出现过的所有键清一遍——上次选的滤镜留下的值不清就会跟着这一局
- * （比如上次选「真机液晶」留下的色彩校正，这次换成 CRT 还照旧生效）；
- * 清完再写入本次的键值。引擎启动时会重放这块设置，所以引擎自带菜单里显示的也是我们这份选择。
- */
-function applyFilterToEngineSettings() {
-    const raw = engineSettingsKeyValue ? readEngineSettingsRaw(engineSettingsKeyValue) : null;
-    if (!raw) {
-        return;
-    }
-    const blob = JSON.parse(raw);
-    for (const name of EMU_FILTER_SETTING_KEYS) {
-        delete blob.settings[name];
-    }
-    const current = filter.value;
-    if (current.shader) {
-        blob.settings.shader = current.shader;
-    }
-    for (const [name, value] of Object.entries(current.options || {})) {
-        blob.settings[name] = value;
-    }
-    writeEngineSettings(engineSettingsKeyValue, blob);
-}
-
-/**
- * 把引擎自带菜单里选的着色器同步到滤镜选择器。
+ * 引擎启动时会把这个块里的 settings 写成内核选项文件（设置块优先于默认值），
+ * 所以先把本机种所有受控键复位成关闭值，再覆盖当前条目的选项和 shader。
+ * 只在设置块已存在时写：新建块需要合法的 controlSettings，父页面拿不到引擎默认按键，
+ * 写空对象会把键位弄坏；没有块的情况由引擎就绪后的 setFilter 兜底。
  *
- * 引擎那个菜单（底部工具栏 → 图形设置 → 着色器）当「试衣间」用：在那里换一个，这里就跟着
- * 选中；表里没有的会**自动进表**（沿用当前滤镜的内核选项，名字用着色器名）并记住，
- * 于是下次进游戏照样套用——不这么做的话，引擎菜单里的改动会被本页启动时的重置逻辑丢掉。
- * 引擎不发设置变更事件，所以只能每秒读一次它写的设置块（菜单里改完会立刻落盘）。
+ * 返回 true 表示已预置，引擎就绪后不需要再补一次。
  */
-function syncFilterFromEngine() {
-    if (!filters.value) {
-        return;
+function applyFilterToEngineSettings(gameType, id) {
+    filterCoreWarning = false;
+    if (!gameType || !engineSettingsKeyValue) {
+        return false;
     }
-    const raw = engineSettingsKeyValue ? readEngineSettingsRaw(engineSettingsKeyValue) : null;
+    const raw = readEngineSettingsRaw(engineSettingsKeyValue);
     if (!raw) {
-        return;
+        return false;
     }
-    let settings = null;
     try {
-        settings = JSON.parse(raw).settings;
+        const blob = JSON.parse(raw);
+        const filter = emuFilterFor(gameType, id);
+        const expectedCore = EMU_FILTER_CORES[gameType];
+        const activeCore = blob.settings?.retroarch_core;
+        // 用户把默认内核切走后原生选项会静默失效；着色器仍能应用，就绪后提示一次
+        filterCoreWarning = Boolean(
+            Object.keys(filter.options || {}).length &&
+                expectedCore &&
+                activeCore &&
+                activeCore !== expectedCore,
+        );
+        const next = {
+            ...blob,
+            settings: { ...blob.settings, ...emuFilterSettingsPatch(gameType, id) },
+        };
+        return writeEngineSettings(engineSettingsKeyValue, next);
     } catch {
-        return;
+        return false;
     }
-    // 引擎首次写设置块时 settings 里可能根本没有 shader 键（比如只调过音量、改过按键）：
-    // 缺键表示「没意见」，不能当成用户选了「禁用」——否则会把本页选中的着色器滤镜
-    // 静默改回「无」，并关掉着色器。
-    if (typeof settings?.shader !== "string") {
-        return;
-    }
-    const shader = settings.shader === "disabled" ? "" : settings.shader;
-    if (shader === (filter.value.shader || "")) {
-        return;
-    }
-    const { entry, created } = filterForShader(filters.value, filter.value, shader);
-    if (created) {
-        const next = [...customFilters.value, entry];
-        customFilters.value = next;
-        saveStoredCustomFilters(game.value?.category, next);
-    }
-    if (entry.id !== filterId.value) {
-        // 选中它：watch 会记住这次选择，并把状态（幂等地）再下发一次给引擎
-        filterId.value = entry.id;
-    }
+}
+
+/** 运行中切滤镜时下发给宿主页的内容：先复位本机种涉及的滤镜键，再开新键，最后切 shader。 */
+function filterPayload() {
+    const category = game.value?.category;
+    const options = currentFilter.value.options || {};
+    return {
+        options,
+        reset: emuFilterResets(category),
+        shader: currentFilter.value.shader || "",
+        // 期望的**实际内核名**（不是系统名）。只有条目带原生选项时才传：
+        // 纯 CRT / 「无滤镜」不依赖内核，避免切过内核后弹出无意义的 warning。
+        core: Object.keys(options).length ? EMU_FILTER_CORES[category] || "" : "",
+    };
 }
 
 /** 「保存配置」：把当前引擎配置整块传到云端，之后进该平台的游戏会自动加载。 */
@@ -1137,7 +1120,8 @@ async function saveEngineSettings() {
     }
     savingSettings.value = true;
     try {
-        await saveEmulatorSettingsAPI(category, JSON.parse(raw));
+        // 滤镜只记在本机；上传前剔除 shader 与各内核滤镜键，避免混进账号配置
+        await saveEmulatorSettingsAPI(category, stripEmuFilterSettings(JSON.parse(raw)));
         ElMessage.success("模拟器配置已保存，下次进入该平台的游戏会自动加载");
     } catch {
         ElMessage.error("保存模拟器配置失败，请稍后重试。");
@@ -1238,12 +1222,46 @@ async function confirmScreenshot(description) {
     }
 }
 
-// 快捷键 Ctrl+Shift+S（F12 是浏览器开发者工具的保留键，拦不住）：
+// 默认快捷键 Ctrl+Shift+S，可在按键管理页改键：
 // 焦点可能停在宿主 iframe 里的引擎画布上，所以两边的 window 都要挂一份
 function onScreenshotHotkey(event) {
-    if (takeHotkey(event, "s", () => !shooting.value)) {
+    if (takeShortcut(event, "play.screenshot", () => !shooting.value)) {
         void onScreenshot();
     }
+}
+
+/** 标题栏下拉或 Element Plus 弹层打开时，Esc 先用于关闭它们，不切暂停。 */
+function hasOpenPlaybackPopover() {
+    return (
+        Boolean(
+            document.querySelector(
+                ".playback-select__panel, .emu-window-select__panel",
+            ),
+        ) || document.body.classList.contains("el-popup-parent--hidden")
+    );
+}
+
+// 默认 Esc，可在按键管理页改键；焦点在引擎画布或父页面都能触发。
+// 全屏时 Esc 由浏览器优先用于退出全屏，这里不抢。
+function onPauseHotkey(event) {
+    if (isEngineChromeTarget(event.target) || hasOpenPlaybackPopover()) {
+        return;
+    }
+    if (document.fullscreenElement || event.target?.ownerDocument?.fullscreenElement) {
+        return;
+    }
+    if (takeShortcut(event, "play.toggle_pause", () => true)) {
+        void togglePauseGame();
+    }
+}
+
+async function togglePauseGame() {
+    const result = await callRpc("togglePause");
+    if (!result?.ok) {
+        ElMessage.error(result?.message || "切换暂停状态失败。");
+        return;
+    }
+    pausedState.value = result.paused === true;
 }
 
 /**
@@ -1251,14 +1269,30 @@ function onScreenshotHotkey(event) {
  * 并顺手选中模拟器——不管有没有存档，按完回车都能直接接着玩。
  * **有存档时这一下会被读档吃掉**：不再冒泡给引擎，免得同时还把 Start 按下去；
  * 没有存档时不拦这个键，回车照常传给引擎（引擎默认的 Start）。
+ *
+ * DOS / 街机里回车是常用输入键（DOS 命令行、街机 Start），即使有存档也不拦，
+ * 免得用户按回车就被读档；只保留「把焦点交给引擎」这一段。
  */
+function enterLoadSaveDisabled() {
+    const category = game.value?.category;
+    return category === "dos" || category === "arcade";
+}
+
 function onLoadLocalHotkey(event) {
-    if (takeHotkey(event, null, () => Boolean(getLocalEmuSave(currentGameId.value)))) {
+    if (
+        !enterLoadSaveDisabled() &&
+        takeShortcut(
+            event,
+            "play.load_local",
+            () => Boolean(getLocalEmuSave(currentGameId.value)),
+            { avoidInteractive: true }
+        )
+    ) {
         void onLoadLocal();
         focusEngineIfNeeded();
         return;
     }
-    // 没有存档时 takeHotkey 会放行（焦点在按钮/链接/下拉上时也一样）。
+    // 没有存档（或该快捷键已关闭/改键）时 takeShortcut 会放行（焦点在按钮/链接/下拉上时也一样）。
     // 这里只补「选中模拟器」，不拦键，回车仍然照原来的路径走。
     if (
         !isBareEnter(event) ||
@@ -1321,29 +1355,22 @@ function focusEngineIfNeeded() {
 }
 
 /**
- * 快捷键 `·`（Backquote，数字 1 左边那个键）：立刻捕捉当前进度并同步至云端。
+ * 快捷键 `·`（Backquote，数字 1 左边那个键，可在按键管理页改键）：立刻捕捉当前进度并同步至云端。
  * 捕捉与上传由 onUploadCloud 顺次完成、成功提示也在里面，这里只认键与防重入。
  */
 function onSyncCloudHotkey(event) {
-    if (takeBareCode(event, "Backquote", () => !syncingCloud)) {
+    if (takeShortcut(event, "play.sync_cloud", () => !syncingCloud)) {
         void syncCloudNow();
     }
 }
 
 /**
- * 快捷键 Alt + `（Backquote，数字 1 左边那个键）：打开存档管理。
+ * 快捷键 Alt + `（Backquote，数字 1 左边那个键，可在按键管理页改键）：打开存档管理。
  * 与标题栏的「存档管理」按钮同一条路；游戏还没加载、弹框开着时不响应。
  * 注意和 `·` 区分：那个不带修饰键，这个必须按住 Alt。
  */
 function onSaveManagerHotkey(event) {
-    if (
-        event.code !== "Backquote" ||
-        !event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        event.repeat
-    ) {
+    if (!matchesShortcut(event, "play.save_manager") || event.repeat) {
         return;
     }
     const target = event.target;
@@ -1351,7 +1378,7 @@ function onSaveManagerHotkey(event) {
     if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target?.isContentEditable) {
         return;
     }
-    if (!game.value || saveManagerVisible.value || shotDialogVisible.value) {
+    if (!game.value || saveManagerVisible.value || shotDialogVisible.value || syncingCloud) {
         return;
     }
     // 捕获阶段拦下：引擎自己也监听 keydown，Alt+` 不该同时进游戏
@@ -1471,19 +1498,20 @@ async function switchNdsScreenMode(next) {
 }
 
 /**
- * 快捷键 - / =：NDS 屏幕布局循环（- 上一个、= 下一个：dual → top → side → dual）。
+ * 快捷键 - / =（可在按键管理页改键）：NDS 屏幕布局循环（上一个 / 下一个：dual → top → side → dual）。
  *
- * 认的是 **Backspace 左边那两个物理键**（event.code 的 Minus / Equal），不是主键盘
- * 字符、也不是小键盘（NumpadSubtract / NumpadAdd）：`+` 就是 Shift+=，按不按 Shift
- * 都算下一个。不带 Ctrl/Alt/Meta 才生效；焦点在输入框、引擎菜单/设置面板里时不抢。
+ * 默认认的是 **Backspace 左边那两个物理键**（event.code 的 Minus / Equal），不是主键盘
+ * 字符、也不是小键盘（NumpadSubtract / NumpadAdd）：`+` 就是 Shift+=，默认只认不按 Shift
+ * 的 =。焦点在输入框、引擎菜单/设置面板里时不抢。
  */
 function onNdsScreenHotkey(event) {
-    const isPrevious = event.code === "Minus";
-    const isNext = event.code === "Equal";
-    if (!isPrevious && !isNext) {
-        return;
+    let step = 0;
+    if (matchesShortcut(event, "play.nds_next")) {
+        step = 1;
+    } else if (matchesShortcut(event, "play.nds_prev")) {
+        step = -1;
     }
-    if (event.ctrlKey || event.altKey || event.metaKey || event.repeat) {
+    if (!step || event.repeat) {
         return;
     }
     if (!isNds.value || switchingNdsMode.value) {
@@ -1498,7 +1526,6 @@ function onNdsScreenHotkey(event) {
     event.preventDefault();
     // 捕获阶段拦下：引擎自己也监听 keydown，这两个键不该同时进游戏
     event.stopPropagation();
-    const step = isNext ? 1 : -1;
     void switchNdsScreenMode(stepNdsScreenMode(ndsScreenMode.value, step));
 }
 
@@ -1521,20 +1548,16 @@ function hotkeyUsable(event, ready) {
 
 /**
  * 两侧 window 共用的快捷键入口：认出来并拦下返回 true（调用方再去做事），否则返回 false 放行。
- * key 为 "s" 时认 Ctrl+Shift+S，为 null 时认回车（不带任何修饰键）。ready 是这一下对当前
- * 状态有没有意义（正在截图 / 本地根本没有存档）。不接管的场景还有：焦点在输入框里（引擎设置
- * 面板、描述框，那是在打字）、引擎尚未就绪、或弹框正开着（弹框里的回车有自己的含义）。
+ * actionId 对应按键管理页的动作；ready 是这一下对当前状态有没有意义（正在截图 / 本地根本没有
+ * 存档）。不接管的场景还有：焦点在输入框里（引擎设置面板、描述框，那是在打字）、引擎尚未
+ * 就绪、或弹框正开着（弹框里的回车有自己的含义）。
  */
-function takeHotkey(event, key, ready) {
-    const matches = key
-        ? event.ctrlKey && event.shiftKey && String(event.key || "").toLowerCase() === key
-        : event.key === "Enter" && !event.ctrlKey && !event.altKey && !event.metaKey && !event.shiftKey;
-    if (!matches) {
+function takeShortcut(event, actionId, ready, options = {}) {
+    if (!matchesShortcut(event, actionId)) {
         return false;
     }
-    // 焦点停在标题栏按钮上时，回车是「按下这个按钮」，不跟它抢（点过按钮后焦点会留在那儿）
-    const tag = String(event.target?.tagName || "").toUpperCase();
-    if (!key && (tag === "BUTTON" || tag === "A" || tag === "SELECT")) {
+    // 焦点停在标题栏按钮/链接/下拉上时，回车或空格是「按下这个控件」，不跟它抢
+    if (options.avoidInteractive && isInteractiveTarget(event.target)) {
         return false;
     }
     if (!hotkeyUsable(event, ready)) {
@@ -1542,26 +1565,6 @@ function takeHotkey(event, key, ready) {
     }
     event.preventDefault();
     // 捕获阶段拦下：引擎自己也监听 keydown（在它的容器上），不拦住的话这一下会同时进游戏
-    event.stopPropagation();
-    return true;
-}
-
-/**
- * 裸键按 event.code 匹配、且不带任何修饰键：给 `·`（Backquote）这种不该看布局字符的键用
- * （同一物理键在别的布局/输入法下 event.key 可能是 ` / ~ / ·）。守卫与 takeHotkey 相同。
- */
-function takeBareCode(event, code, ready) {
-    if (
-        event.code !== code ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        !hotkeyUsable(event, ready)
-    ) {
-        return false;
-    }
-    event.preventDefault();
     event.stopPropagation();
     return true;
 }
@@ -1643,6 +1646,7 @@ function bindFrameHotkey() {
     frameWindow.addEventListener("keydown", onSyncCloudHotkey, true);
     frameWindow.addEventListener("keydown", onSaveManagerHotkey, true);
     frameWindow.addEventListener("keydown", onNdsScreenHotkey, true);
+    frameWindow.addEventListener("keydown", onPauseHotkey, true);
 }
 
 function unbindFrameHotkey() {
@@ -1655,6 +1659,7 @@ function unbindFrameHotkey() {
         hotkeyFrameWindow.removeEventListener("keydown", onSyncCloudHotkey, true);
         hotkeyFrameWindow.removeEventListener("keydown", onSaveManagerHotkey, true);
         hotkeyFrameWindow.removeEventListener("keydown", onNdsScreenHotkey, true);
+        hotkeyFrameWindow.removeEventListener("keydown", onPauseHotkey, true);
     } catch {
         // 页面已经换过 iframe / 窗口已销毁，忽略即可
     }
@@ -1780,30 +1785,48 @@ async function launchEngine() {
         engineSettingsKeyValue = engineSettingsKey(item.id, meta.value.core, item.name || "");
         await applyCloudSettings(item.category);
         sanitizeLocalNdsOptions(item.category);
-        // 滤镜：内核选项既要进内核设置文件（内核加载前就得在，见宿主页），也要进引擎设置块
-        // （引擎自己的重放路径）；设置块里的值优先级更高，所以顺序必须是「先云端的、再本局的
-        // 滤镜」，反过来就会被云端或上一次的选择顶掉。
-        applyFilterToEngineSettings();
+        // 云端与 NDS 清理都可能重写设置块，滤镜必须最后写；
+        // 没有设置块时（首次进入）留给引擎就绪后的 setFilter 兜底
+        filterPreloaded = applyFilterToEngineSettings(item.category, filterId.value);
+        filterNeedsSync = !filterPreloaded && filterId.value !== "none";
         // ROM 直连后端流式接口；带 updated_at 参数，重传本体后可让 EmulatorJS 缓存失效
         const params = new URLSearchParams({
             id: String(item.id),
             core: meta.value.core,
             name: item.name || "",
             v: item.updated_at || "",
-            // 显示比例：宿主页据此设内核选项（只有 FC 认这个参数），与标题栏窗口选择器里选的那列一致
+            // 显示比例：宿主页据此设内核选项（只有 FC / SFC 认这个参数），与标题栏窗口选择器里选的那列一致
             ratio: aspectMode.value,
         });
+        // ROM 文件名：宿主页拼成 /api/games/{id}/play/<文件名>，EmulatorJS 用末段当 ROM
+        // 文件名（`.pbp` 等核依赖后缀），所以必须传真实落盘名 game.<ext>。
+        const romFile = String(item.game_path || "").split("/").pop();
+        if (romFile) {
+            params.set("file", romFile);
+        }
+        // 多文件本体：宿主页先取 /play/manifest，再用 EJS_externalFiles 拉分轨
+        if (item.body_kind === "bundle") {
+            params.set("bundle", "1");
+        }
+        // 线程核（PSP / DOS）：宿主页据此打开 EJS_threads；没有 COOP/COEP 时它会报中文错
+        if (item.threads === true || meta.value?.threads === true) {
+            params.set("threads", "1");
+        }
+        // BIOS：列表条目自带（不依赖 /status 是否加载成功），类型元数据兜底。
+        // 宿主页只接受 bios/ 下的安全 zip 文件名，自己拼路径。
+        const bios = item.bios || meta.value?.bios || null;
+        if (bios?.file) {
+            params.set("bios", bios.file);
+            if (bios.required_files?.length) {
+                params.set("biosfiles", bios.required_files.join(","));
+            }
+            if (bios.optional) {
+                params.set("biosoptional", "1");
+            }
+        }
         // NDS 屏幕布局：宿主页据此在启动前写 melonds_screen_layout / melonds_screen_gap
         if (item.category === "nds") {
             params.set("nds", ndsScreenMode.value);
-        }
-        // 滤镜：内核选项串在加载前落进内核设置文件，着色器键名在引擎起来后启用
-        const filterParams = filterQuery();
-        if (filterParams.copts) {
-            params.set("copts", filterParams.copts);
-        }
-        if (filterParams.shader) {
-            params.set("shader", filterParams.shader);
         }
         iframeSrc.value = `/emulator-host.html?${params.toString()}`;
         reportGamePlayed(item.id);
@@ -1830,7 +1853,6 @@ async function loadGame() {
     if (!gameId) {
         game.value = null;
         meta.value = null;
-        filterId.value = "none";
         iframeSrc.value = "";
         saveManagerVisible.value = false;
         shotDialogVisible.value = false;
@@ -1838,8 +1860,14 @@ async function loadGame() {
         unbindFramePointerActivity();
         engineReady.value = false;
         fastForwardOn.value = false;
+        pausedState.value = false;
         engineAspect.value = null;
         aspectSynced = false;
+        filterId.value = "none";
+        filterPreloaded = false;
+        filterNeedsSync = false;
+        filterSynced = false;
+        filterCoreWarning = false;
         resetSettingsSync();
         stopAreaObserver();
         return;
@@ -1856,8 +1884,13 @@ async function loadGame() {
     unbindFramePointerActivity();
     engineReady.value = false;
     fastForwardOn.value = false;
+    pausedState.value = false;
     engineAspect.value = null;
     aspectSynced = false;
+    filterPreloaded = false;
+    filterNeedsSync = false;
+    filterSynced = false;
+    filterCoreWarning = false;
     resetSettingsSync();
     stopEnginePoll();
     try {
@@ -1894,10 +1927,11 @@ async function loadGame() {
         }
         game.value = item;
         meta.value = typeMeta;
-        // 滤镜：按该类型记住的选择恢复（含引擎菜单里试出来、自动进表的条目）；
-        // 清单里已经没有它了就回落到「无」
-        customFilters.value = loadStoredCustomFilters(item.category);
-        filterId.value = filterForStored().id;
+        // 载入该机种在本地保存的滤镜；非法 id 由 emuFilterFor 回落到「无滤镜」
+        filterId.value = emuFilterFor(
+            item.category,
+            loadStoredFilterId(item.category),
+        ).id;
         // 云端设置与游戏状态并行拉取；无手势时这段等待正好用来完成它
         prefetchCloudSettings(item.category);
         // 无用户手势（例如刷新页面、直接打开链接进入）时，浏览器会拦截音频自动开始
@@ -1948,21 +1982,35 @@ watch(shellVisible, (value) => {
 // NDS 三种布局各自的倍率：改了就记下来（点窗口选择器的格子 / 以后扩展都走这里）
 watch(ndsModeScales, (value) => persistNdsWindowScales(value), { deep: true });
 
-// 滤镜：记住选择（按游戏类型），运行中切换就立刻推给引擎——引擎只在启动时读一次设置，
-// 所以运行中改走宿主页的 setFilter；下次进游戏由 iframe 的 copts / shader 参数兜住。
-watch(filterId, (value) => {
-    saveStoredFilter(game.value?.category, value);
-    if (!engineReady.value) {
+// 切滤镜：先按机种记住；引擎未就绪就等就绪后补下发，已就绪则立刻走 RPC。
+// RPC 失败时回滚下拉值（filterReverting 挡住回滚引发的第二次请求）。
+watch(filterId, (value, oldValue) => {
+    const category = game.value?.category;
+    if (!category) {
         return;
     }
-    // 设置块也跟上：中途按「保存配置」时传的就是当下这份选择，而不是启动时那份
-    applyFilterToEngineSettings();
-    const current = filter.value;
-    void callRpc("setFilter", {
-        options: current.options || {},
-        shader: current.shader || "",
-        // 本类型滤镜涉及的内核选项及各自的关闭值：宿主页先把它们复位，再下发本次的取值
-        reset: emuFilterResets(game.value?.category),
+    persistFilterId(category, value);
+    if (filterReverting) {
+        filterReverting = false;
+        return;
+    }
+    if (!engineReady.value) {
+        filterNeedsSync = true;
+        return;
+    }
+    void callRpc("setFilter", filterPayload()).then((result) => {
+        if (!result?.ok) {
+            ElMessage.error(result?.message || "切换滤镜失败。");
+            filterReverting = true;
+            filterId.value = oldValue;
+            return;
+        }
+        filterNeedsSync = false;
+        if (result.warning) {
+            ElMessage.warning(result.warning);
+        }
+    }).catch(() => {
+        ElMessage.error("切换滤镜失败。");
     });
 });
 
@@ -1974,6 +2022,8 @@ watch(shotDialogVisible, (visible) => {
 });
 
 onMounted(() => {
+    // 类型元数据用于标题与 kind 校验；即使还没加载，metaOf 也会回退到以 game_type 为 core
+    void useGameTypesStore().ensureLoaded();
     // 机壳用视口坐标定位：窗口缩放、页面/游戏区滚动都要重新同步。
     // 滚动用捕获阶段监听：滚动发生在内层容器（.game-shell__body 等）上，不冒泡到 window
     window.addEventListener("resize", syncStageRect);
@@ -1985,6 +2035,8 @@ onMounted(() => {
     window.addEventListener("keydown", onSaveManagerHotkey);
     // 捕获阶段：标题栏/弹框里若有元素停止冒泡，- / = 也要能切布局
     window.addEventListener("keydown", onNdsScreenHotkey, true);
+    // 暂停键也用捕获阶段，避免引擎或其它处理先消费 Esc
+    window.addEventListener("keydown", onPauseHotkey, true);
     loadGame();
 });
 watch(() => route.params.gameId, loadGame);
@@ -1996,6 +2048,7 @@ onBeforeUnmount(() => {
     window.removeEventListener("keydown", onSyncCloudHotkey);
     window.removeEventListener("keydown", onSaveManagerHotkey);
     window.removeEventListener("keydown", onNdsScreenHotkey, true);
+    window.removeEventListener("keydown", onPauseHotkey, true);
     unbindFrameHotkey();
     unbindFramePointerActivity();
     releaseShot();
@@ -2024,6 +2077,7 @@ onBeforeUnmount(() => {
 }
 
 .emulator-player__stage {
+    position: relative;
     flex: 0 0 auto;
     margin: auto;
 }

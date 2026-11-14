@@ -6,27 +6,20 @@
             class="game-discover__tabs"
             :options="TABS"
             size="lg"
-            aria-label="游戏检索或榜单"
+            aria-label="游戏名录或榜单"
         />
 
-        <!-- 游戏检索 -->
+        <!-- 游戏名录 -->
         <section v-show="activeTab === 'search'" class="game-discover__panel">
             <div class="game-discover__toolbar">
-                <el-select
+                <app-type-select
                     v-model="searchConsole"
                     class="game-discover__console"
                     placeholder="游戏类型"
                     clearable
+                    :options="searchTypeOptions"
                     @change="searchNow"
-                >
-                    <el-option label="全部游戏类型" value="" />
-                    <el-option
-                        v-for="item in searchConsoles"
-                        :key="item.id"
-                        :label="item.name"
-                        :value="item.id"
-                    />
-                </el-select>
+                />
                 <el-input
                     v-model="keyword"
                     class="game-discover__keyword"
@@ -34,11 +27,16 @@
                     clearable
                     @keyup.enter="searchNow"
                     @input="onKeywordInput"
-                    @clear="searchNow"
+                    @clear="onKeywordClear"
                 />
             </div>
 
-            <div v-loading="searchLoading" class="game-discover__body">
+            <div
+                ref="searchWrapEl"
+                v-loading="searchLoading"
+                class="game-discover__body"
+                :style="{ height: searchWrapHeight }"
+            >
                 <table v-if="searchItems.length" class="game-discover__table">
                     <thead>
                         <tr>
@@ -51,146 +49,209 @@
                         <tr v-for="item in searchItems" :key="item.id">
                             <td class="game-discover__nowrap">{{ item.console }}</td>
                             <td>
-                                <template
-                                    v-for="(seg, index) in highlight(item.zh)"
-                                    :key="index"
-                                >
-                                    <mark v-if="seg.hit">{{ seg.text }}</mark>
-                                    <template v-else>{{ seg.text }}</template>
-                                </template>
+                                <app-truncatable-name>
+                                    <template
+                                        v-for="(seg, index) in highlight(item.zh)"
+                                        :key="index"
+                                    >
+                                        <mark v-if="seg.hit">{{ seg.text }}</mark>
+                                        <template v-else>{{ seg.text }}</template>
+                                    </template>
+                                </app-truncatable-name>
                             </td>
                             <td>
-                                <template
-                                    v-for="(seg, index) in highlight(item.en)"
-                                    :key="index"
-                                >
-                                    <mark v-if="seg.hit">{{ seg.text }}</mark>
-                                    <template v-else>{{ seg.text }}</template>
-                                </template>
+                                <app-truncatable-name>
+                                    <template
+                                        v-for="(seg, index) in highlight(item.en)"
+                                        :key="index"
+                                    >
+                                        <mark v-if="seg.hit">{{ seg.text }}</mark>
+                                        <template v-else>{{ seg.text }}</template>
+                                    </template>
+                                </app-truncatable-name>
                             </td>
                         </tr>
                     </tbody>
                 </table>
                 <app-empty v-else :description="searchEmptyDescription" />
-
-                <!-- 翻页放在表格下面；只有一页时不出现（AppPagination 自己判）。
-                     切到榜单标签时把键盘翻页关掉：分页条的左右键监听挂在 window 上，
-                     隐藏着也会抢键（keyboard 就是为这种同页多列表/隐藏列表留的开关）。 -->
-                <app-pagination
-                    v-model:page="page"
-                    :total="total"
-                    :page-size="pageSize"
-                    :keyboard="activeTab === 'search'"
-                    @change="loadSearch"
-                />
             </div>
+
+            <!-- 翻页放在表格下面；只有一页时不出现（AppPagination 自己判）。
+                 切到榜单标签时把键盘翻页关掉：分页条的左右键监听挂在 window 上，
+                 隐藏着也会抢键（keyboard 就是为这种同页多列表/隐藏列表留的开关）。 -->
+            <app-pagination
+                v-model:page="page"
+                :total="total"
+                :page-size="pageSize"
+                :keyboard="activeTab === 'search'"
+                previous-shortcut="discover.page.prev"
+                next-shortcut="discover.page.next"
+                @change="loadSearch"
+            />
         </section>
 
         <!-- 游戏榜单 -->
         <section v-show="activeTab === 'ranking'" class="game-discover__panel">
             <div class="game-discover__toolbar">
-                <el-select
+                <app-type-select
                     v-model="rankingConsole"
                     class="game-discover__console"
-                    placeholder="游戏类型"
+                    placeholder="全部类型"
+                    clearable
                     :disabled="!rankingConsoles.length"
-                    @change="loadRanking"
-                >
-                    <el-option
-                        v-for="item in rankingConsoles"
-                        :key="item.platform"
-                        :label="item.label"
-                        :value="item.platform"
-                    />
-                </el-select>
+                    :options="rankingTypeOptions"
+                    @change="rankingNow"
+                />
 
-                <!-- 榜单搜索：与检索区那个同一个 class（样式、位置、清空按钮都一样），但**纯前端**过滤
-                     ——榜单是一个机种整份取回来的，逐字即时筛，不需要防抖、也不需要回车或清空的处理
-                     （裸 v-model + clearable，computed 自己会跟着变） -->
+                <!-- 榜单搜索走后端：300ms 防抖，回车立即请求；清空也回到第一页 -->
                 <el-input
                     v-model="rankingKeyword"
                     class="game-discover__keyword"
-                    placeholder="搜索游戏名称"
+                    placeholder="搜索中文名或英文名"
                     clearable
+                    @input="onRankingKeywordInput"
+                    @keyup.enter="rankingNow"
+                    @clear="onRankingKeywordClear"
                 />
 
-                <!-- 已入库比例，同时是「只看已入库」的开关：单击按下，榜单就只留命中库存的行，再点一下恢复。
-                     数字由前端按已整份取回的 rankingItems 现算（榜单不分页），不再多打一次接口。
-                     加载中先藏起来：rankingItems 在请求成功前不会清空，否则切机种会闪一下上一个机种的数字 -->
-                <app-button
-                    v-if="rankingTotal && !rankingLoading"
-                    class="game-discover__stock"
-                    variant="secondary"
-                    size="sm"
-                    :pressed="rankingInLibraryOnly"
-                    @click="toggleInLibraryOnly"
-                >
-                    <span class="game-discover__stock-label">已入库</span>
-                    <span class="game-discover__stock-value">
-                        {{ rankingLinkedCount }} / {{ rankingTotal }}
+                <app-select
+                    v-model="rankingLibrary"
+                    class="game-discover__library"
+                    placeholder="库存类型"
+                    clearable
+                    :options="rankingLibraryOptions"
+                    @change="rankingNow"
+                />
+
+                <!-- 卡带按钮配色说明：与下面 cartridgeToneClass 的四种配色一一对应 -->
+                <div class="game-discover__legend" aria-label="卡带按钮颜色说明">
+                    <span class="game-discover__legend-item">
+                        <span
+                            class="game-discover__legend-swatch game-discover__legend-swatch--out"
+                        ></span>
+                        未入库
                     </span>
-                </app-button>
+                    <span class="game-discover__legend-item">
+                        <span
+                            class="game-discover__legend-swatch game-discover__legend-swatch--not-started"
+                        ></span>
+                        未开始
+                    </span>
+                    <span class="game-discover__legend-item">
+                        <span
+                            class="game-discover__legend-swatch game-discover__legend-swatch--in-progress"
+                        ></span>
+                        进行中
+                    </span>
+                    <span class="game-discover__legend-item">
+                        <span
+                            class="game-discover__legend-swatch game-discover__legend-swatch--completed"
+                        ></span>
+                        已通关
+                    </span>
+                </div>
             </div>
 
-            <div v-loading="rankingLoading" class="game-discover__body">
-                <table v-if="rankingVisibleItems.length" class="game-discover__table">
+            <div
+                ref="rankingWrapEl"
+                v-loading="rankingLoading"
+                class="game-discover__body"
+                :style="{ height: rankingWrapHeight }"
+            >
+                <table
+                    v-if="rankingItems.length"
+                    class="game-discover__table"
+                    :class="{ 'game-discover__table--all': !rankingConsole }"
+                >
                     <thead>
                         <tr>
-                            <th class="game-discover__col-rank">排名</th>
-                            <th>游戏名称</th>
+                            <th class="game-discover__col-rank">序号</th>
+                            <th class="game-discover__col-score">评分</th>
+                            <!-- 清空机种后是跨机种榜单，必须显示类型，否则看不出每行属于哪台机器 -->
+                            <th
+                                v-if="!rankingConsole"
+                                class="game-discover__col-ranking-console"
+                            >
+                                游戏类型
+                            </th>
+                            <th class="game-discover__col-zh">中文名</th>
+                            <th>英文名</th>
                             <th class="game-discover__col-ids">卡带ID</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <tr v-for="item in rankingPagedItems" :key="item.rank">
-                            <td class="game-discover__rank">{{ item.rank }}</td>
-                            <td>
-                                <!-- 卡带 ID 与平台库存对上的行：游戏名是**真链接**（router-link 渲染成
-                                     原生 <a href>），单击进播放页，Ctrl+点击 / 中键由浏览器自己开新标签页。
-                                     没对上的行就是纯文本 -->
-                                <router-link
-                                    v-if="item.path"
-                                    class="game-discover__link"
-                                    :to="item.path"
-                                >
-                                    {{ item.title }}
-                                </router-link>
-                                <template v-else>{{ item.title }}</template>
+                        <tr
+                            v-for="{ item, rank } in rankingPageRows"
+                            :key="`${item.platform}-${rank}`"
+                        >
+                            <td class="game-discover__rank">{{ rank }}</td>
+                            <td class="game-discover__score">
+                                {{ formatRankingScore(item.score) }}
+                            </td>
+                            <td v-if="!rankingConsole" class="game-discover__nowrap">
+                                {{ rankingPlatformLabel(item.platform) }}
                             </td>
                             <td>
-                                <span v-if="!item.cartridge_ids.length" class="game-discover__none">
-                                    —
-                                </span>
-                                <span v-else class="game-discover__ids">
-                                    <copy-button
-                                        v-for="cartridgeId in item.cartridge_ids"
-                                        :key="cartridgeId"
-                                        :text="cartridgeId"
-                                        variant="pill"
-                                    />
-                                </span>
+                                <!-- 回填后仍可能没有中文名：显示 — -->
+                                <span v-if="!item.zh" class="game-discover__none">—</span>
+                                <app-truncatable-name v-else>{{ item.zh }}</app-truncatable-name>
+                            </td>
+                            <td>
+                                <app-truncatable-name>{{ item.en }}</app-truncatable-name>
+                            </td>
+                            <td class="game-discover__ids-cell">
+                                <!-- 没有对应卡带就空着，不填「—」 -->
+                                <div class="game-discover__ids">
+                                    <!-- 每盘卡带一个按钮：在库按进度着色并直接进播放页；
+                                         不在库就弹添加游戏弹框，名称/卡带 ID/类型自动填好 -->
+                                    <app-button
+                                        v-for="(cartridge, index) in item.cartridges"
+                                        :key="`${cartridge.cartridge_id}-${index}`"
+                                        variant="secondary"
+                                        size="sm"
+                                        block
+                                        class="game-discover__cartridge-btn"
+                                        :class="cartridgeToneClass(cartridge)"
+                                        :title="cartridge.cartridge_id"
+                                        @click="onCartridgeClick(item, cartridge)"
+                                    >
+                                        <span class="game-discover__cartridge-label">
+                                            {{ cartridge.cartridge_id }}
+                                        </span>
+                                    </app-button>
+                                </div>
                             </td>
                         </tr>
                     </tbody>
                 </table>
                 <app-empty v-else :description="rankingEmptyDescription" />
-
-                <!-- 与检索区同款的分页条：榜单也是一页 10 条。**分页在前端做**——一份榜单
-                     （一个机种）一次全取回来，翻页只是换页码、不再打接口。
-                     键盘翻页同样只在榜单标签亮着时开着（同页两个分页条，监听都挂在 window 上） -->
-                <app-pagination
-                    v-model:page="rankingPage"
-                    :total="rankingVisibleTotal"
-                    :page-size="RANKING_PAGE_SIZE"
-                    :keyboard="activeTab === 'ranking'"
-                />
             </div>
+
+            <!-- 与名录区同款的分页条；翻页由后端重新取一页。
+                 键盘翻页同样只在榜单标签亮着时开着（同页两个分页条，监听都挂在 window 上） -->
+            <app-pagination
+                v-model:page="rankingPage"
+                :total="rankingPageTotal"
+                :page-size="rankingPageSize"
+                :keyboard="activeTab === 'ranking'"
+                previous-shortcut="discover.page.prev"
+                next-shortcut="discover.page.next"
+                @change="loadRanking"
+            />
         </section>
+
+        <!-- 榜单里点「库存之外」的卡带：与游戏管理页同一个添加弹框，预填名称/卡带ID/类型 -->
+        <game-form-dialog
+            v-model="formVisible"
+            mode="create"
+            :initial="formInitial"
+            @saved="loadRanking"
+        />
     </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import {
     getGameRankingAPI,
@@ -198,14 +259,28 @@ import {
     listSearchConsolesAPI,
     searchGamesAPI,
 } from "@/api/games";
+import { useAdaptiveRows } from "@/utils/adaptiveRows";
+import { noticeAction } from "@/utils/confirm";
+import GameFormDialog from "@components/games/GameFormDialog.vue";
+import {
+    PROGRESS_COMPLETED,
+    PROGRESS_IN_PROGRESS,
+} from "@/constants/gameProgress";
 
 const TABS = [
-    { label: "游戏检索", value: "search" },
+    { label: "游戏名录", value: "search" },
     { label: "游戏榜单", value: "ranking" },
 ];
-const PAGE_SIZE = 10;
-// 榜单每页条数，与检索区一致
-const RANKING_PAGE_SIZE = 10;
+// 行高固定、行数自适应（见 utils/adaptiveRows.js）：行高 40px 与游戏管理一致，
+// 后端两条接口的 page_size 上限都是 100。行之外的表格固定开销 = 表头 44 + 顶框/底线/行间线
+// 合计 12；底部开销 = 分页条（上边距 20 + 高 32）+ 内容区下边距 28 = 80。
+// 行高在样式里写死（行盒 20 + 上下各 10 内边距），全屏与非全屏行高完全一致，
+// 只有行数不同；排不满整行的余量留在最后一行和分页条之间。
+const ROW_HEIGHT = 40;
+const TABLE_EXTRA = 56;
+const PAGE_SIZE_MAX = 100;
+// 量到之前的占位行数（与旧版每页条数一致，高度别闪跳）
+const INITIAL_ROWS = 10;
 // 防抖时长：与游戏管理页的关键词筛选一致
 const KEYWORD_DEBOUNCE = 300;
 
@@ -213,7 +288,7 @@ const route = useRoute();
 const router = useRouter();
 
 /**
- * 标签状态完全由 URL 驱动：?tab=ranking 是榜单，其余（含缺失/非法值）是检索。
+ * 标签状态完全由 URL 驱动：?tab=ranking 是榜单，其余（含缺失/非法值）是名录。
  * 切换用 replace，避免来回点标签堆一长串历史。
  */
 const activeTab = computed({
@@ -230,21 +305,27 @@ const activeTab = computed({
 });
 
 // --------------------------------------------------------------------------
-// 游戏检索
+// 游戏名录
 // --------------------------------------------------------------------------
 
 const keyword = ref("");
 const searchConsole = ref("");
 const searchConsoles = ref([]);
+// 名录机种下拉：「全部」+ 后端机种；组件负责输入时的不区分大小写过滤
+const searchTypeOptions = computed(() => [
+    { value: "", label: "全部游戏类型" },
+    ...searchConsoles.value.map((item) => ({ value: item.id, label: item.name })),
+]);
 const searchItems = ref([]);
 const total = ref(0);
 const page = ref(1);
-const pageSize = ref(PAGE_SIZE);
 const searchLoading = ref(false);
 const searchIndexed = ref(true);
 const searchError = ref(false);
 
 let keywordTimer = 0;
+// Element Plus 点 X 会先 emit clear、再 emit input：clear 已立即查询，跳过随后那次防抖
+let skipKeywordInput = false;
 // 请求序号：防抖 + 快速改条件时，慢的旧响应不能覆盖新结果
 let searchSeq = 0;
 
@@ -253,10 +334,32 @@ const searchEmptyDescription = computed(() => {
         return "检索失败，请稍后重试。";
     }
     if (!searchIndexed.value) {
-        return "尚未构建游戏索引。请在项目根目录执行一次 make index，然后刷新本页。";
+        return "尚未构建游戏名录。请在项目根目录执行一次 make index，然后刷新本页。";
     }
     return "没有匹配的游戏。";
 });
+
+// 列表容器永远按「一页满行」定高：最后一页数据不满时高度也不缩，分页条位置固定不动；
+// 行高全屏/非全屏一致，排不满整行的余量落在表格下方
+const searchWrapHeight = computed(
+    () => `${TABLE_EXTRA + pageSize.value * ROW_HEIGHT}px`
+);
+const rankingWrapHeight = computed(
+    () => `${TABLE_EXTRA + rankingPageSize.value * ROW_HEIGHT}px`
+);
+
+// 名录区每页行数自适应。窗口尺寸变化导致行数变了就重新取当前页（页码交给请求自身收敛）
+const searchWrapEl = ref(null);
+const { rows: pageSize, measure: measureSearchRows } = useAdaptiveRows(
+    {
+        rowHeight: ROW_HEIGHT,
+        extraHeight: TABLE_EXTRA,
+        reservePx: 80,
+        maxRows: PAGE_SIZE_MAX,
+        initialRows: INITIAL_ROWS,
+    },
+    () => loadSearch()
+);
 
 /**
  * 命中片段高亮：把查询词里每个空白分隔的词按不区分大小写切成片段，
@@ -315,7 +418,7 @@ async function loadSearch() {
         searchItems.value = data.items || [];
         total.value = data.total || 0;
         page.value = data.page || 1;
-        pageSize.value = data.page_size || PAGE_SIZE;
+        // page_size 由本页自适应计算，后端不会改小（上限同是 100），别拿响应覆盖回来
         searchError.value = false;
     } catch {
         if (seq !== searchSeq) {
@@ -339,8 +442,18 @@ function searchNow() {
 }
 
 function onKeywordInput() {
+    if (skipKeywordInput) {
+        skipKeywordInput = false;
+        return;
+    }
     clearTimeout(keywordTimer);
     keywordTimer = setTimeout(searchNow, KEYWORD_DEBOUNCE);
+}
+
+/** 点 X 清空：立即查询；紧随其后的 input 已由 skipKeywordInput 跳过。 */
+function onKeywordClear() {
+    skipKeywordInput = true;
+    searchNow();
 }
 
 // --------------------------------------------------------------------------
@@ -348,94 +461,189 @@ function onKeywordInput() {
 // --------------------------------------------------------------------------
 
 const rankingConsoles = ref([]);
-const rankingConsole = ref("");
-// 当前机种的**整份**榜单（一个机种一次全取回来，前端分页的数据源）
-const rankingItems = ref([]);
-const rankingPage = ref(1);
-// 「已入库」按钮按下时只展示命中库存的行（纯前端过滤，不再打接口）
-const rankingInLibraryOnly = ref(false);
-// 榜单搜索词。与检索区的 keyword **故意分成两个**：那边是服务端 FTS（搜中英文两列、分词、剥尾部
-// 标签、支持 `mario*` 前缀），这边只是对游戏名称做不区分大小写的裸子串匹配，语义不同、别合并
-const rankingKeyword = ref("");
-const rankingNeedle = computed(() => rankingKeyword.value.trim().toLowerCase());
-// 这份榜单里卡带 ID 命中平台库存的行数（后端下发的 path 非空即命中）。
-// **按整份 rankingItems 算、不是当前页**——比例的口径是「这个机种的全部榜单行」；
-// 榜单现在是整份取回、前端分页，以后若改成服务端分页，这个数要挪到后端算。
-const rankingLinkedCount = computed(
-    () => rankingItems.value.filter((item) => item.path).length
+const rankingTypeOptions = computed(() =>
+    rankingConsoles.value.map((item) => ({ value: item.platform, label: item.label }))
 );
-// 只按搜索词过一遍（名称的裸子串、不区分大小写）。单独拆出来是为了空态能分清
-// 「是搜索没搜到」还是「搜到了但都没入库」——见 rankingEmptyDescription
-const rankingKeywordMatches = computed(() => {
-    const needle = rankingNeedle.value;
-    if (!needle) {
-        return rankingItems.value;
-    }
-    return rankingItems.value.filter((item) => item.title.toLowerCase().includes(needle));
-});
-// 搜索与「只看已入库」是 **AND**（先按词筛、再按库存筛），真正参与分页的就是它；
-// 而按钮上的比例仍按整份 rankingItems 算（分母是这份榜单的总行数，不随过滤变）
-const rankingVisibleItems = computed(() =>
-    rankingInLibraryOnly.value
-        ? rankingKeywordMatches.value.filter((item) => item.path)
-        : rankingKeywordMatches.value
-);
-const rankingVisibleTotal = computed(() => rankingVisibleItems.value.length);
-const rankingTotal = computed(() => rankingItems.value.length);
-// 当前这一页真正渲染的行
-const rankingPagedItems = computed(() =>
-    rankingVisibleItems.value.slice(
-        (rankingPage.value - 1) * RANKING_PAGE_SIZE,
-        rankingPage.value * RANKING_PAGE_SIZE
+// 跨机种榜单的「游戏类型」列：机种键 → 统一显示名（与下拉共用一份清单）
+const rankingConsoleLabels = computed(() =>
+    Object.fromEntries(
+        rankingConsoles.value.map((item) => [item.platform, item.label])
     )
 );
+function rankingPlatformLabel(platform) {
+    return rankingConsoleLabels.value[platform] || platform || "";
+}
+
+// 只有可玩机种才能直接当 game_type 预填；sega / mame 这类兜底键不开放上传
+const rankingPlatformPlayable = computed(() =>
+    Object.fromEntries(
+        rankingConsoles.value.map((item) => [item.platform, Boolean(item.playable)])
+    )
+);
+function canPrefillGameType(platform) {
+    return Boolean(rankingPlatformPlayable.value[platform]);
+}
+// 评分只在这里格式化：后端返回原始 double，页面固定两位小数（四舍五入）。
+function formatRankingScore(score) {
+    if (score === null || score === undefined || score === "") {
+        return "—";
+    }
+    const value = Number(score);
+    return Number.isFinite(value) ? value.toFixed(2) : "—";
+}
+const rankingConsole = ref("");
+// 当前页的榜单行（后端分页；不再整份取回）
+const rankingItems = ref([]);
+const rankingPage = ref(1);
+// 库存类型："" = 全部；"in" = 库存之内；"out" = 库存之外
+const rankingLibrary = ref("");
+const rankingLibraryOptions = [
+    { value: "in", label: "库存之内" },
+    { value: "out", label: "库存之外" },
+];
+// 榜单搜索词走后端，输入防抖 300ms
+const rankingKeyword = ref("");
+// 后端返回的计数：分页总数、关键词命中数
+const rankingPageTotal = ref(0);
+const rankingMatchedTotal = ref(0);
 const rankingLoading = ref(false);
 const rankingIndexed = ref(true);
 const rankingAvailable = ref(true);
 const rankingError = ref(false);
 
-// 榜单只在第一次切到榜单标签时拉一次，来回切标签不重复请求
+// 榜单只在第一次切到榜单标签时拉清单，来回切标签不重复请求
 let rankingLoaded = false;
 let rankingSeq = 0;
+let rankingKeywordTimer = null;
+// 同名录框：clear 已立即查询，跳过其后的 input 防抖
+let skipRankingKeywordInput = false;
+
+// 添加游戏弹框：点「库存之外」的卡带时打开，保存后刷新当前页、不离开榜单
+const formVisible = ref(false);
+const formInitial = ref(null);
+
+/** 卡带按钮的配色：不在库灰；在库按当前用户进度（未开始蓝 / 进行中紫 / 已通关绿）。 */
+function cartridgeToneClass(cartridge) {
+    if (!cartridge.in_library) {
+        return "game-discover__cartridge-btn--out";
+    }
+    if (cartridge.progress === PROGRESS_COMPLETED) {
+        return "game-discover__cartridge-btn--completed";
+    }
+    if (cartridge.progress === PROGRESS_IN_PROGRESS) {
+        return "game-discover__cartridge-btn--in-progress";
+    }
+    return "game-discover__cartridge-btn--not-started";
+}
+
+/** 在库：有本体直接进播放页，无本体提示先上传；不在库：弹添加弹框并预填。 */
+function onCartridgeClick(item, cartridge) {
+    if (cartridge.in_library) {
+        if (!cartridge.has_body || !cartridge.path) {
+            noticeAction("请先上传游戏本体");
+            return;
+        }
+        router.push(cartridge.path);
+        return;
+    }
+    formInitial.value = {
+        name: (item.zh || item.en || "").trim(),
+        cartridgeId: cartridge.cartridge_id,
+        gameType: canPrefillGameType(item.platform) ? item.platform : "",
+    };
+    formVisible.value = true;
+}
+
+// 每页行数自适应（与名录区同一套行高与开销）。行数变化时重新取当前页。
+const rankingWrapEl = ref(null);
+const { rows: rankingPageSize, measure: measureRankingRows } = useAdaptiveRows(
+    {
+        rowHeight: ROW_HEIGHT,
+        extraHeight: TABLE_EXTRA,
+        reservePx: 80,
+        maxRows: PAGE_SIZE_MAX,
+        initialRows: INITIAL_ROWS,
+    },
+    onRankingRowsChange
+);
+
+// 当前页的展示行：名次 = 前面的页 + 页内位置，不落库。
+const rankingPageRows = computed(() =>
+    rankingItems.value.map((item, index) => ({
+        item,
+        rank: (rankingPage.value - 1) * rankingPageSize.value + index + 1,
+    }))
+);
+
+function onRankingRowsChange() {
+    if (!rankingLoaded) {
+        return;
+    }
+    const pages = Math.max(
+        1,
+        Math.ceil(rankingPageTotal.value / rankingPageSize.value)
+    );
+    if (rankingPage.value > pages) {
+        rankingPage.value = pages;
+    }
+    loadRanking();
+}
 
 const rankingEmptyDescription = computed(() => {
     if (rankingError.value) {
         return "榜单加载失败，请稍后重试。";
     }
     if (!rankingIndexed.value) {
-        return "尚未构建游戏索引。请在项目根目录执行一次 make index，然后刷新本页。";
+        return "尚未构建游戏名录与游戏榜单。请在项目根目录执行一次 make index，然后刷新本页。";
     }
     if (!rankingAvailable.value) {
-        return "榜单尚未加载。请检查榜单 CSV 后执行 make index，或重启服务。";
+        return "榜单尚未加载。请检查榜单 CSV 后执行 make index，然后刷新本页。";
     }
     if (!rankingConsoles.value.length) {
         return "榜单暂无数据。";
     }
-    // 搜索与「已入库」是 AND：搜到了、但都被「只看已入库」挡掉时要明说，
-    // 否则用户看着按钮上的「已入库 25 / 100」会以为是搜索词的问题
     const rawKeyword = rankingKeyword.value.trim();
-    if (rawKeyword) {
-        if (rankingInLibraryOnly.value && rankingKeywordMatches.value.length) {
-            return `匹配「${rawKeyword}」的游戏都还没入库。`;
-        }
-        return `没有匹配到名称含「${rawKeyword}」的游戏。`;
+    const libraryLabel =
+        rankingLibrary.value === "in"
+            ? "库存之内"
+            : rankingLibrary.value === "out"
+                ? "库存之外"
+                : "";
+    if (rawKeyword && rankingMatchedTotal.value === 0) {
+        return `没有匹配到中英文名含「${rawKeyword}」的游戏。`;
     }
-    if (rankingInLibraryOnly.value && rankingItems.value.length) {
-        return "这个类型下还没有已入库的游戏。";
+    if (rawKeyword && libraryLabel && rankingPageTotal.value === 0) {
+        return `匹配「${rawKeyword}」的游戏不在所选库存范围内。`;
     }
-    return "该游戏类型暂无榜单数据。";
+    if (libraryLabel && rankingPageTotal.value === 0) {
+        return rankingConsole.value
+            ? `这个类型下没有${libraryLabel}的游戏。`
+            : `全机种下没有${libraryLabel}的游戏。`;
+    }
+    return rankingConsole.value ? "该游戏类型暂无榜单数据。" : "全部类型暂无榜单数据。";
 });
 
-function toggleInLibraryOnly() {
-    rankingInLibraryOnly.value = !rankingInLibraryOnly.value;
-    // 行数变了，页码回到第一页（否则可能停在一个已经不存在的页上）
+/** 条件变化：回到第 1 页并重新请求。 */
+function rankingNow() {
+    clearTimeout(rankingKeywordTimer);
     rankingPage.value = 1;
+    loadRanking();
 }
 
-// 搜索词一变也回第一页（同上；打字/点 X 清空都走这里，不用再挂 @input / @clear）
-watch(rankingKeyword, () => {
-    rankingPage.value = 1;
-});
+function onRankingKeywordInput() {
+    if (skipRankingKeywordInput) {
+        skipRankingKeywordInput = false;
+        return;
+    }
+    clearTimeout(rankingKeywordTimer);
+    rankingKeywordTimer = setTimeout(rankingNow, KEYWORD_DEBOUNCE);
+}
+
+/** 点 X 清空：立即查询；紧随其后的 input 已由 skipRankingKeywordInput 跳过。 */
+function onRankingKeywordClear() {
+    skipRankingKeywordInput = true;
+    rankingNow();
+}
 
 async function loadRankingConsoles() {
     if (rankingLoaded) {
@@ -448,8 +656,8 @@ async function loadRankingConsoles() {
         rankingIndexed.value = data.indexed;
         rankingAvailable.value = data.has_ranking;
         rankingConsoles.value = data.consoles || [];
-        rankingConsole.value =
-            data.default_console || rankingConsoles.value[0]?.platform || "";
+        // 默认不选中任何类型：打开页面即看全部机种（跨机种榜单）
+        rankingConsole.value = "";
         rankingError.value = false;
     } catch {
         rankingConsoles.value = [];
@@ -459,33 +667,46 @@ async function loadRankingConsoles() {
     } finally {
         rankingLoading.value = false;
     }
-    if (rankingConsole.value) {
+    // 页面默认不选类型；清单加载失败就不再打榜单接口
+    if (!rankingError.value) {
+        rankingPage.value = 1;
         await loadRanking();
     }
 }
 
 async function loadRanking() {
-    if (!rankingConsole.value) {
-        return;
-    }
     const seq = ++rankingSeq;
     rankingLoading.value = true;
-    // 换了一个机种就回到第 1 页（换了份数据，旧页码未必还存在）
-    rankingPage.value = 1;
     try {
-        const data = await getGameRankingAPI({ console: rankingConsole.value });
+        const data = await getGameRankingAPI({
+            console: rankingConsole.value || undefined,
+            keyword: rankingKeyword.value.trim() || undefined,
+            in_library:
+                rankingLibrary.value === "in"
+                    ? true
+                    : rankingLibrary.value === "out"
+                        ? false
+                        : undefined,
+            page: rankingPage.value,
+            page_size: rankingPageSize.value,
+        });
         if (seq !== rankingSeq) {
             return;
         }
         rankingIndexed.value = data.indexed;
         rankingAvailable.value = data.has_ranking;
         rankingItems.value = data.items || [];
+        rankingPage.value = data.page || 1;
+        rankingPageTotal.value = data.total || 0;
+        rankingMatchedTotal.value = data.matched_total || 0;
         rankingError.value = false;
     } catch {
         if (seq !== rankingSeq) {
             return;
         }
         rankingItems.value = [];
+        rankingPageTotal.value = 0;
+        rankingMatchedTotal.value = 0;
         rankingError.value = true;
     } finally {
         if (seq === rankingSeq) {
@@ -494,10 +715,16 @@ async function loadRanking() {
     }
 }
 
-// 直接访问 ?tab=ranking 或前进/后退回到榜单时，同样要按需加载
+// 直接访问 ?tab=ranking 或前进/后退回到榜单时，同样要按需加载；
+// 两个区块都重测一遍行数——v-show 藏着的那个会被 offsetParent 守卫跳过，
+// 可见的那个按当前视口重算（浏览器全屏/非全屏切换后，再切标签必须跟上新行数）
 watch(
     activeTab,
     (value) => {
+        nextTick(() => {
+            measureSearchRows(searchWrapEl.value);
+            measureRankingRows(rankingWrapEl.value);
+        });
         if (value === "ranking") {
             loadRankingConsoles();
         }
@@ -513,11 +740,28 @@ onMounted(async () => {
     } catch {
         searchConsoles.value = [];
     }
+    // 先量视口算出每页行数，首屏请求才知道带多大 page_size
+    measureSearchRows(searchWrapEl.value);
     await loadSearch();
 });
 </script>
 
 <style scoped>
+/* 页面纵向铺满：内容区上下各 28px 内边距，页面根按 100vh−56 占满后再不滚动；
+   可见的那一列（名录/榜单二选一）填满剩余高度，把行数自适应的空间吃满 */
+.game-discover {
+    display: flex;
+    flex-direction: column;
+    min-height: calc(100vh - 56px);
+}
+
+.game-discover__panel {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
+
 /* 页头标签共用 AppSegmented 的尺寸与选中态，这里只留与下方工具条的间距 */
 .game-discover__tabs {
     margin-bottom: 20px;
@@ -537,42 +781,61 @@ onMounted(async () => {
     width: 240px;
 }
 
-/* 「已入库比例」是 AppButton 的开关态：上下居中交给 .el-button 默认的 center。
-   EP 会把 slot 包进一个内层 span，这里再写 align-items: baseline 会把整块文字贴到上边；
-   标签与数字的间距由 __stock-value 的 margin-left 负责。 */
-
-.game-discover__stock-label {
-    letter-spacing: 0.02em;
+.game-discover__library {
+    width: 160px;
 }
 
-.game-discover__stock-value {
-    margin-left: 8px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-    letter-spacing: 0.02em;
+/* 卡带配色说明：靠右对齐，窄屏换行后仍贴右边；色块颜色与 .game-discover__cartridge-btn--* 一致 */
+.game-discover__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
 }
 
-/* 命中平台库存的榜单行：游戏名是真 <a>（router-link 渲染），走全局的主色；
-   下划线做成 1px 细线并抬高 2px，比浏览器默认那条粗线克制，指上去才转成实色。
-   链接是 inline 元素，不影响格子里写死的 20px 行盒 */
-.game-discover__link {
-    color: var(--brand-accent);
-    text-decoration: underline;
-    text-decoration-thickness: 1px;
-    text-decoration-color: #bfdbfe;
-    text-underline-offset: 2px;
+.game-discover__legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
 }
 
-.game-discover__link:hover {
-    text-decoration-color: currentColor;
+.game-discover__legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    flex: none;
 }
 
+.game-discover__legend-swatch--out {
+    background: var(--app-text);
+}
+
+.game-discover__legend-swatch--not-started {
+    background: var(--brand-accent);
+}
+
+.game-discover__legend-swatch--in-progress {
+    background: var(--app-color-in-progress);
+}
+
+.game-discover__legend-swatch--completed {
+    background: var(--app-color-success);
+}
+
+/* 命中平台库存的榜单行不再给名称加链接效果：跳转与添加入口统一放到卡带按钮上 */
+
+/* 列表高度由「实际显示的行数 × 固定行高」决定（模板 :style 绑定；min-height 兜空态）：
+   行数按视口高度自适应（utils/adaptiveRows.js），行高全屏/非全屏一致 */
 .game-discover__body {
     min-height: 200px;
 }
 
-/* 固定布局 + 百分比列宽：再长的名字也只在自己格子里省略，表格不会被撑宽 */
+/* 固定布局 + 百分比列宽：再长的名字也只在自己格子里省略，表格不会被撑宽。
+   注意别在这里加 overflow: hidden——展开的名称浮层要能盖到表格外面去，
+   四角圆角和游戏管理那张表一样靠表头/末行自己收 */
 .game-discover__table {
     width: 100%;
     table-layout: fixed;
@@ -580,15 +843,33 @@ onMounted(async () => {
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
-    overflow: hidden;
 }
 
-/* **行高 44px（行盒 20px + 上下各 12px 内边距），榜单那张表按这个数对齐**。
+
+/* 没有 overflow 兜底，四角靠表头/末行的圆角自己收（表头有底色，方角会顶出表格圆角） */
+.game-discover__table thead th:first-child {
+    border-top-left-radius: 11px;
+}
+
+.game-discover__table thead th:last-child {
+    border-top-right-radius: 11px;
+}
+
+.game-discover__table tbody tr:last-child td:first-child {
+    border-bottom-left-radius: 11px;
+}
+
+.game-discover__table tbody tr:last-child td:last-child {
+    border-bottom-right-radius: 11px;
+}
+
+/* **行高固定 40px（行盒 20px + 上下各 10px 内边距），与游戏管理一致；
+   全屏与非全屏行高相同，只有行数不同**。
+   表头仍是 12px 内边距（行高 44px），算在 TABLE_EXTRA 里。
    line-height 显式写死，两张表才不会因为字体默认值不同而差几个像素；
    榜单那边唯一的变量是卡带 ID 药丸，它的高度压在 20px（见 CopyButton 的 pill 样式） */
-.game-discover__table th,
 .game-discover__table td {
-    padding: 12px 16px;
+    padding: 10px 16px;
     font-size: 14px;
     line-height: 20px;
     text-align: left;
@@ -597,6 +878,11 @@ onMounted(async () => {
 }
 
 .game-discover__table th {
+    padding: 12px 16px;
+    font-size: 14px;
+    line-height: 20px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
     background: #f8fafc;
     color: var(--text-muted);
     font-weight: 500;
@@ -607,7 +893,7 @@ onMounted(async () => {
     border-bottom: none;
 }
 
-/* 够放下最长的游戏类型名「任天堂 Virtual Boy」（约 140px 文字 + 左右各 16px 内边距） */
+/* 够放下最长的游戏类型名「康懋达 VIC-20」（约 140px 文字 + 左右各 16px 内边距） */
 .game-discover__col-console {
     width: 220px;
 }
@@ -620,8 +906,26 @@ onMounted(async () => {
     width: 88px;
 }
 
+.game-discover__col-score {
+    width: 76px;
+}
+
+/* 跨机种榜单才出现的「游戏类型」列；比名录区窄，给中英文名留空间 */
+.game-discover__col-ranking-console {
+    width: 150px;
+}
+
 .game-discover__col-ids {
     width: 30%;
+}
+
+/* 跨机种榜单多一列「游戏类型」，压缩中文名/卡带 ID，给英文名留空间 */
+.game-discover__table--all .game-discover__col-zh {
+    width: 26%;
+}
+
+.game-discover__table--all .game-discover__col-ids {
+    width: 26%;
 }
 
 .game-discover__nowrap {
@@ -640,14 +944,78 @@ onMounted(async () => {
     font-variant-numeric: tabular-nums;
 }
 
+.game-discover__score {
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
 .game-discover__none {
     color: var(--text-muted);
 }
 
-/* 0~2 个卡带 ID 在同一格里并排；每个都是 CopyButton 的药丸样式；没有就显示 — */
+/* 0~2 个卡带按钮：固定两等分，单按钮也只占左半边；列宽由表头固定，不随 ID 长短变化。
+   按钮高 28px，所以这格上下内边距收到 6px，整行仍是 40px（6 + 28 + 6） */
+.game-discover__table td.game-discover__ids-cell {
+    padding-top: 6px;
+    padding-bottom: 6px;
+}
+
 .game-discover__ids {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
+    align-items: center;
+}
+
+/* Element Plus 默认给相邻按钮加左边距，会把第二个按钮顶出半格 */
+.game-discover__ids :deep(.el-button + .el-button) {
+    margin-left: 0;
+}
+
+.game-discover__cartridge-btn {
+    min-width: 0;
+    --_btn-px: 8px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 12px;
+}
+
+.game-discover__cartridge-label {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+/* 白底描边、文字与边框同色；覆盖 AppButton 的私有配色变量。
+   选择器带上父级与 .app-button，压过 .app-button--light 里的定义 */
+.game-discover__ids .app-button.game-discover__cartridge-btn--in-progress {
+    --_btn-secondary-fg: var(--app-color-in-progress);
+    --_btn-secondary-border: var(--app-color-in-progress);
+    --_btn-secondary-border-hover: var(--app-color-in-progress);
+    --_btn-secondary-border-focus: var(--app-color-in-progress);
+}
+
+.game-discover__ids .app-button.game-discover__cartridge-btn--completed {
+    --_btn-secondary-fg: var(--app-color-success);
+    --_btn-secondary-border: var(--app-color-success);
+    --_btn-secondary-border-hover: var(--app-color-success);
+    --_btn-secondary-border-focus: var(--app-color-success);
+}
+
+.game-discover__ids .app-button.game-discover__cartridge-btn--not-started {
+    --_btn-secondary-fg: var(--brand-accent);
+    --_btn-secondary-border: var(--brand-accent);
+    --_btn-secondary-border-hover: var(--brand-accent);
+    --_btn-secondary-border-focus: var(--brand-accent);
+}
+
+/* 库存外：卡带 ID 与外框都用普通正文色 */
+.game-discover__ids .app-button.game-discover__cartridge-btn--out {
+    --_btn-secondary-fg: var(--app-text);
+    --_btn-secondary-border: var(--app-text);
+    --_btn-secondary-border-hover: var(--app-text);
+    --_btn-secondary-border-focus: var(--app-text);
 }
 </style>

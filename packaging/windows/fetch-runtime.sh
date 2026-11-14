@@ -10,23 +10,25 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/log.sh
+. "$HERE/../../scripts/log.sh"
 # shellcheck source=runtime.env
 . "$HERE/runtime.env"
 
 DEST="${1:-}"
-[ -n "$DEST" ] || { printf '用法：%s <目标目录>\n' "$0" >&2; exit 2; }
+[ -n "$DEST" ] || { log_fail "用法：$0 <目标目录>"; exit 2; }
 mkdir -p "$DEST"
 
 TARGET="$DEST/$PBS_ASSET"
 if [ ! -f "$TARGET" ]; then
-    printf '下载 Windows 版 Python：%s\n' "$PBS_ASSET"
+    log_info "下载 Windows 版 Python：$PBS_ASSET"
     # 先落 .part 再改名：中断留下的是 .part，下次重跑不会把半个文件当成品
     curl -fSL --retry 3 -o "$TARGET.part" "$PBS_URL"
     mv "$TARGET.part" "$TARGET"
 fi
 
 echo "$PBS_SHA256  $TARGET" | sha256sum -c - >/dev/null || {
-    printf '！%s 的 sha256 与 runtime.env 里钉死的不符，已中止。\n' "$TARGET" >&2
+    log_fail "$TARGET 的 sha256 与 runtime.env 里钉死的不符，已中止。"
     exit 1
 }
-printf '运行时已就绪：%s\n' "$TARGET"
+log_ok "运行时已就绪：$TARGET"

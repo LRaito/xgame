@@ -1,9 +1,18 @@
 import pytest
 from fastapi.testclient import TestClient
+from pathlib import Path
 
 from backend import create_app
+from backend.games.platforms import playable_platforms
 
 INDEX_HTML = b"<!doctype html><div id=app></div>"
+
+# BIOS 包文件名从词表派生：新增需要 BIOS 的机种时，静态站用例自动覆盖。
+BIOS_FILES = tuple(
+    platform.bios.file
+    for platform in playable_platforms()
+    if platform.bios is not None
+)
 
 
 @pytest.fixture
@@ -21,7 +30,8 @@ def dist(tmp_path):
     (root / "ruffle" / "ruffle.wasm").write_bytes(b"\x00asm")
     (root / "emulatorjs" / "data" / "fceumm-wasm.data").write_bytes(b"core")
     (root / "emulatorjs" / "data" / "cores" / "melonds-wasm.data").write_bytes(b"nds-core")
-    (root / "emulatorjs" / "bios" / "nds.zip").write_bytes(b"PK\x03\x04")
+    for name in BIOS_FILES:
+        (root / "emulatorjs" / "bios" / name).write_bytes(b"PK\x03\x04")
     (root / "media").mkdir()
     (root / "media" / "cover.png").write_bytes(b"\x89PNG")
     return root
@@ -41,6 +51,9 @@ def test_serves_index_and_spa_fallback(site):
         assert response.status_code == 200
         assert response.content == INDEX_HTML
         assert response.headers["cache-control"] == "no-cache"
+        # 线程核（PSP / DOS）要 SharedArrayBuffer，SPA 入口必须跨源隔离
+        assert response.headers["cross-origin-opener-policy"] == "same-origin"
+        assert response.headers["cross-origin-embedder-policy"] == "require-corp"
 
 
 def test_serves_hashed_assets_with_immutable_cache(site):
@@ -66,18 +79,20 @@ def test_engine_assets_have_explicit_mime(site):
     assert nds_core.headers["cache-control"] == "public, max-age=31536000, immutable"
 
 
-def test_nds_bios_is_no_cache(site):
+@pytest.mark.parametrize("bios_file", BIOS_FILES)
+def test_bios_packages_are_no_cache(site, bios_file):
     """BIOS 文件名固定、用户随时可能替换，不能跟着 /emulatorjs/ 走一年 immutable。"""
-    response = site.get("/emulatorjs/bios/nds.zip")
+    response = site.get(f"/emulatorjs/bios/{bios_file}")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["content-type"] == "application/zip"
 
 
-def test_missing_nds_bios_is_404_not_index(site, dist):
+@pytest.mark.parametrize("bios_file", BIOS_FILES)
+def test_missing_bios_package_is_404_not_index(site, dist, bios_file):
     """BIOS 缺失时必须 404（宿主页据此提示），绝不回落 index.html。"""
-    (dist / "emulatorjs" / "bios" / "nds.zip").unlink()
-    response = site.get("/emulatorjs/bios/nds.zip")
+    (dist / "emulatorjs" / "bios" / bios_file).unlink()
+    response = site.get(f"/emulatorjs/bios/{bios_file}")
     assert response.status_code == 404
     assert b"<div id=app>" not in response.content
 
@@ -108,6 +123,15 @@ def test_emulator_host_is_no_cache(site):
     response = site.get("/emulator-host.html")
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-cache"
+    assert response.headers["cross-origin-opener-policy"] == "same-origin"
+    assert response.headers["cross-origin-embedder-policy"] == "require-corp"
+
+
+def test_version_probe_is_not_cross_origin_isolated(site):
+    """COOP/COEP 只给 HTML 文档；版本探针是纯文本，不需要也不该带。"""
+    response = site.get("/version.txt")
+    assert "cross-origin-opener-policy" not in response.headers
+    assert "cross-origin-embedder-policy" not in response.headers
 
 
 def test_other_static_files_get_no_cache_header(site):
@@ -132,6 +156,15 @@ def test_api_routes_still_work_with_site_mounted(site):
         == 200
     )
     assert site.get("/api/me").json()["data"] == {"username": "alice"}
+
+
+def test_nginx_html_location_sets_cross_origin_isolation():
+    """Docker 路线的 HTML 头与 static_site.py 保持一致，防止只改一边。"""
+    template = (
+        Path(__file__).resolve().parents[1] / "frontend/nginx.conf.template"
+    ).read_text(encoding="utf-8")
+    assert "Cross-Origin-Opener-Policy" in template
+    assert "Cross-Origin-Embedder-Policy" in template
 
 
 @pytest.mark.parametrize(

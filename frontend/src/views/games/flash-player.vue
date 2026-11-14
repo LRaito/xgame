@@ -58,6 +58,7 @@ import FlashQualitySelect from "@components/games/FlashQualitySelect.vue";
 import SaveManager from "@components/games/SaveManager.vue";
 import StartGate from "@components/games/StartGate.vue";
 import { hasUserGesture } from "@/utils/userActivation";
+import { matchesShortcut } from "@/utils/shortcuts";
 import { reportGamePlayed } from "@/utils/recentGames";
 import { startGamePlaytime, stopGamePlaytime } from "@/utils/gamePlaytime";
 
@@ -191,19 +192,12 @@ async function onUploadCloud(payload) {
 }
 
 /**
- * 快捷键 `·`（Backquote，数字 1 左边那个键）：立即把当前进度同步到云端。
+ * 快捷键 `·`（Backquote，数字 1 左边那个键，可在按键管理页改键）：立即把当前进度同步到云端。
  * Flash 的「落盘」必须先卸载 Ruffle 再重挂（等于重启游戏，见 reloadForSave），所以先弹二次确认。
  * 还没点「开始游戏」、游戏没加载出来、存档弹框开着、或已经在同步时不响应。
  */
 function onSyncCloudHotkey(event) {
-    if (
-        event.code !== "Backquote" ||
-        event.ctrlKey ||
-        event.altKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        event.repeat
-    ) {
+    if (!matchesShortcut(event, "play.sync_cloud") || event.repeat) {
         return;
     }
     const target = event.target;
@@ -228,19 +222,12 @@ function onSyncCloudHotkey(event) {
 }
 
 /**
- * 快捷键 Alt + `（Backquote，数字 1 左边那个键）：打开存档管理。
+ * 快捷键 Alt + `（Backquote，数字 1 左边那个键，可在按键管理页改键）：打开存档管理。
  * 与标题栏的「存档管理」按钮同一条路；游戏还没加载出来、弹框开着或正在同步时不响应。
  * 注意和 `·` 区分：那个不带修饰键，这个必须按住 Alt。
  */
 function onSaveManagerHotkey(event) {
-    if (
-        event.code !== "Backquote" ||
-        !event.altKey ||
-        event.ctrlKey ||
-        event.metaKey ||
-        event.shiftKey ||
-        event.repeat
-    ) {
+    if (!matchesShortcut(event, "play.save_manager") || event.repeat) {
         return;
     }
     const target = event.target;

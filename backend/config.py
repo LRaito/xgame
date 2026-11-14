@@ -46,18 +46,19 @@ WINDOWS_MOUNT_PREFIX = "/mnt"
 DB_SUBDIR = "db"
 DB_FILENAME = "app.db"
 
-# 游戏检索用的索引库，在**数据根**的 db/ 下（`<数据根>/db/game.db`）。它是从 CSV 名录派生的只读库：
+# 游戏名录用的索引库，在**运行时根**的 db/ 下（`<运行时根>/db/game.db`）。它是从 CSV 名录派生的只读库：
 # **只有 `make index` 写它**，运行期一律以 mode=ro 打开；也不参与备份（备份只认 DB_FILENAME）。
 GAME_INDEX_FILENAME = "game.db"
 
-# 生成游戏检索索引的 CSV 名录（`机种,中文,英文` 三列）。这份数据只在仓库/宿主机上存在——
+# 生成游戏名录与游戏榜单的 CSV 名录（`中文名,英文名` 两列，首行表头，机种由文件名决定）。这份数据只在仓库/宿主机上存在——
 # 它随 backend/ 一起进 api 镜像，所以容器里也能在启动时自动补建。
-SEARCH_CSV_DIR = BASE_DIR / "backend" / "search" / "csv"
+SEARCH_CSV_DIR = BASE_DIR / "backend" / "search" / "catalog"
 
-# 游戏榜单的 CSV（`序号,机种名称,游戏名称,游戏卡带ID` 四列）。它和上面的名录都进同一个
-# `<数据根>/db/game.db`，但**单独一个目录**：上面那个目录会被 build_index 整目录扫成检索索引，
-# 四列的榜单混进去会被当成坏行。这份数据同样随 backend/ 进 api 镜像。
-RANKING_CSV_PATH = BASE_DIR / "backend" / "search" / "ranking" / "ranking.csv"
+# 游戏榜单的 CSV 目录：每个机种一个文件，文件名就是机种 id（`nes.csv`、`segaMD.csv`…），
+# 五列 `序号,中文名,英文名,评分,卡带ID`。它和上面的名录都进同一个 `<运行时根>/db/game.db`，
+# 但**单独一个目录**：上面那个目录会被 build_index 整目录扫成游戏名录，五列的榜单混进去会被
+# 当成坏行。这份数据同样随 backend/ 进 api 镜像。
+RANKING_CSV_DIR = BASE_DIR / "backend" / "search" / "rankings"
 
 
 def default_storage_root() -> str:
@@ -79,7 +80,7 @@ class Settings(BaseSettings):
     # 下一个请求就 401、在登录页来回跳」。
     SESSION_COOKIE_SECURE: bool = True
 
-    # 项目文件根目录：游戏本体/封面/H5 资源/攻略、云端存档、截图、检索索引与备份都在它下面。
+    # 项目文件根目录：游戏本体/封面/H5 资源/攻略、云端存档、截图、游戏发现索引与备份都在它下面。
     # 容器里由 backend/Dockerfile 固定为 /data，宿主目录经 compose 挂到该路径。
     STORAGE_ROOT: str = default_storage_root()
 
@@ -103,10 +104,11 @@ class Settings(BaseSettings):
     # 路线（nginx 托管）行为完全不变。
     STATIC_DIR: str | None = None
 
-    # 请求体上限，替代 nginx 的 client_max_body_size（撤掉 nginx 后没有任何全局闸门：
+    # 单个请求体的上限，替代 nginx 的 client_max_body_size（撤掉 nginx 后没有任何全局闸门：
     # Starlette 的 max_part_size 只管非文件字段，文件部分是不设上限的）。
-    # 与 nginx 的 512m 对齐（NDS 本体可达数百 MB）；Docker 路线上 nginx 先拦，这里只是兜底。
-    MAX_REQUEST_BODY_BYTES: int = 512 * 1024 * 1024
+    # 与 nginx 的 130m 对齐：128MB 内容 + multipart 表单余量；攻略 ZIP/PDF 的上限仍是 128MB。
+    # 游戏本体超过 30MB 时前端改走 16MB 分片，不再受这里约束（每个分片请求远小于上限）。
+    MAX_REQUEST_BODY_BYTES: int = 130 * 1024 * 1024
 
     @property
     def runtime_root(self) -> Path:
@@ -121,7 +123,7 @@ class Settings(BaseSettings):
     @property
     def database_url(self) -> str:
         # 用 as_posix()：Windows 下 str(Path) 是反斜杠，且路径里出现 `#` `?` `%` 时会被当成
-        # URL 的一部分解析坏掉。检索索引那边（search_service.py）早就用 as_uri() 绕这个坑了，
+        # URL 的一部分解析坏掉。游戏名录索引那边（search_service.py）早就用 as_uri() 绕这个坑了，
         # 这里取同样的原则。
         return f"sqlite:///{self.database_path.as_posix()}"
 
@@ -132,8 +134,8 @@ class Settings(BaseSettings):
 
     @property
     def game_index_path(self) -> Path:
-        """游戏检索索引路径：数据根/db/game.db。运行期只读，不存在时视为「尚未构建索引」。"""
-        return Path(self.STORAGE_ROOT) / DB_SUBDIR / GAME_INDEX_FILENAME
+        """游戏发现索引路径（游戏名录与游戏榜单）：运行时根/db/game.db。运行期只读，不存在时视为「尚未构建」。"""
+        return self.runtime_root / DB_SUBDIR / GAME_INDEX_FILENAME
 
 
 @lru_cache

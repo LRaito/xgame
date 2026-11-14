@@ -6,7 +6,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     volumes:
-      # 数据总目录：游戏本体/封面/H5 资源/攻略、存档、截图、检索索引与备份
+      # 数据总目录：游戏本体/封面/H5 资源/攻略、存档、截图、游戏发现索引与备份
       - ${STORAGE_HOST_DIR:-./data/storage}:/data
       # 运行时目录：只有 SQLite 库 app.db。单独挂一份是为了让数据目录能整体交给网盘备份——
       # 网盘客户端拷不动一个一直被写着的库文件。留空则退回与数据目录同一个宿主目录。

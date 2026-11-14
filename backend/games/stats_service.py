@@ -113,8 +113,9 @@ class GameStatsService:
         return value
 
     def _require_game(self, game_id: int) -> None:
+        # 不按有无本体过滤：只登记了信息、尚未补传本体的条目同样可以设进度 / 时长
         row = self._session.get(Game, game_id)
-        if row is None or not row.game_path:
+        if row is None:
             raise NotFoundError("游戏不存在。")
 
     def _find(self, user_id: int, game_id: int) -> GameUserStat | None:

@@ -1,24 +1,6 @@
 <template>
     <div class="shortcuts-page">
-        <header class="page-header">
-            <h1 class="page-title">按键管理</h1>
-        </header>
-
         <div class="shortcuts-page__body">
-            <!-- 本页大纲：滚动时高亮当前页面，点击平滑跳转 -->
-            <nav class="shortcuts-toc" aria-label="本页大纲">
-                <a
-                    v-for="page in SHORTCUT_PAGES"
-                    :key="page.id"
-                    :href="`#${page.id}`"
-                    class="shortcuts-toc__link"
-                    :class="{ active: activeId === page.id }"
-                    @click.prevent="jumpTo(page.id)"
-                >
-                    {{ page.title }}
-                </a>
-            </nav>
-
             <!-- 正文：一个页面一张表，第一列按功能分组合并单元格 -->
             <article class="shortcuts-doc">
                 <section
@@ -30,7 +12,7 @@
                     <h2 class="shortcut-section__title">{{ page.title }}</h2>
                     <table class="shortcut-table">
                         <tbody>
-                            <tr v-for="(row, index) in page.rows" :key="index">
+                            <tr v-for="(row, index) in page.rows" :key="row.id">
                                 <td
                                     v-if="isFeatureStart(page.rows, index)"
                                     class="shortcut-table__feature"
@@ -40,25 +22,52 @@
                                 </td>
                                 <td class="shortcut-table__keys">
                                     <div class="shortcut-row__keys">
-                                        <template
-                                            v-for="(combo, comboIndex) in row.keys"
-                                            :key="comboIndex"
-                                        >
-                                            <span
-                                                v-if="comboIndex > 0"
-                                                class="shortcut-row__or"
-                                            >/</span>
+                                        <span v-if="isCleared(row.id)" class="shortcut-row__cleared">
+                                            已关闭
+                                        </span>
+                                        <template v-else>
                                             <template
-                                                v-for="(key, keyIndex) in combo"
-                                                :key="keyIndex"
+                                                v-for="(part, partIndex) in bindingParts(
+                                                    shortcuts.bindingOf(row.id)
+                                                )"
+                                                :key="partIndex"
                                             >
                                                 <span
-                                                    v-if="keyIndex > 0"
+                                                    v-if="partIndex > 0"
                                                     class="shortcut-row__plus"
                                                 >+</span>
-                                                <kbd class="keycap">{{ key }}</kbd>
+                                                <kbd class="keycap">{{ part }}</kbd>
                                             </template>
+                                            <span
+                                                v-if="isCustom(row.id)"
+                                                class="shortcut-row__tag"
+                                            >自定义</span>
                                         </template>
+                                    </div>
+                                </td>
+                                <td class="shortcut-table__actions">
+                                    <div class="shortcut-row__actions">
+                                        <app-button
+                                            size="sm"
+                                            :disabled="busyId === row.id"
+                                            @click="openCapture(row)"
+                                        >
+                                            设置
+                                        </app-button>
+                                        <app-button
+                                            size="sm"
+                                            :disabled="isCleared(row.id) || busyId === row.id"
+                                            @click="clearShortcut(row)"
+                                        >
+                                            清除
+                                        </app-button>
+                                        <app-button
+                                            size="sm"
+                                            :disabled="!isOverridden(row.id) || busyId === row.id"
+                                            @click="resetShortcut(row)"
+                                        >
+                                            重置
+                                        </app-button>
                                     </div>
                                 </td>
                                 <td class="shortcut-table__desc">{{ row.desc }}</td>
@@ -68,101 +77,85 @@
                 </section>
             </article>
         </div>
+
+        <!-- 设置键位：弹框打开后独占键盘，按下组合键即保存；只有校验失败时才留在弹框里 -->
+        <app-dialog
+            v-model="captureVisible"
+            title="设置快捷键"
+            width="min(420px, 92vw)"
+            align-center
+            footer-mode="none"
+        >
+            <div class="shortcut-capture">
+                <p class="shortcut-capture__action">
+                    {{ captureAction?.feature }} · {{ captureAction?.desc }}
+                </p>
+                <div
+                    class="shortcut-capture__box"
+                    :class="{ 'shortcut-capture__box--error': Boolean(captureError) }"
+                >
+                    <div
+                        v-if="capturePreviewParts.length"
+                        class="shortcut-row__keys shortcut-capture__keys"
+                    >
+                        <template
+                            v-for="(part, partIndex) in capturePreviewParts"
+                            :key="partIndex"
+                        >
+                            <span v-if="partIndex > 0" class="shortcut-row__plus">+</span>
+                            <kbd class="keycap">{{ part }}</kbd>
+                        </template>
+                    </div>
+                    <p v-else class="shortcut-capture__hint">请按下新的快捷键</p>
+                </div>
+                <p v-if="captureError" class="shortcut-capture__error">{{ captureError }}</p>
+                <p class="shortcut-capture__tips">
+                    支持字母、数字、方向键、功能键与常见符号，可组合 Ctrl / Alt / Shift /
+                    Meta（Windows / Command 键）；按 Esc 取消。
+                </p>
+            </div>
+        </app-dialog>
     </div>
 </template>
 
 <script setup>
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { appMessage } from "@/utils/overlay";
+import AppDialog from "@components/common/AppDialog.vue";
+import {
+    SHORTCUT_PAGES,
+    bindingFromEvent,
+    bindingParts,
+    shortcutAction,
+} from "@/constants/shortcuts";
+import { useShortcutsStore } from "@/store/shortcuts";
 
-// 快捷键的权威来源是各页面里的监听代码；这里只做展示，改键位时记得同步这张表
-// （模拟器：views/games/emulator-player.vue，Flash：views/games/flash-player.vue，
-//  存档管理：components/games/SaveManager.vue + SaveTreeView.vue，
-//  分页：components/common/AppPagination.vue，大图预览：components/games/GameScreenshotGallery.vue）。
-// 每个页面一张表；feature 相同的连续行会在「功能」列合并成一个单元格。
-// 同一页内的行按键帽长度从短到长排列（短的在上，如 ` 在 Enter 上面），
-// 相同功能的行保持相邻，便于合并单元格。
-const SHORTCUT_PAGES = [
-    {
-        id: "shortcut-manage",
-        title: "游戏管理",
-        rows: [
-            {
-                feature: "分页",
-                keys: [["←"], ["→"]],
-                desc: "切换上一页 / 下一页",
-            },
-        ],
-    },
-    {
-        id: "shortcut-discover",
-        title: "游戏发现",
-        rows: [
-            {
-                feature: "分页",
-                keys: [["←"], ["→"]],
-                desc: "切换上一页 / 下一页",
-            },
-        ],
-    },
-    {
-        id: "shortcut-play",
-        title: "游玩页面",
-        rows: [
-            {
-                feature: "存档",
-                keys: [["`"]],
-                desc: "将当前进度同步至云端",
-            },
-            {
-                feature: "存档",
-                keys: [["Enter"]],
-                desc: "载入本地存档并选中游戏画面",
-            },
-            {
-                feature: "存档",
-                keys: [["Alt", "`"]],
-                desc: "打开存档管理面板",
-            },
-            {
-                feature: "屏幕布局",
-                keys: [["-"], ["+"]],
-                desc: "Backspace 左边两个键：减号上一个 / 加号（=）下一个，NDS 循环切换屏幕布局",
-            },
-            {
-                feature: "截图",
-                keys: [["Ctrl", "Shift", "S"]],
-                desc: "截取当前画面并保存到截图图库",
-            },
-        ],
-    },
-    {
-        id: "shortcut-saves",
-        title: "存档管理",
-        rows: [
-            {
-                feature: "节点操作",
-                keys: [["Delete"]],
-                desc: "删除选中的云端节点",
-            },
-            {
-                feature: "节点操作",
-                keys: [["Shift", "↑"], ["Shift", "↓"]],
-                desc: "调整选中节点的同级顺序",
-            },
-        ],
-    },
-    {
-        id: "shortcut-preview",
-        title: "图片预览",
-        rows: [
-            {
-                feature: "大图预览",
-                keys: [["←"], ["→"]],
-                desc: "切换上一张 / 下一张",
-            },
-        ],
-    },
-];
+const shortcuts = useShortcutsStore();
+
+const captureVisible = ref(false);
+const captureActionId = ref("");
+const captureError = ref("");
+const capturePreviewParts = ref([]);
+const busyId = ref("");
+
+const captureAction = computed(() => shortcutAction(captureActionId.value));
+
+onMounted(() => {
+    // Layout 已经拉过一次；这里补一次是为了直接打开本页、或上次请求失败时能重试
+    void shortcuts.ensureLoaded().catch(() => {});
+});
+
+function isOverridden(actionId) {
+    return shortcuts.isOverridden(actionId);
+}
+
+function isCleared(actionId) {
+    return shortcuts.isOverridden(actionId) && shortcuts.bindingOf(actionId) === "";
+}
+
+function isCustom(actionId) {
+    return shortcuts.isOverridden(actionId) && shortcuts.bindingOf(actionId) !== "";
+}
 
 /** 连续同功能的行里，只有第一行渲染「功能」单元格（其余靠 rowspan 合并）。 */
 function isFeatureStart(rows, index) {
@@ -177,97 +170,149 @@ function featureRowSpan(rows, index) {
     return span;
 }
 
-// ---------- 大纲：滚动高亮 + 平滑跳转 ----------
-// 页面随窗口滚动（布局没有内层滚动容器），所以监听 window 的 scroll。
-// 越过视口顶部 96px 的最后一个页面就是「当前所在」。
-const activeId = ref(SHORTCUT_PAGES[0].id);
-let scrollTicking = false;
+function openCapture(row) {
+    captureActionId.value = row.id;
+    captureError.value = "";
+    capturePreviewParts.value = [];
+    captureVisible.value = true;
+}
 
-function updateActiveSection() {
-    const threshold = 96;
-    let current = SHORTCUT_PAGES[0].id;
+/** 同一个 scope（同时生效的动作组）里不能撞键；跨页面复用同一个键是允许的。 */
+function findConflict(actionId, binding) {
+    const action = shortcutAction(actionId);
+    if (!action) {
+        return null;
+    }
     for (const page of SHORTCUT_PAGES) {
-        const el = document.getElementById(page.id);
-        if (el && el.getBoundingClientRect().top <= threshold) {
-            current = page.id;
+        if (page.scope !== action.scope) {
+            continue;
+        }
+        for (const row of page.rows) {
+            if (row.id === actionId) {
+                continue;
+            }
+            const current = shortcuts.bindingOf(row.id);
+            if (current && current === binding) {
+                return row;
+            }
         }
     }
-    activeId.value = current;
+    return null;
 }
 
-function onWindowScroll() {
-    if (scrollTicking) {
+async function commitCapture(binding) {
+    const actionId = captureActionId.value;
+    busyId.value = actionId;
+    try {
+        await shortcuts.setBinding(actionId, binding);
+        captureVisible.value = false;
+        appMessage.success("快捷键已更新。");
+    } catch (err) {
+        captureError.value = err?.message || "保存失败，请稍后重试。";
+    } finally {
+        busyId.value = "";
+    }
+}
+
+function onCaptureKeydown(event) {
+    if (!captureVisible.value || busyId.value || event.isComposing) {
         return;
     }
-    scrollTicking = true;
-    window.requestAnimationFrame(() => {
-        scrollTicking = false;
-        updateActiveSection();
-    });
+    // 捕获阶段独占：别让弹框自己的 Esc、浏览器的组合键先一步处理
+    event.preventDefault();
+    event.stopPropagation();
+    if (
+        event.key === "Escape" &&
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.metaKey &&
+        !event.shiftKey
+    ) {
+        captureVisible.value = false;
+        return;
+    }
+    if (event.repeat) {
+        return;
+    }
+    const result = bindingFromEvent(event);
+    if (result === null) {
+        // 只按下了修饰键：继续等主键，不报错
+        return;
+    }
+    if (result.error) {
+        captureError.value = result.error;
+        capturePreviewParts.value = [];
+        return;
+    }
+    captureError.value = "";
+    capturePreviewParts.value = bindingParts(result.binding);
+    const conflict = findConflict(captureActionId.value, result.binding);
+    if (conflict) {
+        captureError.value = `该键位已被「${conflict.feature} · ${conflict.desc}」占用。`;
+        return;
+    }
+    void commitCapture(result.binding);
 }
 
-function jumpTo(id) {
-    document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-}
-
-onMounted(() => {
-    window.addEventListener("scroll", onWindowScroll, { passive: true });
-    updateActiveSection();
+watch(captureVisible, (visible) => {
+    if (visible) {
+        window.addEventListener("keydown", onCaptureKeydown, true);
+    } else {
+        window.removeEventListener("keydown", onCaptureKeydown, true);
+    }
 });
 
 onBeforeUnmount(() => {
-    window.removeEventListener("scroll", onWindowScroll);
+    window.removeEventListener("keydown", onCaptureKeydown, true);
 });
+
+async function clearShortcut(row) {
+    busyId.value = row.id;
+    try {
+        await shortcuts.setBinding(row.id, "");
+        appMessage.success("已关闭该快捷键。");
+    } catch (err) {
+        if (!err?.reported) {
+            appMessage.error("保存失败，请稍后重试。");
+        }
+    } finally {
+        busyId.value = "";
+    }
+}
+
+async function resetShortcut(row) {
+    // 关闭某个动作后，它的默认键位可能已被同页其它动作占用；恢复前先查一遍，
+    // 否则两个动作会同时响应同一个键。
+    const defaultBinding = shortcutAction(row.id)?.defaultBinding || "";
+    const conflict = defaultBinding ? findConflict(row.id, defaultBinding) : null;
+    if (conflict) {
+        appMessage.warning(
+            `无法恢复默认键位：「${conflict.feature} · ${conflict.desc}」已在使用该键。`
+        );
+        return;
+    }
+    busyId.value = row.id;
+    try {
+        await shortcuts.resetBinding(row.id);
+        appMessage.success("已恢复默认键位。");
+    } catch (err) {
+        if (!err?.reported) {
+            appMessage.error("保存失败，请稍后重试。");
+        }
+    } finally {
+        busyId.value = "";
+    }
+}
 </script>
 
 <style scoped>
-/* 博客式单栏：整体限宽居中，左侧大纲 + 右侧连续正文 */
+/* 单栏限宽居中：正文连续排布成一列派生小表。
+   上边距抵消外层 .content 的 28px 内边距，让组表顶边与常驻侧栏 XGAME 品牌块的
+   顶边（视口顶）对齐；底部内边距维持原样。 */
 .shortcuts-page {
     width: 100%;
-    max-width: 1040px;
-    margin: 0 auto;
-}
-
-.shortcuts-page__body {
-    display: grid;
-    grid-template-columns: 188px minmax(0, 1fr);
-    gap: 56px;
-    align-items: start;
-}
-
-.shortcuts-toc {
-    position: sticky;
-    top: 24px;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1px;
-    padding: 2px 0 2px 12px;
-    border-left: 1px solid var(--border);
-}
-
-.shortcuts-toc__link {
-    position: relative;
-    margin-left: -13px;
-    padding: 5px 10px 5px 12px;
-    border-left: 2px solid transparent;
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--text-muted);
-    text-decoration: none;
-    border-radius: 0 6px 6px 0;
-    transition: color 0.15s ease, background 0.15s ease;
-}
-
-.shortcuts-toc__link:hover {
-    color: #0f172a;
-    background: #eef2f7;
-}
-
-.shortcuts-toc__link.active {
-    color: var(--brand-accent);
-    border-left-color: var(--brand-accent);
-    font-weight: 600;
+    max-width: 820px;
+    margin: -14px auto 0;
 }
 
 .shortcuts-doc {
@@ -276,52 +321,77 @@ onBeforeUnmount(() => {
 
 .shortcut-section {
     scroll-margin-top: 24px;
+    border: 1px solid #e6ecf3;
+    border-bottom: 0;
+    background: #fff;
 }
 
-/* 页面之间只留间距，不再画分隔线 */
-.shortcut-section + .shortcut-section {
-    margin-top: 34px;
+/* 紧凑组表：段落之间零间距贴合堆叠，共享一条分隔线（各自不带底边框） */
+.shortcut-section:first-child {
+    border-top: 1px solid #e6ecf3;
 }
 
+.shortcut-section:last-child {
+    border-bottom: 1px solid #e6ecf3;
+}
+
+/* 段落标题变成灰底分组头带，标题下压一条与行分隔线同色的细线 */
 .shortcut-section__title {
     margin: 0;
+    padding: 7px 14px;
     font-size: 17px;
     font-weight: 600;
     color: #0f172a;
     line-height: 1.4;
+    background: #eef2f8;
+    border-bottom: 1px solid #e6ecf3;
 }
 
-/* 快捷键表格：功能（合并单元格）| 按键 | 说明。全框线（每个单元格四周都有边），
-   固定布局保证三列对齐，单元格内容竖直居中、水平靠左。 */
+/* 快捷键表格：功能（合并单元格）| 按键 | 操作 | 说明。外框由段落容器负责，
+   单元格只画行分隔线（横向细线），高度紧凑、单屏能放整套内容。 */
 .shortcut-table {
-    width: 570px;
+    width: 100%;
     max-width: 100%;
-    margin-top: 10px;
     border-collapse: collapse;
     table-layout: fixed;
 }
 
 .shortcut-table td {
     box-sizing: border-box;
-    padding: 9px 12px;
-    border: 1px solid #e6ebf2;
+    padding: 7px 14px;
+    border: 0;
+    border-bottom: 1px solid #f1f4f9;
     vertical-align: middle;
     text-align: left;
 }
 
+/* 组内最后一行不再压分隔线，底部交给段落容器自己 */
+.shortcut-table tr:last-child td {
+    border-bottom: 0;
+}
+
 .shortcut-table__feature {
-    width: 110px;
+    width: 96px;
     font-size: 13px;
     font-weight: 500;
     color: #475569;
 }
 
 .shortcut-table__keys {
-    width: 250px;
+    width: 210px;
+}
+
+.shortcut-table__actions {
+    width: 196px;
+}
+
+.shortcut-row__actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
 }
 
 .shortcut-table__desc {
-    width: 210px;
     font-size: 13px;
     line-height: 1.55;
     color: #475569;
@@ -332,6 +402,22 @@ onBeforeUnmount(() => {
     flex-wrap: wrap;
     align-items: center;
     gap: 5px;
+}
+
+.shortcut-row__cleared {
+    font-size: 13px;
+    color: #94a3b8;
+}
+
+.shortcut-row__tag {
+    margin-left: 3px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    background: #e0f2fe;
+    color: #0369a1;
+    font-size: 11px;
+    line-height: 1.6;
+    white-space: nowrap;
 }
 
 /* 键帽：边框 + 浅底 + 底部 2px 实体阴影（参考 flash.homes 的按键样式），
@@ -358,50 +444,68 @@ onBeforeUnmount(() => {
     white-space: nowrap;
 }
 
-.shortcut-row__plus,
-.shortcut-row__or {
+.shortcut-row__plus {
     font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     font-size: 12px;
     font-weight: 600;
     color: #94a3b8;
 }
 
-.shortcut-row__or {
-    margin: 0 1px;
-    font-weight: 400;
+/* ---------- 设置键位弹框 ---------- */
+
+.shortcut-capture {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
 }
 
-@media (max-width: 900px) {
-    .shortcuts-page__body {
-        grid-template-columns: 1fr;
-        gap: 22px;
-    }
-
-    /* 窄屏把大纲折成顶部的一排胶囊，不再吸顶 */
-    .shortcuts-toc {
-        position: static;
-        flex-direction: row;
-        flex-wrap: wrap;
-        gap: 6px;
-        padding: 0;
-        border-left: 0;
-    }
-
-    .shortcuts-toc__link {
-        margin-left: 0;
-        padding: 4px 11px;
-        border: 1px solid var(--border);
-        border-radius: 999px;
-        background: var(--surface);
-    }
-
-    .shortcuts-toc__link.active {
-        border-color: var(--app-color-selected-border);
-        background: var(--app-color-selected-bg);
-    }
+.shortcut-capture__action {
+    margin: 0;
+    font-size: 13px;
+    color: #475569;
 }
 
-/* 窄屏把表格拆成一列：功能 → 按键 → 说明（表格头隐藏） */
+.shortcut-capture__box {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 96px;
+    padding: 16px;
+    border: 1px dashed #cbd5e1;
+    border-radius: 8px;
+    background: #f8fafc;
+}
+
+.shortcut-capture__box--error {
+    border-color: #ff3320;
+    background: #fff7f6;
+}
+
+.shortcut-capture__keys {
+    justify-content: center;
+}
+
+.shortcut-capture__hint {
+    margin: 0;
+    font-size: 14px;
+    color: #94a3b8;
+}
+
+.shortcut-capture__error {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: #ff3320;
+}
+
+.shortcut-capture__tips {
+    margin: 0;
+    font-size: 12px;
+    line-height: 1.6;
+    color: #94a3b8;
+}
+
+/* 窄屏把表格拆成一列：功能 → 按键 → 操作 → 说明（表格头隐藏） */
 @media (max-width: 640px) {
     .shortcut-table,
     .shortcut-table tbody,
@@ -434,6 +538,14 @@ onBeforeUnmount(() => {
 
     .shortcut-table__keys {
         padding: 0 0 7px;
+    }
+
+    .shortcut-table__actions {
+        padding: 0 0 7px;
+    }
+
+    .shortcut-row__actions {
+        gap: 12px;
     }
 }
 </style>

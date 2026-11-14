@@ -101,34 +101,64 @@
         // 同源 iframe 内可直接使用，无需猜测 DOM 选择器。
 
         (() => {
-            /** 父页面传来的内核选项串（`k=v,k=v`）→ `{k: v}`；不合规的片段丢掉，不因它整个崩。 */
-            function parseFilterOptions(raw) {
-                const options = {};
-                for (const pair of String(raw || "").split(",")) {
-                    const index = pair.indexOf("=");
-                    if (index <= 0) {
-                        continue;
-                    }
-                    options[pair.slice(0, index)] = pair.slice(index + 1);
-                }
-                return options;
-            }
-
             const params = new URLSearchParams(location.search);
             const id = params.get("id");
             const core = params.get("core");
             const name = params.get("name") || "";
             const version = params.get("v") || "";
+            // 多文件本体：先取 /play/manifest，再用 EJS_externalFiles 拉分轨/分盘
+            const bundle = params.get("bundle") === "1";
+            // 线程核（PSP / DOS）：EJS 只有 -thread 变体，且要求 SharedArrayBuffer
+            const threads = params.get("threads") === "1";
+            let bundleManifest = null;
+            // ROM 文件名：EmulatorJS 用 EJS_gameUrl 的最后一段当 ROM 文件名，`.pbp` 等
+            // 核会按后缀选加载器。播放页传真实落盘名（game.<ext>），这里只接受安全 basename。
+            const ROM_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,120}$/;
+
+            function readRomFile(raw) {
+                const value = String(raw || "").trim();
+                if (!value || value.includes("..")) {
+                    return "";
+                }
+                return ROM_FILE_PATTERN.test(value) ? value : "";
+            }
             // 显示比例（父页面「窗口」选择器里选的那一列）：wide = 4:3，其余 = 像素完美 PP
             const wide = params.get("ratio") === "wide";
-            // 复古滤镜：内核选项（`k=v,k=v`，内核加载前写进内核设置文件）与着色器键名
-            // （引擎起来后启用）。两者都由父页面标题栏的滤镜选择器给出，这里是唯一落地点。
-            const filterOptions = parseFilterOptions(params.get("copts"));
-            const filterShader = params.get("shader") || "";
 
-            // NDS BIOS：用户自备的静态包（zip 根目录放 bios7.bin / bios9.bin / firmware.bin），
-            // 不进 git；/emulatorjs/ 整体 immutable，bios/ 单独 no-cache（见 nginx 与 static_site.py）。
-            const NDS_BIOS_URL = "/emulatorjs/bios/nds.zip";
+            // BIOS 包由播放页按机种元数据传入：?bios=<zip 文件名>，?biosoptional=1 表示
+            // 缺包也可启动，?biosfiles=<包内必需文件，逗号分隔> 只用于缺失提示。
+            // 宿主页只接受 bios/ 下的安全文件名并自己拼路径，不信任父页面传完整 URL。
+            // /emulatorjs/ 整体 immutable，bios/ 单独 no-cache（见 nginx 与 static_site.py）。
+            const BIOS_FILE_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*\.zip$/;
+            const BIOS_ENTRY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+            function readBiosFile(raw) {
+                const value = String(raw || "").trim();
+                if (value.length > 120 || value.includes("..")) {
+                    return "";
+                }
+                return BIOS_FILE_PATTERN.test(value) ? value : "";
+            }
+
+            function readBiosEntries(raw) {
+                return String(raw || "")
+                    .split(",")
+                    .map((item) => item.trim())
+                    .filter(
+                        (item) =>
+                            item.length <= 80 &&
+                            !item.includes("..") &&
+                            BIOS_ENTRY_PATTERN.test(item),
+                    )
+                    .slice(0, 8);
+            }
+
+            const biosFile = readBiosFile(params.get("bios"));
+            let biosUrl = biosFile
+                ? `/emulatorjs/bios/${encodeURIComponent(biosFile)}`
+                : "";
+            const biosOptional = params.get("biosoptional") === "1";
+            const biosRequiredFiles = readBiosEntries(params.get("biosfiles"));
             // NDS 三种屏幕布局（父页面 - / = 循环切换，模式经 ?nds= 传进来）。
             // 与 frontend/src/constants/emulatorScreens.js 的 NDS_NATIVE 一一对应，必须同步：
             //   dual = 上下双屏 + gap 54（帧缓冲 256×438）
@@ -159,6 +189,10 @@
 
             if (!id || !core) {
                 showError("缺少游戏参数，请从游戏中心进入。");
+                return;
+            }
+            if (params.has("bios") && !biosFile) {
+                showError("BIOS 参数不合法，请从游戏中心重新进入。");
                 return;
             }
 
@@ -488,20 +522,21 @@
             }
 
             /**
-             * 启用/关闭引擎内置着色器（滤镜里 CRT 那一类）。引擎自带的设置菜单走的就是这个方法：
-             * 把着色器预设写进 /shader 再让内核打开着色器管线。name 为空即关掉，返回是否调用成功。
+             * 启用/关闭引擎内置着色器。name 为空或 "disabled" 即关闭。
+             * 同时同步 settings/allSettings：引擎之后 saveSettings() 会按内存里的值
+             * 写回设置块，所以这里保持内存值与实际状态一致。
              */
             function applyShader(name) {
                 const inst = window.EJS_emulator;
+                const value = name || "disabled";
                 if (!inst || typeof inst.enableShader !== "function") {
+                    return value === "disabled";
+                }
+                if (value !== "disabled" && !inst.config?.shaders?.[value]) {
                     return false;
                 }
-                const value = name || "disabled";
                 try {
                     inst.enableShader(value);
-                    // 同步引擎内存里的设置项：引擎之后任何一次 saveSettings（调音量、改按键、
-                    // 改菜单选项）都会把 this.settings 写回设置块；不同步的话旧着色器会覆盖
-                    // 父页面刚写入的本局选择，选择器下一秒又被同步回旧值。
                     if (inst.settings) {
                         inst.settings.shader = value;
                     }
@@ -511,6 +546,17 @@
                     return true;
                 } catch {
                     return false;
+                }
+            }
+
+            /**
+             * 着色器已加入 EJS_hideSettings：设置行不会创建，引擎读设置块时只会把值写进
+             * settings，不会自动调用 enableShader。所以启动完成后要按设置块显式启用一次。
+             */
+            function applyShaderFromSettings() {
+                const name = window.EJS_emulator?.settings?.shader;
+                if (typeof name === "string" && name && name !== "disabled") {
+                    applyShader(name);
                 }
             }
 
@@ -598,6 +644,42 @@
                     return { ok: true, fastForward: inst.isFastForward === true };
                 },
 
+                /** 引擎当前是否暂停；未开始游戏时返回 null（与 fastForward 一致）。 */
+                get paused() {
+                    const inst = window.EJS_emulator;
+                    if (!inst || !inst.started) {
+                        return null;
+                    }
+                    return inst.paused === true;
+                },
+
+                /**
+                 * 暂停/继续。走引擎自己的 pause() / play()：会同步引擎的 paused 状态、
+                 * 切换底部控制条播放/暂停按钮，并停止/恢复 WASM 主循环。
+                 */
+                async togglePause() {
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再暂停。" };
+                    }
+                    if (typeof inst.pause !== "function" || typeof inst.play !== "function") {
+                        return { ok: false, message: "当前内核不支持暂停。" };
+                    }
+                    try {
+                        if (inst.paused) {
+                            inst.play();
+                        } else {
+                            inst.pause();
+                        }
+                    } catch {
+                        return { ok: false, message: "切换暂停状态失败。" };
+                    }
+                    return { ok: true, paused: inst.paused === true };
+                },
+
                 /** 捕捉“当前进度”：触发引擎把状态写入浏览器档，读回字节 → base64 */
                 async capture() {
                     if (!window.EJS_emulator || !window.__ejsReady) {
@@ -672,12 +754,15 @@
                 },
 
                 /**
-                 * 切显示比例模式（FC 用）：父页面「窗口」选择器里点另一列时调用，mode 是父页面的
-                 * 模式名（pp / wide），这里翻译成 fceumm 的内核选项：
-                 *   pp   → fceumm_aspect = PP、上下过扫描各裁 8 行（帧缓冲 256×224，显示 8:7）；
-                 *   wide → fceumm_aspect = 4:3、不裁过扫描（帧缓冲 256×240，显示 4:3，铺满电视屏）。
+                 * 切显示比例模式（FC / SFC 用）：父页面「窗口」选择器里点另一列时调用，mode 是
+                 * 父页面的模式名（pp / wide），这里翻译成对应内核的选项：
+                 *   FC（fceumm）：
+                 *     pp   → fceumm_aspect = PP、上下过扫描各裁 8 行（帧缓冲 256×224，显示 8:7）；
+                 *     wide → fceumm_aspect = 4:3、不裁过扫描（帧缓冲 256×240，显示 4:3，铺满电视屏）。
+                 *   SFC（snes9x）：pp → snes9x_aspect = "uncorrected"（8:7）；
+                 *     wide → snes9x_aspect = "4:3"（帧缓冲始终 256×224，只横向拉宽）。
                  * 引擎只在启动时读一次设置文件，所以运行中改只能这样直接改内核变量（与引擎设置
-                 * 菜单里改选项走的是同一条路）；fceumm 会立刻按新几何重新摆放画面，父页面每秒读
+                 * 菜单里改选项走的是同一条路）；内核会立刻按新几何重新摆放画面，父页面每秒读
                  * 一次 videoInfo 跟着重算舞台。
                  */
                 async setDisplayMode(mode) {
@@ -693,13 +778,124 @@
                     }
                     const toWide = mode === "wide";
                     try {
-                        inst.gameManager.setVariable("fceumm_aspect", toWide ? "4:3" : "PP");
-                        inst.gameManager.setVariable("fceumm_overscan_v_top", toWide ? "0" : "8");
-                        inst.gameManager.setVariable("fceumm_overscan_v_bottom", toWide ? "0" : "8");
+                        if (core === "snes") {
+                            inst.gameManager.setVariable(
+                                "snes9x_aspect",
+                                toWide ? "4:3" : "uncorrected",
+                            );
+                        } else {
+                            inst.gameManager.setVariable("fceumm_aspect", toWide ? "4:3" : "PP");
+                            inst.gameManager.setVariable("fceumm_overscan_v_top", toWide ? "0" : "8");
+                            inst.gameManager.setVariable("fceumm_overscan_v_bottom", toWide ? "0" : "8");
+                        }
                     } catch {
                         return { ok: false, message: "切换显示比例失败。" };
                     }
                     return { ok: true };
+                },
+
+                /**
+                 * 切复古滤镜（父页面标题栏的「滤镜」下拉）。
+                 *
+                 * payload: {
+                 *   options: { 内核键: 值 },  // 新滤镜的原生选项，可为空
+                 *   reset:   { 内核键: 关闭值 }, // 本机种涉及的滤镜键，先复位
+                 *   shader:  "crt-lottes" | "",  // 空串表示关闭着色器
+                 *   core:    "fceumm"            // 期望的默认内核名，可为空
+                 * }
+                 *
+                 * 原生选项走 gameManager.setVariable——和引擎设置菜单改选项是同一条路，
+                 * 运行中立即生效。着色器走 enableShader。两端都把值同步进 settings /
+                 * allSettings，否则引擎下一次 saveSettings() 会按内存里的值覆盖设置块。
+                 */
+                async setFilter(payload) {
+                    if (!payload || typeof payload !== "object") {
+                        return { ok: false, message: "滤镜参数无效。" };
+                    }
+                    if (!window.EJS_emulator || !window.__ejsReady) {
+                        return { ok: false, message: "模拟器尚未就绪。" };
+                    }
+                    const inst = window.EJS_emulator;
+                    if (!inst.started) {
+                        return { ok: false, message: "请先开始游戏再切换滤镜。" };
+                    }
+                    const shader = typeof payload.shader === "string" ? payload.shader : "";
+                    if (shader && shader !== "disabled" && !inst.config?.shaders?.[shader]) {
+                        return { ok: false, message: "当前引擎不支持该滤镜着色器。" };
+                    }
+                    // 原生选项只对默认内核有效：用户把内核切走之后键名对不上，
+                    // setVariable 会静默失效。提前判断并说明，只应用着色器。
+                    const expectedCore = typeof payload.core === "string" ? payload.core : "";
+                    let warning = "";
+                    if (
+                        expectedCore &&
+                        typeof inst.getCore === "function" &&
+                        inst.getCore() !== expectedCore
+                    ) {
+                        warning = "当前内核不支持这组原生信号选项，仅着色器生效。";
+                    }
+                    try {
+                        const options =
+                            payload.options && typeof payload.options === "object"
+                                ? payload.options
+                                : {};
+                        const reset =
+                            payload.reset && typeof payload.reset === "object" ? payload.reset : {};
+                        if (
+                            !warning &&
+                            inst.gameManager &&
+                            typeof inst.gameManager.setVariable === "function"
+                        ) {
+                            for (const key of Object.keys(reset)) {
+                                if (!(key in options)) {
+                                    inst.gameManager.setVariable(key, reset[key]);
+                                    if (inst.settings) inst.settings[key] = reset[key];
+                                    if (inst.allSettings) inst.allSettings[key] = reset[key];
+                                }
+                            }
+                            for (const key of Object.keys(options)) {
+                                const value = String(options[key]);
+                                inst.gameManager.setVariable(key, value);
+                                if (inst.settings) inst.settings[key] = value;
+                                if (inst.allSettings) inst.allSettings[key] = value;
+                            }
+                        }
+                    } catch {
+                        return { ok: false, message: "切换滤镜失败。" };
+                    }
+                    if (!applyShader(shader)) {
+                        return { ok: false, message: "切换滤镜失败。" };
+                    }
+                    // 有设置块、或这次确实启用了滤镜时才落盘：首次进游戏没有设置块，
+                    // saveSettings() 会顺手建块，下次启动就能在 iframe 之前预置。
+                    let key = "";
+                    try {
+                        key =
+                            typeof inst.getLocalStorageKey === "function"
+                                ? inst.getLocalStorageKey()
+                                : "";
+                    } catch {
+                        key = "";
+                    }
+                    let hasBlock = false;
+                    if (key) {
+                        try {
+                            hasBlock = Boolean(localStorage.getItem(key));
+                        } catch {
+                            // 隐私模式等读不到 localStorage：本次照常生效，只是不落盘
+                        }
+                    }
+                    const hasFilter =
+                        Object.keys(payload.options || {}).length > 0 ||
+                        (shader && shader !== "disabled");
+                    if ((hasBlock || hasFilter) && typeof inst.saveSettings === "function") {
+                        try {
+                            inst.saveSettings();
+                        } catch {
+                            // 本次已经生效，落盘失败不影响画面
+                        }
+                    }
+                    return warning ? { ok: true, warning } : { ok: true };
                 },
 
                 /** 当前 NDS 屏幕布局（非 NDS 返回 null），供父页面/调试读取。 */
@@ -758,40 +954,6 @@
                         message: "当前内核需要重新进入游戏后才能切换屏幕布局。",
                         videoInfo: window.__ejsRpc.videoInfo,
                     };
-                },
-
-                /**
-                 * 切滤镜（父页面标题栏的滤镜选择器）：先按 reset 把上一次用过的内核选项复位
-                 * （各内核的关闭值不一样——mGBA 是 OFF、其余是 disabled，所以由父页面的滤镜表
-                 * 逐键给出，这里不猜），再下发本次的键值，最后换着色器——内核下一帧会重读可变项，
-                 * 不用重启。启动那一份不走这里：由 iframe 的 copts / shader 参数在内核加载前落好。
-                 */
-                setFilter(payload) {
-                    if (!window.EJS_emulator || !window.__ejsReady) {
-                        return { ok: false, message: "模拟器尚未就绪。" };
-                    }
-                    const inst = window.EJS_emulator;
-                    if (!inst.started) {
-                        return { ok: false, message: "请先开始游戏再切换滤镜。" };
-                    }
-                    const options = (payload && payload.options) || {};
-                    const reset = (payload && payload.reset) || {};
-                    try {
-                        for (const [key, off] of Object.entries(reset)) {
-                            if (!(key in options)) {
-                                inst.gameManager.setVariable(key, off);
-                            }
-                        }
-                        for (const [key, value] of Object.entries(options)) {
-                            inst.gameManager.setVariable(key, value);
-                        }
-                    } catch {
-                        return { ok: false, message: "切换滤镜失败。" };
-                    }
-                    if (!applyShader((payload && payload.shader) || "disabled")) {
-                        return { ok: false, message: "切换滤镜失败。" };
-                    }
-                    return { ok: true };
                 },
 
                 /**
@@ -929,13 +1091,41 @@
             function start() {
                 window.EJS_player = "#ejs";
                 window.EJS_core = core;
-                // ROM 直连后端流式接口；带版本参数使重传本体后 EmulatorJS 缓存可失效
-                const romUrl = `/api/games/${encodeURIComponent(id)}/play` + (version ? `?v=${encodeURIComponent(version)}` : "");
+                // ROM 直连后端流式接口；末段带真实落盘名，EmulatorJS 据此识别 ROM 格式
+                // （`.pbp` 必须保留后缀）。带版本参数使重传本体后 EmulatorJS 缓存可失效。
+                const romFile = readRomFile(
+                    (bundleManifest && bundleManifest.entry) || params.get("file"),
+                );
+                const romUrl =
+                    `/api/games/${encodeURIComponent(id)}/play` +
+                    (romFile ? `/${encodeURIComponent(romFile)}` : "") +
+                    (version ? `?v=${encodeURIComponent(version)}` : "");
                 window.EJS_gameUrl = romUrl;
+                if (bundle && bundleManifest) {
+                    // 入口之外的每个文件写进 MEMFS 根目录：键就是 cue/m3u 里引用的名字，
+                    // 值走同一套登录校验的 /play/files/{name}（名字已由后端清单校验）。
+                    const entry = String(bundleManifest.entry || "");
+                    const external = {};
+                    for (const file of bundleManifest.files || []) {
+                        const fileName = file && file.name;
+                        if (typeof fileName !== "string" || !fileName || fileName === entry) {
+                            continue;
+                        }
+                        const query = version
+                            ? `?v=${encodeURIComponent(version)}`
+                            : "";
+                        external[`/${fileName}`] =
+                            `/api/games/${encodeURIComponent(id)}/play/files/` +
+                            `${encodeURIComponent(fileName)}${query}`;
+                    }
+                    window.EJS_externalFiles = external;
+                    // 大 ROM 再写一份 IndexedDB 只会多占内存；多文件本体不缓存入口
+                    window.EJS_CacheLimit = 0;
+                }
                 window.EJS_pathtodata = "/emulatorjs/data/";
                 window.EJS_gameID = String(id);
                 window.EJS_gameName = name;
-                window.EJS_threads = false;
+                window.EJS_threads = threads;
                 // 固定中文界面：loader 会按浏览器语言自动请求 localization/<locale>.json，
                 // 若不由我们固定会去外找不存在的文件（404）。本文件即 fetch:emulatorjs 构建期
                 // 由官方 en-US + zh-CN 合成发布的“完整中文包”。
@@ -943,40 +1133,55 @@
                 // 免去「开始游戏」点按：引擎就绪后自动启动游戏本体
                 window.EJS_startOnLoaded = true;
                 // 引擎“保存/读取状态”写入浏览器（IndexedDB），作为云存档捕捉/放回的中转。
-                // 滤镜的内核选项也一并给：它们会在内核加载前写进内核设置文件、内核启动时按它
-                // 初始化，比起来之后再改可靠（运行中切换见 __ejsRpc.setFilter）。
                 window.EJS_defaultOptions = {
                     "save-state-location": "browser",
-                    ...filterOptions,
                 };
                 // FC（系统名 nes → fceumm 内核）的内核选项默认值，两种显示比例各一套：
                 //   pp（像素完美）：裁掉上下各 8 行过扫描（内核默认就是 8）→ 帧缓冲 256×224，
                 //     按 PP（Pixel Perfect，1:1 方像素）摆放的比例就是 8:7 = 256×224；
                 //   wide（4:3，真机 CRT 观感）：**不裁过扫描**→ 帧缓冲 256×240，按 4:3 摆放正好
                 //     铺满 4:3 的电视屏幕（224 行按内核的 4:3 摆放会算成 ≈1.43，屏里会留黑边）。
-                // 两套各对应一张电视机壳素材的屏幕洞（见 emulator-player.vue 的 SHELLS），
-                // 模式由父页面经 ?ratio= 传进来，运行中切换走 __ejsRpc.setDisplayMode。
+                // SFC（系统名 snes → snes9x 内核）只切显示比例，帧缓冲始终 256×224：
+                //   pp → snes9x_aspect = "uncorrected"（8:7）；wide → "4:3"。
+                // 两套各对应一张电视机壳素材的屏幕洞（见 emulator-player.vue 的 SHELLS，
+                // SFC 复用 FC 的两套电视壳），模式由父页面经 ?ratio= 传进来，
+                // 运行中切换走 __ejsRpc.setDisplayMode。
                 if (core === "nes") {
                     window.EJS_defaultOptions.fceumm_aspect = wide ? "4:3" : "PP";
                     window.EJS_defaultOptions.fceumm_overscan_v_top = wide ? "0" : "8";
                     window.EJS_defaultOptions.fceumm_overscan_v_bottom = wide ? "0" : "8";
+                } else if (core === "snes") {
+                    window.EJS_defaultOptions.snes9x_aspect = wide ? "4:3" : "uncorrected";
                 }
-                // NDS（melonDS）：BIOS 由引擎解压到虚拟文件系统；屏幕布局由父页面 ?nds= 决定
+                // BIOS：有就交给引擎解压到虚拟文件系统；与机种无关，没有 BIOS 的机种不会传
+                if (biosUrl) {
+                    window.EJS_biosUrl = biosUrl;
+                }
+                // 线程只由播放页按机种决定：现有核没有 -thread 资产，用户在设置菜单里
+                // 打开线程会请求不存在的文件，所以把这一项统一藏掉。
+                // 着色器从设置菜单隐藏：标题栏「滤镜」是唯一入口。
+                // 注意：行被隐藏后引擎读设置块不会自动应用 shader，必须靠 EJS_onGameStart
+                // 里的 applyShaderFromSettings() 显式启用（见下）。
+                const hiddenSettings = ["ejs_threads", "shader"];
+                // NDS（melonDS）：屏幕布局由父页面 ?nds= 决定
                 // （dual / top / side，见上面的 NDS_LAYOUTS）。布局的两项内核选项从引擎设置
                 // 菜单里隐藏——布局只能由父页面 - / = / setNdsLayout 控制，避免用户从菜单
                 // 改出与机壳、遮罩不一致的几何。父页面写云端设置前也会剔除这两个键。
                 if (core === "nds") {
-                    window.EJS_biosUrl = NDS_BIOS_URL;
-                    window.EJS_hideSettings = [
+                    hiddenSettings.push(
                         "melonds_screen_layout",
                         "melonds_screen_gap",
-                    ];
+                    );
                     window.EJS_defaultOptions.melonds_screen_layout = NDS_LAYOUTS[ndsMode].layout;
                     window.EJS_defaultOptions.melonds_screen_gap = NDS_LAYOUTS[ndsMode].gap;
                 }
+                window.EJS_hideSettings = hiddenSettings;
                 // 引擎开始运行后标记就绪，并接管底部控制条显隐
                 window.EJS_onGameStart = () => {
                     window.__ejsReady = true;
+                    // shader 已从设置菜单隐藏，引擎启动时不会自动应用；
+                    // 这里按设置块里的值显式启用（父页在 iframe 之前写入）。
+                    applyShaderFromSettings();
                     // 兜底：引擎自己写回的旧值若把布局带偏，就在这次启动后再强制一次。
                     // 个别内核没有 setVariable，或这一项要重启才生效——失败了也不能挡住
                     // 后面的 initControlBar，所以整段包在 try 里。
@@ -994,8 +1199,6 @@
                         window.requestAnimationFrame(setupNdsSideScreen);
                         window.setTimeout(setupNdsSideScreen, 300);
                     }
-                    // 着色器不是内核选项，得等引擎起来后显式启用（此时内核与虚拟文件系统都就绪）
-                    applyShader(filterShader);
                     initControlBar();
                 };
 
@@ -1008,8 +1211,52 @@
                 document.body.appendChild(script);
             }
 
-            // 引擎与（NDS 的）BIOS 就绪检查；缺失时给出可执行的修复提示而非白屏
+            // 多文件本体：播放前先取清单；失败就停在错误层，不进入模拟器
+            async function loadBundleManifest() {
+                const query = version ? `?v=${encodeURIComponent(version)}` : "";
+                try {
+                    const response = await fetch(
+                        `/api/games/${encodeURIComponent(id)}/play/manifest${query}`,
+                    );
+                    if (!response.ok) {
+                        throw new Error("manifest");
+                    }
+                    const payload = await response.json();
+                    const data = payload && payload.data;
+                    if (
+                        !data ||
+                        typeof data.entry !== "string" ||
+                        !data.entry ||
+                        !Array.isArray(data.files)
+                    ) {
+                        throw new Error("manifest");
+                    }
+                    bundleManifest = data;
+                    return true;
+                } catch {
+                    showError(
+                        "多文件本体清单读取失败：请刷新重试；若仍失败，请重新上传本体。",
+                    );
+                    return false;
+                }
+            }
+
+            // 引擎与 BIOS 就绪检查；缺失时给出可执行的修复提示而非白屏
             async function preflight() {
+                // PSP / DOS 的核只有线程变体；线程要求页面跨源隔离（COOP + COEP），
+                // 否则 SharedArrayBuffer 不存在。这里先拦一次，别让用户只看到英文报错。
+                if (
+                    threads &&
+                    (!window.crossOriginIsolated ||
+                        typeof window.SharedArrayBuffer !== "function")
+                ) {
+                    showError(
+                        "该机种需要跨源隔离才能启动：请确认页面响应带 " +
+                            "Cross-Origin-Opener-Policy: same-origin 与 " +
+                            "Cross-Origin-Embedder-Policy: require-corp 后重试。",
+                    );
+                    return false;
+                }
                 const loaderOk = await fetch("/emulatorjs/data/loader.js", { method: "HEAD" })
                     .then((response) => response.ok)
                     .catch(() => false);
@@ -1017,17 +1264,28 @@
                     showError("模拟器引擎缺失：请先运行 npm run fetch:emulatorjs（Docker 镜像会自动拉取）后重试。");
                     return false;
                 }
-                if (core === "nds") {
-                    const biosOk = await fetch(NDS_BIOS_URL, { method: "HEAD" })
+                if (bundle && !(await loadBundleManifest())) {
+                    return false;
+                }
+                if (biosUrl) {
+                    const biosOk = await fetch(biosUrl, { method: "HEAD" })
                         .then((response) => response.ok)
                         .catch(() => false);
                     if (!biosOk) {
-                        showError(
-                            "NDS BIOS 缺失：请把 bios7.bin、bios9.bin、firmware.bin 打包成 nds.zip，" +
-                                "放到 frontend/public/emulatorjs/bios/（Docker 需重建 web 镜像；" +
-                                "Windows 包放到 web/emulatorjs/bios/）后重试。",
-                        );
-                        return false;
+                        if (biosOptional) {
+                            // 核心有内置回退：不传 EJS_biosUrl，继续启动
+                            biosUrl = "";
+                        } else {
+                            const detail = biosRequiredFiles.length
+                                ? `请把 ${biosRequiredFiles.join("、")} 打包成 ${biosFile}，`
+                                : `请准备 ${biosFile}，`;
+                            showError(
+                                `模拟器 BIOS 缺失：${detail}` +
+                                    "放到 frontend/public/emulatorjs/bios/（Docker 需重建 web 镜像；" +
+                                    "Windows 包放到 web/emulatorjs/bios/）后重试。",
+                            );
+                            return false;
+                        }
                     }
                 }
                 return true;

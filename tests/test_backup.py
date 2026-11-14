@@ -1,7 +1,7 @@
 """SQLite 备份的测试。
 
 库落在**运行时根**的 `db/app.db` 里（不配运行时根时就是数据根，即默认行为），
-备份落在**数据根**的 `db/<YYYY-MM>.db` 里，每次备份整份重写。
+备份落在**数据根**的 `db/app.db.<YYYY-MM>` 里，每次备份整份重写。
 """
 
 import sqlite3
@@ -61,9 +61,9 @@ def test_database_path_follows_runtime_root(tmp_path):
 
     assert settings.runtime_root == runtime
     assert settings.database_path == runtime / "db" / "app.db"
-    # 备份目录与检索索引仍在数据根里
+    # 备份目录仍在数据根里；游戏发现索引跟运行时根走
     assert settings.backup_dir == tmp_path / "storage" / "db"
-    assert settings.game_index_path == tmp_path / "storage" / "db" / "game.db"
+    assert settings.game_index_path == runtime / "db" / "game.db"
 
 
 def test_database_path_falls_back_when_runtime_root_empty(tmp_path):
@@ -73,14 +73,17 @@ def test_database_path_falls_back_when_runtime_root_empty(tmp_path):
 
 
 def test_monthly_backup_path_is_named_by_month(tmp_path):
-    assert monthly_backup_path(tmp_path / "db", MOMENT) == tmp_path / "db" / "2026-10.db"
+    assert (
+        monthly_backup_path(tmp_path / "db", MOMENT)
+        == tmp_path / "db" / "app.db.2026-10"
+    )
 
 
 def test_backup_writes_monthly_file_into_backup_dir(tmp_path):
     _make_db(tmp_path)
 
     target = backup_database(_settings(tmp_path), now=MOMENT)
-    assert target == tmp_path / "db" / "2026-10.db"
+    assert target == tmp_path / "db" / "app.db.2026-10"
     assert target.is_file()
 
     # 备份出来的确实是同一个库：能开、表与内容都在
@@ -91,7 +94,7 @@ def test_backup_writes_monthly_file_into_backup_dir(tmp_path):
 def test_backup_overwrites_existing_month_file(tmp_path):
     """当月那份每次都重写：快照最多落后一个备份间隔，而不是一整个月。"""
     _make_db(tmp_path)
-    existing = tmp_path / "db" / "2026-10.db"
+    existing = tmp_path / "db" / "app.db.2026-10"
     existing.write_bytes(b"stale")
 
     assert backup_database(_settings(tmp_path), now=MOMENT) == existing
@@ -108,20 +111,23 @@ def test_backup_creates_backup_dir_if_missing(tmp_path):
         conn.execute("create table t (v text)")
 
     target = backup_database(_settings(tmp_path / "storage", runtime), now=MOMENT)
-    assert target == tmp_path / "storage" / "db" / "2026-10.db"
+    assert target == tmp_path / "storage" / "db" / "app.db.2026-10"
     assert target.is_file()
 
 
 def test_backup_new_month_creates_second_file(tmp_path):
     _make_db(tmp_path)
 
-    assert backup_database(_settings(tmp_path), now=MOMENT) == tmp_path / "db" / "2026-10.db"
+    assert (
+        backup_database(_settings(tmp_path), now=MOMENT)
+        == tmp_path / "db" / "app.db.2026-10"
+    )
     november = backup_database(_settings(tmp_path), now=datetime(2026, 11, 1, 0, 5, 0))
-    assert november == tmp_path / "db" / "2026-11.db"
+    assert november == tmp_path / "db" / "app.db.2026-11"
     assert sorted(p.name for p in (tmp_path / "db").iterdir()) == [
-        "2026-10.db",
-        "2026-11.db",
         "app.db",
+        "app.db.2026-10",
+        "app.db.2026-11",
     ]
 
 

@@ -1,19 +1,15 @@
 <template>
-    <label class="flash-resolution-select">
-        <span class="flash-resolution-select__text">窗口</span>
-        <select class="flash-resolution-select__select" :value="modelValue" @change="onChange">
-            <option value="native">
-                原生{{ nativeLabel }}
-            </option>
-            <option v-for="res in PRESETS" :key="res.key" :value="res.key">
-                {{ res.label }}
-            </option>
-        </select>
-    </label>
+    <playback-select
+        label="窗口"
+        :model-value="modelValue"
+        :options="options"
+        @update:model-value="$emit('update:modelValue', $event)"
+    />
 </template>
 
 <script setup>
 import { computed } from "vue";
+import PlaybackSelect from "@components/games/PlaybackSelect.vue";
 
 const props = defineProps({
     modelValue: { type: String, default: "native" },
@@ -21,7 +17,7 @@ const props = defineProps({
     nativeSize: { type: Object, default: null },
 });
 
-const emit = defineEmits(["update:modelValue"]);
+defineEmits(["update:modelValue"]);
 
 const nativeLabel = computed(() => {
     const size = props.nativeSize;
@@ -43,46 +39,8 @@ const PRESETS = [
     { key: "1920x1080", label: "1920 × 1080" },
 ];
 
-function onChange(event) {
-    emit("update:modelValue", event.target.value);
-}
+const options = computed(() => [
+    { value: "native", label: `原生${nativeLabel.value}` },
+    ...PRESETS.map((res) => ({ value: res.key, label: res.label })),
+]);
 </script>
-
-<style scoped>
-.flash-resolution-select {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    flex-shrink: 0;
-}
-
-.flash-resolution-select__text {
-    font-size: 13px;
-    color: #94a3b8;
-    white-space: nowrap;
-}
-
-.flash-resolution-select__select {
-    height: var(--app-control-h-lg);
-    padding: 0 var(--app-control-px-sm);
-    border: 1px solid var(--app-dark-border);
-    border-radius: var(--app-radius-control);
-    background: var(--app-dark-surface);
-    color: var(--app-dark-text);
-    font-family: inherit;
-    font-size: var(--app-font-size-md);
-    cursor: pointer;
-    transition: border-color 0.15s ease, background 0.15s ease;
-    max-width: 160px;
-}
-
-.flash-resolution-select__select:hover {
-    background: var(--app-dark-surface-hover);
-    border-color: var(--app-dark-border-hover);
-}
-
-.flash-resolution-select__select:focus-visible {
-    outline: var(--app-focus-axis) solid var(--app-focus-ring-dark);
-    outline-offset: var(--app-focus-offset);
-}
-</style>

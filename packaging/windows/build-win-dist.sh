@@ -34,11 +34,26 @@ FE_BUILD="${FE_BUILD_DIR:-/tmp/xgame-fe}"
 # shellcheck source=runtime.env
 . "$HERE/runtime.env"
 
-say() { printf '%s\n' "$*"; }
-step() { printf '\n== %s\n' "$*"; }
+# shellcheck source=scripts/log.sh
+. "$REPO/scripts/log.sh"
+
+step() { log_info "$*"; }
+
+# 拷贝 Python 源码目录，排除解释器缓存；rsync 不可用时用 cp + find。
+copy_python_tree() {
+    local src="$1" dest="$2"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' "$src/" "$dest/"
+    else
+        rm -rf "$dest"
+        cp -a "$src" "$dest"
+        find "$dest" -name '__pycache__' -type d -prune -exec rm -rf {} +
+        find "$dest" -name '*.pyc' -delete
+    fi
+}
 
 for tool in curl python3; do
-    command -v "$tool" >/dev/null 2>&1 || { say "缺少命令：$tool"; exit 1; }
+    command -v "$tool" >/dev/null 2>&1 || { log_fail "缺少命令：$tool"; exit 1; }
 done
 
 # ---------- 版本号 ----------
@@ -50,8 +65,8 @@ VERSION="${APP_VERSION:-$(bash "$REPO/scripts/version.sh")}"
 ZIP_NAME="xgame_${VERSION}.zip"
 
 step "组装 xgame ${VERSION}"
-say "仓库：$REPO"
-say "输出：$OUT/$ZIP_NAME"
+log_info "仓库：$REPO"
+log_info "输出：$OUT/$ZIP_NAME"
 
 mkdir -p "$OUT" "$CACHE"
 # 重新组装：只清包目录，保留 cache/ 里下过的运行时，免得每次重下 46MB
@@ -61,11 +76,11 @@ mkdir -p "$PKG"
 # ---------- 1. 前端构建产物 ----------
 step "1/6 前端"
 if [ "${SKIP_FRONTEND:-0}" = "1" ] && [ -d "$REPO/frontend/dist" ]; then
-    say "SKIP_FRONTEND=1，复用已有的 frontend/dist"
+    log_info "SKIP_FRONTEND=1，复用已有的 frontend/dist"
 elif [ -d "$WINBUILD/frontend/node_modules" ]; then
     # 构建环境镜像里那份依赖：源码拷到容器内的临时目录里构建（不碰宿主机的 node_modules），
     # 前端依赖、Ruffle（从 node_modules 拷）、EmulatorJS 资产全都来自镜像，全程离线。
-    say "用构建环境里的前端依赖构建（源码拷到 $FE_BUILD）"
+    log_info "用构建环境里的前端依赖构建（源码拷到 $FE_BUILD）"
     rm -rf "$FE_BUILD"
     mkdir -p "$FE_BUILD"
     rsync -a --delete \
@@ -82,63 +97,63 @@ elif [ -d "$WINBUILD/frontend/node_modules" ]; then
     rm -rf "$FE_BUILD"
 else
     # 没在构建环境镜像里跑：退回宿主机自己的 node_modules（首次构建要联网，脚本幂等、重复构建不重下）
-    say "没有构建环境镜像，用宿主机的 node_modules 构建"
+    log_info "没有构建环境镜像，用宿主机的 node_modules 构建"
     if [ ! -d "$REPO/frontend/node_modules" ]; then
         ( cd "$REPO/frontend" && npm ci )
     fi
     ( cd "$REPO/frontend" && APP_VERSION="$VERSION" npm run build )
 fi
 test -s "$REPO/frontend/dist/version.txt" || {
-    say "！前端产物里没有 version.txt，构建没成功。"
+    log_fail "前端产物里没有 version.txt，构建没成功。"
     exit 1
 }
 mkdir -p "$PKG/web"
 cp -a "$REPO/frontend/dist/." "$PKG/web/"
-# NDS BIOS 是用户自备的静态包，不在 dist 里（构建环境的预置资产也没有它）：
-# 有就带进包，没有就让 NDS 在启动预检时提示缺 BIOS。
+# 模拟器 BIOS 是用户自备的静态包，不在 dist 里（构建环境的预置资产也没有它）：
+# 有就带进包，没有就让需要 BIOS 的机种在启动预检时提示缺包。
 if [ -d "$REPO/frontend/public/emulatorjs/bios" ]; then
     mkdir -p "$PKG/web/emulatorjs/bios"
     cp -a "$REPO/frontend/public/emulatorjs/bios/." "$PKG/web/emulatorjs/bios/"
 else
-    say "提示：宿主机没有 NDS BIOS 包，Windows 包的 NDS 会提示缺少 BIOS。"
+    log_warn "宿主机没有模拟器 BIOS 包，需要 BIOS 的机种会提示缺少 BIOS。"
 fi
-say "前端产物：$(du -sh "$PKG/web" | cut -f1)，版本 $(cat "$PKG/web/version.txt")"
+log_info "前端产物：$(du -sh "$PKG/web" | cut -f1)，版本 $(cat "$PKG/web/version.txt")"
 
 # ---------- 2. Windows 版 Python ----------
 step "2/6 Windows 版 Python（$PBS_ASSET）"
 if [ -f "$WINBUILD/runtime/$PBS_ASSET" ]; then
-    say "用构建环境里预置的运行时"
+    log_info "用构建环境里预置的运行时"
     RUNTIME="$WINBUILD/runtime/$PBS_ASSET"
 else
-    say "构建环境里没有预置运行时，改用 $CACHE（那儿没有就联网取一份）"
+    log_warn "构建环境里没有预置运行时，改用 $CACHE（那儿没有就联网取一份）"
     bash "$HERE/fetch-runtime.sh" "$CACHE"
     RUNTIME="$CACHE/$PBS_ASSET"
 fi
 # 无论来自镜像还是刚下的，都再校一次：镜像层被换掉、文件被截断都在这里拦住
 echo "$PBS_SHA256  $RUNTIME" | sha256sum -c - >/dev/null || {
-    say "！运行时压缩包的 sha256 与 runtime.env 里钉死的不符，已中止。"
+    log_fail "运行时压缩包的 sha256 与 runtime.env 里钉死的不符，已中止。"
     exit 1
 }
-say "sha256 校验通过"
+log_ok "sha256 校验通过"
 tar -xzf "$RUNTIME" -C "$PKG"
-[ -x "$PKG/python/python.exe" ] || { say "！解出来的运行时里没有 python.exe"; exit 1; }
+[ -x "$PKG/python/python.exe" ] || { log_fail "解出来的运行时里没有 python.exe"; exit 1; }
 
 # 瘦身：调试符号（*.pdb）与用不到的 tkinter/tcl 占了差不多一半体积，删掉不影响运行。
 # 刻意**保留** Lib/site-packages/pip：哪天用户要自救（补装个包）还能用。
 find "$PKG/python" -name '*.pdb' -delete
 rm -rf "$PKG/python/tcl" "$PKG/python/Lib/tkinter" "$PKG/python/Lib/test" \
        "$PKG/python/DLLs/_tkinter.pyd" "$PKG/python/DLLs/tk86t.dll" "$PKG/python/DLLs/tcl86t.dll"
-say "运行时：$(du -sh "$PKG/python" | cut -f1)"
+log_info "运行时：$(du -sh "$PKG/python" | cut -f1)"
 
 # ---------- 3. Windows 依赖 ----------
 step "3/6 依赖（win_amd64 轮子）"
 # 在 Linux 上直接装 Windows 轮子：--only-binary 是 --platform 的硬要求，
 # 三个 --python-version/--implementation/--abi 不能省，否则会被当前解释器的 tag 带偏。
 if [ -d "$WINBUILD/wheels" ]; then
-    say "从构建环境里的轮子仓库离线安装（$(ls "$WINBUILD/wheels" | wc -l) 个）"
+    log_info "从构建环境里的轮子仓库离线安装（$(ls "$WINBUILD/wheels" | wc -l) 个）"
     PIP_SOURCE=(--no-index --find-links "$WINBUILD/wheels")
 else
-    say "构建环境里没有轮子仓库，联网从 PyPI 取"
+    log_warn "构建环境里没有轮子仓库，联网从 PyPI 取"
     PIP_SOURCE=()
 fi
 python3 -m pip install --quiet --upgrade \
@@ -155,20 +170,21 @@ rm -rf "$PKG/python/Lib/site-packages/bin"
 
 # ---------- 4. 后端与包内脚本 ----------
 step "4/6 后端与启动脚本"
-if command -v rsync >/dev/null 2>&1; then
-    rsync -a --delete --exclude '__pycache__' --exclude '*.pyc' "$REPO/backend/" "$PKG/backend/"
-else
-    cp -a "$REPO/backend" "$PKG/backend"
-    find "$PKG/backend" -name '__pycache__' -type d -prune -exec rm -rf {} +
-    find "$PKG/backend" -name '*.pyc' -delete
-fi
-test -d "$PKG/backend/search/csv" || { say "！backend/search/csv 没带上，检索索引建不出来"; exit 1; }
+copy_python_tree "$REPO/backend" "$PKG/backend"
+test -d "$PKG/backend/search/catalog" || { log_fail "backend/search/catalog 没带上，游戏名录建不出来"; exit 1; }
 # 榜单是可选数据：还没整理好时只提示，不拦构建（包里的榜单页会显示「榜单尚未加载」）
-test -f "$PKG/backend/search/ranking/ranking.csv" \
-    || say "提示：backend/search/ranking/ranking.csv 没带上，这个包的游戏榜单是空的。"
+test -d "$PKG/backend/search/rankings" \
+    || log_warn "backend/search/rankings 没带上，这个包的游戏榜单是空的。"
 
-for name in launcher.py winops.py smoke_win.py allow-lan.ps1 xgame.ico \
-            启动游戏平台.cmd 允许局域网访问.bat \
+# 结构升级工具随包走：停服后双击「升级数据库.cmd」即可原地升级，不必回仓库/WSL。
+copy_python_tree "$REPO/upgrade" "$PKG/upgrade"
+test -f "$PKG/upgrade/versions/v1.py" || {
+    log_fail "upgrade/versions/v1.py 没带上，包内升级会失败"
+    exit 1
+}
+
+for name in launcher.py winops.py smoke_win.py xgame_console.py allow-lan.ps1 xgame.ico \
+            启动游戏平台.cmd 升级数据库.cmd 允许局域网访问.bat \
             创建桌面快捷方式.bat 设置开机自启.bat 解除锁定.bat 说明.txt; do
     cp -a "$HERE/$name" "$PKG/$name"
 done
@@ -177,15 +193,15 @@ done
 # 源图比图标新就顺手重生成一次；本机没装 Pillow 就只提醒、不拦构建（用仓库里那份图标）。
 if [ "$HERE/xgame.png" -nt "$HERE/xgame.ico" ]; then
     if python3 -c "import PIL" >/dev/null 2>&1; then
-        say "xgame.png 比 xgame.ico 新，正在重新生成图标……"
+        log_info "xgame.png 比 xgame.ico 新，正在重新生成图标……"
         python3 "$HERE/make_icon.py"
         cp -a "$HERE/xgame.ico" "$PKG/xgame.ico"
     else
-        say "！xgame.png 比 xgame.ico 新，但本机没有 Pillow，包里用的还是旧图标。"
-        say "  装好 Pillow 再构建一次，或手动跑：python3 packaging/windows/make_icon.py"
+        log_warn "xgame.png 比 xgame.ico 新，但本机没有 Pillow，包里用的还是旧图标。"
+        log_info "装好 Pillow 再构建一次，或手动跑：python3 packaging/windows/make_icon.py"
     fi
 fi
-[ -f "$PKG/xgame.ico" ] || { say "！缺少 xgame.ico（跑 python3 packaging/windows/make_icon.py 生成）"; exit 1; }
+[ -f "$PKG/xgame.ico" ] || { log_fail "缺少 xgame.ico（跑 python3 packaging/windows/make_icon.py 生成）"; exit 1; }
 
 # 版本文件：前端拿它探测「服务端换了新构建」，启动器把它打在启动横幅上。
 printf '%s' "$VERSION" > "$PKG/version.txt"
@@ -205,7 +221,7 @@ if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ]; then
 else
     # 在容器里构建就是这条路：容器里没有 binfmt_misc，跑不了 Windows 的 python.exe。
     # 交给 build-in-docker.sh 在宿主机上补一次（那儿才有 interop）。
-    say "本机（或本容器）跑不了 Windows 的 python.exe，跳过自检。"
+    log_warn "本机（或本容器）跑不了 Windows 的 python.exe，跳过自检。"
 fi
 
 # ---------- 6. 打包 ----------

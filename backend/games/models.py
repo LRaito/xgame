@@ -38,6 +38,7 @@ COVER_TYPES_BY_GAME_TYPE = {
     "gba": ("gba",),
     "nds": ("nds",),
     "nes": ("fc", "nes"),
+    "snes": ("sfc",),
 }
 # 只用于中文报错文案；与前端 STYLE_META 里各样式的 label 同义
 COVER_TYPE_LABELS = {
@@ -48,6 +49,7 @@ COVER_TYPE_LABELS = {
     "nds": "NDS",
     "fc": "FC",
     "nes": "NES",
+    "sfc": "SFC",
 }
 
 
@@ -73,6 +75,10 @@ class Game(SQLModel, table=True):
     __table_args__ = (
         Index("uq_games_game_type_name", "game_type", "name", unique=True),
         Index("uq_games_cartridge_id", "cartridge_id", unique=True),
+        Index("ix_games_in_ranking_updated", "in_ranking", "updated_at", "id"),
+        # 显式 AUTOINCREMENT：删除最大 id 后也不复用编号。id 会出现在播放页路由与
+        # 截图/存档等表的 game_id 里，复用会让旧链接指向另一盘游戏。
+        {"sqlite_autoincrement": True},
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -93,6 +99,12 @@ class Game(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=_utcnow)
     updated_at: datetime = Field(default_factory=_utcnow)
+    # 是否出现在 game.db 的榜单里。由 make index 全量对账、新增/改卡带ID/删除时增量维护。
+    in_ranking: bool = Field(
+        default=False,
+        index=True,
+        sa_column_kwargs={"server_default": "0"},
+    )
 
 
 class GameCloudSnapshot(SQLModel, table=True):
@@ -174,7 +186,7 @@ class GameGalleryImage(SQLModel, table=True):
     与截图相反，图集**按游戏共享**——不记上传者，任何登录用户都能看、能改。
     排序与截图同一套分数机制（sort_order 是浮点分数，见 GameScreenshot 的说明），
     所以同样不加 (game_id, sort_order) 唯一约束。字节落在
-    game/{类型}/{卡带ID}/image/ 下（**游戏目录内**，类型创建后不可变），
+    game/{类型}/{卡带ID}/image/ 下（**游戏目录内**，随游戏类型迁移），
     file_path 存相对路径。
     """
 

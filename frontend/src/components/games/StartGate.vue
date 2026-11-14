@@ -1,14 +1,20 @@
 <template>
     <div class="start-gate" @click="$emit('start')">
         <div class="start-gate__content">
-            <button
-                type="button"
+            <app-button
                 class="start-gate__start"
+                text
+                size="lg"
+                tone="dark"
                 aria-label="开始游戏"
             >
-                <span class="start-gate__press">PRESS START</span>
-                <span class="start-gate__zh">投币开始</span>
-            </button>
+                <!-- Element Plus 会把按钮插槽再包一层 span，纵向排列必须放在
+                     我们自己的包裹层上，否则两行文字会被摆成一行 -->
+                <span class="start-gate__stack">
+                    <span class="start-gate__press">PRESS START</span>
+                    <span class="start-gate__zh">投币开始</span>
+                </span>
+            </app-button>
             <span class="start-gate__coin" aria-hidden="true">INSERT COIN</span>
         </div>
     </div>
@@ -19,15 +25,6 @@ defineEmits(["start"]);
 </script>
 
 <style scoped>
-/* 街机像素字体随前端资源一起打包，运行时不依赖外网 */
-@font-face {
-    font-family: "Press Start 2P";
-    src: url("../../assets/fonts/press-start-2p.woff2") format("woff2");
-    font-style: normal;
-    font-weight: 400;
-    font-display: swap;
-}
-
 /* 整个播放区都是启动按钮：铺满游戏外壳，点哪里都能开始；扫描线与光晕只做氛围，不接事件 */
 .start-gate {
     position: absolute;
@@ -81,18 +78,24 @@ defineEmits(["start"]);
     gap: clamp(18px, 2vw, 26px);
 }
 
-/* 按钮只承载 PRESS START 与中文提示，投币字样留在外面 */
+/* 按钮只承载 PRESS START 与中文提示，投币字样留在外面；
+   边框、背景与游标交给 AppButton 的 text 形态。 */
 .start-gate__start {
+    color: inherit;
+}
+
+/* 按钮内部两行的纵向排列。**不能写在 `.start-gate__start` 上**：
+   Element Plus 的 el-button 会把默认插槽再包进一层 `<span>`，
+   按钮本身只有一个 flex 子元素，flex-direction/gap 都落不到这两行文字上。 */
+.start-gate__stack {
     display: flex;
     flex-direction: column;
     align-items: center;
     gap: clamp(8px, 1vw, 12px);
-    padding: 0;
-    border: 0;
-    background: transparent;
-    cursor: pointer;
-    font: inherit;
-    color: inherit;
+}
+
+.app-button.start-gate__start:hover {
+    text-decoration: none;
 }
 
 .start-gate__press {

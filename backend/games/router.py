@@ -8,15 +8,26 @@ from fastapi import APIRouter, File, Form, Query, UploadFile
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from backend.deps import CurrentUser, GameServiceDep, GameStatsServiceDep
+from backend.deps import (
+    BodyUploadServiceDep,
+    CurrentUser,
+    GameServiceDep,
+    GameStatsServiceDep,
+)
 from backend.errors import NotFoundError, StorageError, ValidationError
 from backend.games.models import PROGRESS_NOT_STARTED
+from backend.games.platforms import platform_threads
+from backend.games.uploads import CHUNK_SIZE, SINGLE_FILE_MAX
 from backend.games.service import (
     GAME_TYPES,
     MANAGE_PAGE_SIZE_DEFAULT,
     RECENT_LIMIT_DEFAULT,
     GameUpload,
     allowed_body_extensions,
+    bios_descriptor,
+    default_game_types_by_extension,
+    extension_candidates,
+    game_type_descriptors,
 )
 from backend.http import iso, json_err, json_ok
 from backend.storage.access import build_download_response, content_disposition
@@ -42,6 +53,10 @@ class RenameCartridgeBody(BaseModel):
     cartridge_id: str = ""
 
 
+class ChangeGameTypeBody(BaseModel):
+    game_type: str = ""
+
+
 class ImportGameBody(BaseModel):
     url: str = ""
 
@@ -58,10 +73,15 @@ def _center_payload(item, stat=None) -> dict:
         "cover_type": item.cover_type,
         "description": item.description,
         "category": item.game_type,
+        # BIOS 规格随条目下发：播放页用它拼宿主页参数，不依赖 /status 是否加载成功
+        "bios": bios_descriptor(item.game_type),
+        # 线程核（PSP / DOS）：播放页据此给宿主页传 threads=1
+        "threads": platform_threads(item.game_type),
         "path": item.path,
         "size": item.size,
         "cover_path": item.cover_path,
         "game_path": item.game_path,
+        "body_kind": item.body_kind,
         "updated_at": iso(item.updated_at),
         # 攻略形态来自 games.guide_kind（上传写值、删除清空），列表不 stat 磁盘
         "has_guide": bool(item.guide_kind),
@@ -88,12 +108,15 @@ def _manage_payload(item) -> dict:
         "size": item.size,
         "crc32": item.crc32,
         "game_path": item.game_path,
+        "body_kind": item.body_kind,
+        "threads": platform_threads(item.game_type),
         "cover_path": item.cover_path,
         "path": item.path,
         "created_at": iso(item.created_at),
         "updated_at": iso(item.updated_at),
         "has_guide": bool(item.guide_kind),
         "guide_kind": item.guide_kind,
+        "in_ranking": item.in_ranking,
     }
 
 
@@ -116,11 +139,20 @@ def _upload_of(file: UploadFile) -> GameUpload:
 
 @router.get("/status")
 def games_status(_user: CurrentUser):
-    """类型列表与可上传格式（前端只用于筛选与 accept 提示）。"""
+    """类型元数据与可上传格式：前端据此渲染下拉、accept 与类型提示。"""
     return json_ok(
         {
             "game_types": list(GAME_TYPES),
             "body_extensions": list(allowed_body_extensions()),
+            # 下面三项都从机种词表派生，前端不再手写扩展名映射
+            "types": game_type_descriptors(),
+            "extension_candidates": extension_candidates(),
+            "default_game_type_by_extension": default_game_types_by_extension(),
+            # 前端据此决定什么时候走分片，阈值与后端保持一致
+            "upload": {
+                "single_file_max_bytes": SINGLE_FILE_MAX,
+                "chunk_size_bytes": CHUNK_SIZE,
+            },
         }
     )
 
@@ -164,6 +196,7 @@ def games_manage_list(
     service: GameServiceDep,
     game_type: str | None = Query(None),
     q: str | None = Query(None),
+    in_ranking: bool | None = Query(None),
     page: int = Query(1),
     page_size: int = Query(MANAGE_PAGE_SIZE_DEFAULT),
 ):
@@ -171,6 +204,7 @@ def games_manage_list(
     result = service.list_manage(
         game_type=game_type or None,
         keyword=q or None,
+        in_ranking=in_ranking,
         page=page,
         page_size=page_size,
     )
@@ -211,6 +245,7 @@ def games_import(body: ImportGameBody, _user: CurrentUser, service: GameServiceD
 def games_create(
     _user: CurrentUser,
     service: GameServiceDep,
+    uploads: BodyUploadServiceDep,
     name: str = Form(...),
     cartridge_id: str = Form(""),
     description: str = Form(""),
@@ -219,15 +254,32 @@ def games_create(
     body_url: str = Form(""),
     body_game_type: str = Form(""),
     cover_url: str = Form(""),
+    upload_id: str = Form(""),
+    upload_ids: list[str] = Form(default=[]),
 ):
     """新建游戏并上传本体（可选封面）。
 
     卡带ID 必填且创建后不可改：它既是游戏的唯一标识，也是磁盘上的目录名。
-    本体与封面各自可以给本地文件（`file`/`cover`）或网络直链（`body_url`/`cover_url`）。
+    本体可选：`file` / `body_url` / `upload_id` / `upload_ids` 都不传时只建条目，
+    此时必须用 `body_game_type` 指定类型，大小 / CRC / 本体路径留空，稍后可编辑补传。
+    本体与封面各自可以给本地文件（`file`/`cover`）、网络直链（`body_url`/`cover_url`）
+    或已完成分片上传的暂存文件（`upload_id` 单个，`upload_ids` 多文件本体），彼此互斥。
     走本地文件时游戏类型由本体文件名自动判定；走直链时地址未必看得出类型，
     所以由前端下拉传入 `body_game_type`，后者必须与地址能认出的类型一致。
     """
     try:
+        if upload_id and upload_ids:
+            raise ValidationError("本体只能选择一种上传方式。")
+        if file is not None and (upload_id or upload_ids):
+            raise ValidationError("本体只能选择一种上传方式。")
+        if body_url and (upload_id or upload_ids):
+            raise ValidationError("本体只能选择一种上传方式。")
+        if file is not None and body_url:
+            raise ValidationError("本体只能选择一种上传方式。")
+        if cover is not None and cover_url:
+            raise ValidationError("封面只能选择一种上传方式。")
+        staged = uploads.claim(upload_id) if upload_id else None
+        staged_files = uploads.claim_many(upload_ids) if upload_ids else None
         item = service.create(
             name,
             description,
@@ -237,7 +289,11 @@ def games_create(
             body_url=body_url,
             body_game_type=body_game_type,
             cover_url=cover_url,
+            staged=staged,
+            staged_files=staged_files,
         )
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)
     logger.info("已添加游戏 id=%s name=%s", item.id, item.name)
@@ -282,6 +338,25 @@ def games_rename_cartridge_id(
     return json_ok(_manage_payload(item))
 
 
+@router.put("/manage/{game_id}/game-type")
+def games_change_game_type(
+    game_id: int, body: ChangeGameTypeBody, _user: CurrentUser, service: GameServiceDep
+):
+    """改游戏类型：磁盘目录与各账号的存档/截图目录一起迁移，库里的路径列同步改写。
+
+    独立接口——普通编辑（PUT /manage/{id}）不接受这个字段。
+    目标类型必须属于当前本体后缀的候选集；唯一候选的后缀不能改。
+    """
+    try:
+        item = service.change_game_type(game_id, body.game_type)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    logger.info("已改游戏类型 game_id=%s game_type=%s", game_id, item.game_type)
+    return json_ok(_manage_payload(item))
+
+
 @router.delete("/manage/{game_id}")
 def games_delete(game_id: int, _user: CurrentUser, service: GameServiceDep):
     try:
@@ -296,16 +371,21 @@ def games_upload_asset(
     game_id: int,
     _user: CurrentUser,
     service: GameServiceDep,
+    uploads: BodyUploadServiceDep,
     kind: str = Form(...),
     file: UploadFile | None = File(None),
     url: str = Form(""),
     game_type: str = Form(""),
     cover_type: str = Form(""),
+    upload_id: str = Form(""),
+    upload_ids: list[str] = Form(default=[]),
 ):
     """一步上传游戏本体或封面：校验类型 → 流式写入存储目录 → 更新游戏行 → 删旧文件。
 
-    来源可以是本地文件（`file`）或网络直链（`url`）。**换本体只接受与当前游戏类型
-    相同的本体**（按扩展名判定，创建后类型不可变），跨类型返回 400 且旧档不动；
+    来源可以是本地文件（`file`）、网络直链（`url`）或已完成分片上传的暂存文件
+    （`upload_id` 单个、`upload_ids` 多文件本体，只支持 kind="game"），彼此只能选一种。
+    **换本体只接受与当前游戏类型相同的本体**（按后缀候选集判定），跨类型返回 400
+    且旧档不动；改类型走独立的 `PUT /manage/{id}/game-type` 接口。
     成功后重算并更新 `crc32`/`size`/`game_path`。直链的 `game_type` 必须等于当前类型。
 
     `cover_type`（封面样式 id）**只在 kind="cover" 且非空时生效**，供「美化封面」
@@ -314,6 +394,14 @@ def games_upload_asset(
     try:
         if file is not None and not file.filename:
             raise ValidationError("请选择要上传的文件。")
+        if upload_id and upload_ids:
+            raise ValidationError("请只选择一种上传方式。")
+        if (upload_id or upload_ids) and (file is not None or url):
+            raise ValidationError("请只选择一种上传方式。")
+        if (upload_id or upload_ids) and kind != "game":
+            raise ValidationError("只有游戏本体支持分片上传。")
+        staged = uploads.claim(upload_id) if upload_id else None
+        staged_files = uploads.claim_many(upload_ids) if upload_ids else None
         item = service.upload_asset(
             game_id,
             kind=kind,
@@ -321,6 +409,8 @@ def games_upload_asset(
             url=url,
             game_type=game_type,
             cover_type=cover_type,
+            staged=staged,
+            staged_files=staged_files,
         )
     except (ValidationError, StorageError) as exc:
         return json_err(str(exc), 400)
@@ -401,36 +491,43 @@ def _open_play_asset(service: GameServiceDep, game_id: int):
     return item, stream, content_type, Path(item.game_path).name
 
 
-@router.get("/{game_id}/play")
-def games_play(game_id: int, _user: CurrentUser, service: GameServiceDep):
-    """流式返回游戏本体（SWF 或 ROM），文件名取落盘名（game.<ext>）。
+def _play_asset_or_error(
+    service: GameServiceDep,
+    game_id: int,
+    expected_filename: str | None = None,
+):
+    """打开本体；错误时返回 (None, 错误响应)，成功时返回 ((item, stream, type, name), None)。
 
-    content-type：Flash（.swf）保持原值以兼容现有播放链路与缓存；其余平台统一
-    octet-stream——EmulatorJS 按字节读取，不依赖 content-type，core 由前端指定。
+    `expected_filename` 只用于「URL 末段带文件名」的路由：EmulatorJS 用末段当 ROM
+    文件名（`.pbp` 等核会看后缀），所以客户端必须传真实落盘名，不一致直接 404。
     """
     try:
-        _item, stream, content_type, filename = _open_play_asset(service, game_id)
+        item, stream, content_type, filename = _open_play_asset(service, game_id)
     except NotFoundError as exc:
-        return json_err(str(exc), 404)
+        return None, json_err(str(exc), 404)
     except (ValidationError, StorageError) as exc:
-        return json_err(str(exc), 400)
+        return None, json_err(str(exc), 400)
+    if expected_filename is not None and expected_filename != filename:
+        stream.close()
+        return None, json_err("游戏文件不存在。", 404)
+    return (item, stream, content_type, filename), None
+
+
+def _play_download(service: GameServiceDep, game_id: int, expected_filename=None):
+    asset, error = _play_asset_or_error(service, game_id, expected_filename)
+    if error is not None:
+        return error
+    _item, stream, content_type, filename = asset
     return build_download_response(
         stream, filename=filename, content_type=content_type
     )
 
 
-@router.head("/{game_id}/play")
-def games_play_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
-    """HEAD 与 GET 同语义：返回相同响应头但不传正文。
-
-    EmulatorJS 启动前会先对本体 URL 发一个 HEAD 探测（此前 405 会报一条网络错误）。
-    """
-    try:
-        item, stream, content_type, filename = _open_play_asset(service, game_id)
-    except NotFoundError as exc:
-        return json_err(str(exc), 404)
-    except (ValidationError, StorageError) as exc:
-        return json_err(str(exc), 400)
+def _play_head(service: GameServiceDep, game_id: int, expected_filename=None):
+    asset, error = _play_asset_or_error(service, game_id, expected_filename)
+    if error is not None:
+        return error
+    item, stream, content_type, filename = asset
     size = stream.size if stream.size is not None else item.size
     stream.close()
     return Response(
@@ -443,6 +540,114 @@ def games_play_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
     )
 
 
+@router.get("/{game_id}/play")
+def games_play(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """流式返回游戏本体（SWF 或 ROM），文件名取落盘名（game.<ext>）。
+
+    content-type：Flash（.swf）保持原值以兼容现有播放链路与缓存；其余平台统一
+    octet-stream——EmulatorJS 按字节读取，不依赖 content-type，core 由前端指定。
+    """
+    return _play_download(service, game_id)
+
+
+@router.get("/{game_id}/play/manifest")
+def games_play_manifest(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """多文件本体的播放清单；单文件本体也返回只有入口一条的等价结构。
+
+    **必须注册在 `/play/{filename}` 之前**，否则 `manifest` 会被当成文件名。
+    """
+    try:
+        item = service.get(game_id)
+        return json_ok(service.body_manifest(item))
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+
+
+@router.head("/{game_id}/play/manifest")
+def games_play_manifest_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    try:
+        item = service.get(game_id)
+        service.body_manifest(item)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    return Response(content=b"", media_type="application/json")
+
+
+@router.get("/{game_id}/play/files/{name}")
+def games_play_body_file(
+    game_id: int, name: str, _user: CurrentUser, service: GameServiceDep
+):
+    """多文件本体里的单个文件；只服务清单内的安全 basename，防目录穿越。"""
+    try:
+        item = service.get(game_id)
+        stream = service.open_body_file(item, name)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    return build_download_response(
+        stream, filename=name, content_type=_ROM_CONTENT_TYPE
+    )
+
+
+@router.head("/{game_id}/play/files/{name}")
+def games_play_body_file_head(
+    game_id: int, name: str, _user: CurrentUser, service: GameServiceDep
+):
+    try:
+        item = service.get(game_id)
+        stream = service.open_body_file(item, name)
+    except NotFoundError as exc:
+        return json_err(str(exc), 404)
+    except (ValidationError, StorageError) as exc:
+        return json_err(str(exc), 400)
+    size = stream.size if stream.size is not None else 0
+    stream.close()
+    return Response(
+        content=b"",
+        media_type=_ROM_CONTENT_TYPE,
+        headers={
+            "Content-Length": str(size),
+            "Content-Disposition": content_disposition(name),
+        },
+    )
+
+
+@router.get("/{game_id}/play/{filename}")
+def games_play_named(
+    game_id: int,
+    filename: str,
+    _user: CurrentUser,
+    service: GameServiceDep,
+):
+    """带文件名的本体流：末段供 EmulatorJS 识别 ROM 格式，内容仍按 game_path 下发。"""
+    return _play_download(service, game_id, filename)
+
+
+@router.head("/{game_id}/play")
+def games_play_head(game_id: int, _user: CurrentUser, service: GameServiceDep):
+    """HEAD 与 GET 同语义：返回相同响应头但不传正文。
+
+    EmulatorJS 启动前会先对本体 URL 发一个 HEAD 探测（此前 405 会报一条网络错误）。
+    """
+    return _play_head(service, game_id)
+
+
+@router.head("/{game_id}/play/{filename}")
+def games_play_named_head(
+    game_id: int,
+    filename: str,
+    _user: CurrentUser,
+    service: GameServiceDep,
+):
+    """带文件名的 HEAD，语义与 GET 相同。"""
+    return _play_head(service, game_id, filename)
+
+
 # H5 资源响应头：sandbox 让文档进入不透明源（读不到本站 cookie/DOM、无法注册 SW），
 # ACAO 让不透明源下的 fetch/ES module/.wasm 等跨源读取可成；no-cache 避免重传后仍取旧资源。
 _H5_HEADERS = {
@@ -453,6 +658,11 @@ _H5_HEADERS = {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
     "Access-Control-Allow-Origin": "*",
+    # 播放页外层带 COEP require-corp（PSP/DOS 的线程核需要 SharedArrayBuffer）。
+    # H5 是沙箱不透明源，必须显式声明可嵌入，并退出继承来的 COEP，
+    # 否则 H5 游戏里的外链图片 / 脚本会被隔离策略当成无 CORP 的跨源资源拦掉。
+    "Cross-Origin-Embedder-Policy": "unsafe-none",
+    "Cross-Origin-Resource-Policy": "cross-origin",
     "Cache-Control": "no-cache, must-revalidate",
 }
 

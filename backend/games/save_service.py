@@ -14,7 +14,7 @@ from backend.games.sort_order import SCORE_STEP, score_between
 from backend.storage.types import StorageBackend, StoredObjectStream
 
 # 单个存档文件上限。Flash 的 .sol 很小，但 melonDS 的即时存档约 19–32MB，
-# 所以按它抬高到 64MB；总请求上限仍由 nginx（512m）与 request_limit 兜住。
+# 所以按它抬高到 64MB；总请求上限仍由 nginx（130m）与 request_limit 兜住。
 _SAVE_MAX_FILE_SIZE = 64 * 1024 * 1024
 _SAVE_MAX_FILES = 64  # 一个快照最多容纳的文件数
 _SAVE_REMARK_MAX = 100  # 描述上限字数
@@ -83,7 +83,7 @@ class CloudSaveService:
         self._username = username
 
     def list_snapshots(self, user_id: int, game_id: int) -> list[CloudSnapshotItem]:
-        """按展示顺序（分数升序，越新越靠下）返回某游戏的全部快照。"""
+        """按 id 升序返回某游戏的全部快照（新快照 id 更大，自然排在末尾）。"""
         snapshots = self._ordered_rows(user_id, game_id)
         if not snapshots:
             return []
@@ -354,10 +354,7 @@ class CloudSaveService:
                     GameCloudSnapshot.user_id == user_id,
                     GameCloudSnapshot.game_id == game_id,
                 )
-                .order_by(
-                    col(GameCloudSnapshot.sort_order),
-                    col(GameCloudSnapshot.id),
-                )
+                .order_by(col(GameCloudSnapshot.id))
             ).all()
         )
 

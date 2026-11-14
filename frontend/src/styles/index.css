@@ -1,3 +1,12 @@
+/* 街机像素字体：开始页与暂停遮罩共用，随前端资源一起打包 */
+@font-face {
+    font-family: "Press Start 2P";
+    src: url("../assets/fonts/press-start-2p.woff2") format("woff2");
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+}
+
 :root {
     color-scheme: light;
     /* 给文档滚动条永久留一条槽位：内容变长变短时滚动条出现/消失不再改变内容区宽度，
@@ -33,6 +42,9 @@
     --app-color-danger-active: #ff3320;
     --app-color-success: #16a34a;
     --app-color-warning: #d97706;
+    /* 游戏进度「进行中」：游戏中心角标与榜单卡带按钮共用 */
+    --app-color-in-progress: #8b5cf6;
+    --app-color-in-progress-soft: rgba(139, 92, 246, 0.18);
 
     /* 开关选中态：浅蓝底 + 深蓝边，避免重新引入实心主按钮 */
     --app-color-selected-bg: #e6f5fd;
@@ -50,7 +62,7 @@
     --app-surface-subtle: #eeeeee;
     --app-border: #dddddd;
 
-    /* 深色区域：播放器标题栏、存档管理、侧栏、更新横幅 */
+    /* 深色区域：播放器标题栏、存档管理、更新横幅 */
     --app-dark-surface: rgba(30, 41, 59, 0.8);
     --app-dark-surface-hover: rgba(51, 65, 85, 0.9);
     --app-dark-border: rgba(148, 163, 184, 0.3);
@@ -74,6 +86,17 @@
     --app-image-surface-hover: rgba(15, 23, 42, 0.78);
     --app-overlay-surface: rgba(255, 255, 255, 0.14);
     --app-overlay-surface-hover: rgba(255, 255, 255, 0.28);
+
+    /* ---------- 常驻侧栏（浅色系，比页面背景深一档，主色点缀激活态） ---------- */
+    --app-sider-bg: #dbe3ee;
+    --app-sider-head-bg: #ced9e7;
+    --app-sider-border: #c9d3e0;
+    --app-sider-hover-bg: #ccd6e3;
+    --app-sider-fg: #475569;
+    --app-sider-fg-hover: #0f172a;
+    --app-sider-fg-active: #0088d5;
+    --app-sider-active-bg: #ffffff;
+    --app-sider-width: 84px;
 
     /* 三档尺寸：sm 行内 / md 工具栏与弹框 / lg 播放器 */
     --app-control-h-sm: 28px;

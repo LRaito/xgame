@@ -1,4 +1,4 @@
-"""「游戏检索」的索引构建与只读接口测试。
+"""「游戏名录」的索引构建与只读接口测试。
 
 用例不读真实名录（4MB / 37 个文件，慢且脆）：在 tmp_path 写几行小 CSV 固件，覆盖真实数据的
 格式边界——UTF-8 带 BOM、CRLF、字段内含逗号要引号、中文为空、整串都是标签、重复三元组。
@@ -11,37 +11,42 @@ import sqlite3
 import pytest
 
 from backend import create_app
-from backend.games import search_index
-from backend.games.search_index import IndexBuildError, build_index, ensure_game_index
+from backend.games.search_index import (
+    IndexBuildError,
+    build_index,
+    game_db_is_current,
+)
 from backend.games.search_service import GameSearchService
 from backend.games.search_text import fts_query, index_text, strip_tags
 
 SEARCH_URL = "/api/games/search"
 CONSOLES_URL = "/api/games/search/consoles"
 
-# 一行一个元组：(机种, 中文, 英文)。刻意混入各种边界。
-_ROWS = [
-    ("任天堂FC", "超级马里奥兄弟", "Super Mario Bros. (Japan) (Rev 1)"),
-    ("任天堂FC", "马里奥医生", "Dr. Mario (USA)"),
-    ("任天堂FC", "塞尔达传说", "Zelda no Densetsu (Japan)"),
-    ("任天堂FC", "蝙蝠侠与罗宾的冒险", "Batman & Robin (USA, Europe)"),
-    ("任天堂SFC", "超级马里奥世界", "Super Mario World (Europe)"),
-    ("任天堂SFC", "最终幻想6", "Final Fantasy VI (USA)"),
-    ("任天堂SFC", "", "Rendering Ranger R2 (Japan)"),
-    ("索尼PS2", "[PS2]", "Alfa Romeo Racing Italiano (USA)"),
-    ("索尼PS2", "含,逗号的,名字", "Comma, Test (USA)"),
+# 一个 CSV 文件只代表一个机种；行内只有 (中文, 英文)。刻意混入各种边界。
+_NES_ROWS = [
+    ("超级马里奥兄弟", "Super Mario Bros. (Japan) (Rev 1)"),
+    ("马里奥医生", "Dr. Mario (USA)"),
+    ("塞尔达传说", "Zelda no Densetsu (Japan)"),
+    ("蝙蝠侠与罗宾的冒险", "Batman & Robin (USA, Europe)"),
     # 三元组与上面第 1 行完全相同 —— 应当被去重
-    ("任天堂FC", "超级马里奥兄弟", "Super Mario Bros. (Japan) (Rev 1)"),
-    # 机种与中文相同、英文不同 —— 必须保留（同款游戏的不同地区版本）
-    ("任天堂FC", "超级马里奥兄弟", "Super Mario Bros. (USA)"),
-    # 机种与英文相同、中文不同 —— 同样必须保留
-    ("任天堂FC", "超级马里奥兄弟2", "Super Mario Bros. (USA)"),
+    ("超级马里奥兄弟", "Super Mario Bros. (Japan) (Rev 1)"),
+    # 中文相同、英文不同 —— 必须保留（同款游戏的不同地区版本）
+    ("超级马里奥兄弟", "Super Mario Bros. (USA)"),
+    # 英文相同、中文不同 —— 同样必须保留
+    ("超级马里奥兄弟2", "Super Mario Bros. (USA)"),
 ]
+_SNES_ROWS = [
+    ("超级马里奥世界", "Super Mario World (Europe)"),
+    ("最终幻想6", "Final Fantasy VI (USA)"),
+    ("", "Rendering Ranger R2 (Japan)"),
+]
+_MD_ROWS = [("索尼克", "Sonic the Hedgehog (USA)")]
+# PS2 日版 / 美版两个文件映射到同一个原始机种名「索尼PS2」；这条用于验证跨文件去重
+_DUP_ACROSS_FILES = ("[PS2]", "Alfa Romeo Racing Italiano (USA)")
+_PS2_JP_ROWS = [_DUP_ACROSS_FILES, ("含,逗号的,名字", "Comma, Test (USA)")]
+_PS2_US_ROWS = [_DUP_ACROSS_FILES]
 
-# 造重复行的两个不同源文件：三元组一致的跨文件也要合并
-_DUP_ACROSS_FILES = ("世嘉MD", "索尼克", "Sonic the Hedgehog (USA)")
-
-# 落库行数：_ROWS 12 行里有 1 行完全重复 → 11，再加跨文件重复但只该留一条的索尼克 → 12
+# 落库行数：固件 14 行里有 1 行完全重复 → 13，再减去跨文件重复的 1 行 → 12
 _EXPECTED_ROWS = 12
 # 机种按 id 排 = 词表顺序（厂商分组），认不出机种的（索尼PS2）排在最后，显示名补空格
 _EXPECTED_CONSOLES = ["任天堂 FC", "任天堂 SFC", "世嘉 MD", "索尼 PS2"]
@@ -50,11 +55,12 @@ _EXPECTED_PLATFORMS = ["nes", "snes", "segaMD", None]
 
 
 def _write_csv(path, rows):
-    # 真实名录就是 UTF-8 带 BOM + CRLF，csv 模块负责处理引号
+    # 真实名录就是 UTF-8 带 BOM + CRLF、首行 `中文名,英文名` 表头
     import csv
 
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle, lineterminator="\r\n")
+        writer.writerow(["中文名", "英文名"])
         writer.writerows(rows)
 
 
@@ -62,15 +68,17 @@ def _write_csv(path, rows):
 def csv_dir(tmp_path):
     source = tmp_path / "csv"
     source.mkdir()
-    _write_csv(source / "任天堂FC.csv", _ROWS)
-    _write_csv(source / "世嘉MD.csv", [_DUP_ACROSS_FILES])
-    _write_csv(source / "世嘉MD 另一版.csv", [_DUP_ACROSS_FILES])
+    _write_csv(source / "nes.csv", _NES_ROWS)
+    _write_csv(source / "snes.csv", _SNES_ROWS)
+    _write_csv(source / "segaMD.csv", _MD_ROWS)
+    _write_csv(source / "ps2-jp.csv", _PS2_JP_ROWS)
+    _write_csv(source / "ps2-us.csv", _PS2_US_ROWS)
     return source
 
 
 @pytest.fixture
 def index_path(tmp_path):
-    """建好的索引库路径（与 app 的 STORAGE_ROOT/db/game.db 一致）。"""
+    """建好的索引库路径（与 app 的 RUNTIME_ROOT/db/game.db 一致）。"""
     return tmp_path / "storage" / "db" / "game.db"
 
 
@@ -140,14 +148,14 @@ def test_fts_query_edges():
 def test_build_index_stats_and_schema(csv_dir, index_path):
     stats = build_index(csv_dir, index_path)
 
-    # 12 行固件里有 1 行文件内重复 + 1 行跨文件重复 → 12 行
+    # 14 行固件里有 1 行文件内重复 + 1 行跨文件重复 → 12 行
     assert stats.rows == _EXPECTED_ROWS
     assert stats.consoles == len(_EXPECTED_CONSOLES)
     assert stats.path == index_path
     assert index_path.is_file()
 
     # 不留 journal 系伴随文件（os.replace 只换主库，留了就是隐患）
-    for suffix in ("-wal", "-shm", "-journal", ".tmp"):
+    for suffix in ("-wal", "-shm", "-journal", ".tmp", ".tmp.vacuum"):
         assert not index_path.with_name(index_path.name + suffix).exists()
 
     with sqlite3.connect(index_path) as conn:
@@ -170,19 +178,55 @@ def test_build_index_is_idempotent_and_overwrites(csv_dir, index_path):
     # 换成更小的源，再跑一次必须整库换掉（不是往里追加）
     smaller = csv_dir.parent / "small"
     smaller.mkdir()
-    _write_csv(smaller / "小.csv", [("任天堂FC", "只有一个", "Only One")])
+    _write_csv(smaller / "小.csv", [("只有一个", "Only One")])
     third = build_index(smaller, index_path)
     assert third.rows == 1
     with sqlite3.connect(index_path) as conn:
         assert conn.execute("SELECT count(*) FROM game").fetchone()[0] == 1
 
 
+def test_build_index_reports_progress(csv_dir, index_path):
+    events = []
+    stats = build_index(
+        csv_dir, index_path, on_progress=lambda *event: events.append(event)
+    )
+
+    stages = {label for label, _, _ in events}
+    assert {"读取游戏名录", "写入游戏名录", "正在优化索引"} <= stages
+    written = [
+        (current, total) for label, current, total in events if label == "写入游戏名录"
+    ]
+    assert written[-1] == (stats.rows, stats.rows)
+    assert events[-1][0] == "正在优化索引"
+    assert events[-1][1] == events[-1][2]
+
+
 def test_build_index_rejects_bad_row(tmp_path):
     source = tmp_path / "bad"
     source.mkdir()
-    (source / "坏.csv").write_text("机种,只有两列\n", encoding="utf-8")
-    with pytest.raises(IndexBuildError, match="三列|3 列"):
+    (source / "坏.csv").write_text("中文名,英文名,多余\n", encoding="utf-8")
+    with pytest.raises(IndexBuildError, match="两列|2 列"):
         build_index(source, tmp_path / "db" / "game.db")
+
+
+def test_unknown_csv_stem_is_used_as_console_name(tmp_path):
+    """自定义目录里未登记的文件名不报错：文件名 stem 直接当机种原文。"""
+    source = tmp_path / "custom"
+    source.mkdir()
+    _write_csv(source / "homebrew.csv", [("自制游戏", "Homebrew Game")])
+
+    index_path = tmp_path / "db" / "game.db"
+    stats = build_index(source, index_path)
+
+    assert stats.rows == 1
+    assert stats.consoles == 1
+    with sqlite3.connect(index_path) as conn:
+        name, platform_id, raw_names = conn.execute(
+            "SELECT name, platform_id, raw_names FROM console"
+        ).fetchone()
+        assert (name, platform_id) == ("homebrew", None)
+        assert raw_names == '["homebrew"]'
+        assert conn.execute("SELECT src FROM game").fetchone()[0] == "homebrew.csv"
 
 
 def test_build_index_rejects_empty_dir(tmp_path):
@@ -211,98 +255,39 @@ def test_build_index_reports_unwritable_target(csv_dir, tmp_path):
 
 
 # --------------------------------------------------------------------------
-# 启动时自动补建
+# 启动建空结构，但不构建索引
 # --------------------------------------------------------------------------
 
 
-def _settings(tmp_path, *, testing=False):
-    from backend.config import Settings
-
-    return Settings(TESTING=testing, STORAGE_ROOT=str(tmp_path / "storage"))
-
-
-def test_ensure_game_index_builds_when_missing(csv_dir, tmp_path):
-    # ranking_csv=None：这一组用例只关心检索索引，不读仓库里的真实榜单 CSV
-    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
-
-    assert stats is not None
-    assert stats.rows == _EXPECTED_ROWS
-    assert (tmp_path / "storage" / "db" / "game.db").is_file()
+def test_built_index_matches_current_structure(built):
+    """make index 产出的库必须能通过下一次执行前的结构校验。"""
+    assert game_db_is_current(built.path)
 
 
-def test_ensure_game_index_skips_when_present(csv_dir, tmp_path):
-    """已有索引就跳过：不重建、不覆盖（内容与 mtime 都不变）。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    before = _digest(index_path)
-
-    assert ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None) is None
-    assert _digest(index_path) == before
-
-
-def test_ensure_game_index_rebuilds_on_stale_version(csv_dir, tmp_path):
-    """老库（版本号对不上）会被接口一律判 503，所以启动时直接整库重建，升级不用人工跑 make index。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    with sqlite3.connect(index_path) as conn:
-        conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
-        conn.commit()
-
-    stats = ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
-
-    assert stats is not None
-    with sqlite3.connect(index_path) as conn:
-        assert conn.execute(
-            "SELECT value FROM meta WHERE key = 'schema_version'"
-        ).fetchone()[0] == "2"
-
-
-def test_ensure_game_index_keeps_old_index_when_rebuild_fails(csv_dir, tmp_path):
-    """重建失败（源 CSV 没了）时不能把好端端的旧库删掉，也不能拦住启动。"""
-    ensure_game_index(_settings(tmp_path), csv_dir=csv_dir, ranking_csv=None)
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    with sqlite3.connect(index_path) as conn:
-        conn.execute("UPDATE meta SET value = '0' WHERE key = 'schema_version'")
-        conn.commit()
-
-    assert ensure_game_index(_settings(tmp_path), csv_dir=tmp_path / "nope") is None
-    assert index_path.is_file()
-
-
-def test_ensure_game_index_skips_when_testing(tmp_path):
-    """测试环境不自动建：否则每个用例都要白建一次 5 万行的索引。"""
-    assert ensure_game_index(_settings(tmp_path, testing=True), csv_dir=tmp_path) is None
-    assert not (tmp_path / "storage" / "db" / "game.db").exists()
-
-
-def test_ensure_game_index_tolerates_missing_csv(tmp_path):
-    """名录被人删掉/挪走时跳过并记一条日志，不建文件、不抛异常。"""
-    assert ensure_game_index(_settings(tmp_path), csv_dir=tmp_path / "nope") is None
-    assert not (tmp_path / "storage" / "db" / "game.db").exists()
-
-
-def test_ensure_game_index_tolerates_broken_csv(tmp_path):
-    """名录坏了也不能拦住服务启动（best-effort）。"""
-    source = tmp_path / "bad"
-    source.mkdir()
-    (source / "坏.csv").write_text("只有两列\n", encoding="utf-8")
-
-    assert ensure_game_index(_settings(tmp_path), csv_dir=source, ranking_csv=None) is None
-    assert not (tmp_path / "storage" / "db" / "game.db").exists()
-
-
-def test_app_startup_builds_missing_index(monkeypatch, csv_dir, tmp_path):
-    """接线：create_app() 起来时确实会自检并补建。"""
-    monkeypatch.setattr(search_index, "SEARCH_CSV_DIR", csv_dir)
-    # 榜单单独测（见 test_game_ranking.py），这里指到一个不存在的文件，避免依赖仓库里的真实榜单
-    monkeypatch.setattr(search_index, "RANKING_CSV_PATH", tmp_path / "ranking.csv")
-
+def test_app_startup_creates_empty_game_db(tmp_path):
+    """启动只建 game.db 的空结构；游戏名录与榜单数据仍只能由 make index 写入。"""
     create_app({"TESTING": False, "STORAGE_ROOT": str(tmp_path / "storage")})
 
-    index_path = tmp_path / "storage" / "db" / "game.db"
-    assert index_path.is_file()
-    with sqlite3.connect(index_path) as conn:
-        assert conn.execute("SELECT count(*) FROM game").fetchone()[0] == _EXPECTED_ROWS
+    path = tmp_path / "storage" / "db" / "game.db"
+    assert path.is_file()
+    conn = sqlite3.connect(path)
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert {"console", "game", "game_fts", "meta", "ranking"} <= tables
+        meta = dict(conn.execute("SELECT key, value FROM meta").fetchall())
+        assert meta["schema_version"] == "2"
+        assert meta["ranking_schema_version"] == "7"
+        assert "ranking_fingerprint" not in meta
+        assert conn.execute("SELECT count(*) FROM game").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM ranking").fetchone()[0] == 0
+    finally:
+        conn.close()
+    assert game_db_is_current(path)
 
 
 # --------------------------------------------------------------------------
@@ -319,6 +304,8 @@ def test_dedupe_only_exact_triples(built, logged_in):
     assert len(mario_jp) == 1
     sonic = [r for r in rows if r[2] == "Sonic the Hedgehog (USA)"]
     assert len(sonic) == 1
+    alfa = [r for r in rows if r[2] == "Alfa Romeo Racing Italiano (USA)"]
+    assert len(alfa) == 1
 
     # 只英文或只中文相同的必须都留着
     same_en = [r for r in rows if r[2] == "Super Mario Bros. (USA)"]
@@ -330,7 +317,7 @@ def test_dedupe_only_exact_triples(built, logged_in):
 
 
 # --------------------------------------------------------------------------
-# 检索
+# 游戏名录
 # --------------------------------------------------------------------------
 
 

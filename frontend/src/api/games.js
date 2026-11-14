@@ -98,6 +98,18 @@ export function renameCartridgeIdAPI(id, cartridgeId) {
     });
 }
 
+/** 改游戏类型：后端会把游戏目录、存档与截图目录一起迁移并改写库里的路径列。
+
+    独立接口——普通编辑（updateManageGameAPI）不接受这个字段。
+    目标类型必须属于当前本体后缀的候选集。 */
+export function updateManageGameTypeAPI(id, gameType) {
+    return request({
+        url: `/api/games/manage/${id}/game-type`,
+        method: "put",
+        data: { game_type: gameType },
+    });
+}
+
 /** 从 7k7k / 4399 / flash.homes 游戏页地址搬运游戏（服务端解析、下载并入库，耗时较长）。
 
     卡带ID 由服务端按本体 CRC32 自动生成（F-{CRC32}），不用前端传。 */
@@ -121,6 +133,54 @@ export function uploadGameAssetAPI(id, formData) {
         method: "post",
         data: formData,
         timeout: 0,
+    });
+}
+
+/** 开启一次本体分片上传会话；返回 upload_id、分片大小与分片数。 */
+export function createGameUploadAPI(data) {
+    return request({
+        url: "/api/games/uploads",
+        method: "post",
+        data,
+        timeout: 0,
+        notShowError: true,
+    });
+}
+
+/** 上传一个分片：原始字节流，长度必须等于会话约定的分片大小。 */
+export function uploadGameChunkAPI(uploadId, index, blob, { signal, onUploadProgress } = {}) {
+    return request({
+        url: `/api/games/uploads/${uploadId}/chunks/${index}`,
+        method: "put",
+        data: blob,
+        headers: { "Content-Type": "application/octet-stream" },
+        timeout: 0,
+        notShowError: true,
+        signal,
+        onUploadProgress,
+    });
+}
+
+/** 分片到齐后标记会话可提交。 */
+export function completeGameUploadAPI(uploadId, { signal } = {}) {
+    return request({
+        url: `/api/games/uploads/${uploadId}/complete`,
+        method: "post",
+        // 带一个空 JSON 体，确保经过 nginx/HTTP2 时仍有 Content-Length
+        data: {},
+        timeout: 0,
+        notShowError: true,
+        signal,
+    });
+}
+
+/** 放弃整次上传并删除暂存目录；清理请求刻意不带 signal，取消后也要尽量发出去。 */
+export function abortGameUploadAPI(uploadId) {
+    return request({
+        url: `/api/games/uploads/${uploadId}`,
+        method: "delete",
+        timeout: 0,
+        notShowError: true,
     });
 }
 
@@ -175,6 +235,18 @@ export function gameCoverPath(id, updatedAt = "") {
 export function gameDownloadPath(id, updatedAt = "") {
     const query = updatedAt ? `?v=${encodeURIComponent(updatedAt)}` : "";
     return `/api/games/${id}/play${query}`;
+}
+
+/** 多文件本体的播放清单；单文件游戏也返回只有入口一条的等价结构。 */
+export function bodyManifestPath(id, updatedAt = "") {
+    const query = updatedAt ? `?v=${encodeURIComponent(updatedAt)}` : "";
+    return `/api/games/${id}/play/manifest${query}`;
+}
+
+/** 多文件本体里的单个文件地址（name 必须是清单内的安全 basename）。 */
+export function bodyFilePath(id, name, updatedAt = "") {
+    const query = updatedAt ? `?v=${encodeURIComponent(updatedAt)}` : "";
+    return `/api/games/${id}/play/files/${encodeURIComponent(name)}${query}`;
 }
 
 /** H5 入口页地址（沙箱 iframe 的 src）；带 v=updated_at 破缓存，重传后立即生效。 */
@@ -379,9 +451,9 @@ export async function fetchCloudSaveFileBase64(id, fileId) {
 }
 
 /**
- * 游戏检索：在外部中英文名录索引里搜一页（服务端分页 + 机种过滤）。
+ * 游戏名录：在外部中英文名录里搜一页（服务端分页 + 机种过滤）。
  * 数据来自独立只读库，由项目根目录的 `make index` 构建。
- * 请求带 notShowError：检索是高频操作，失败由页面内联提示，不弹全局 Message。
+ * 请求带 notShowError：名录检索是高频操作，失败由页面内联提示，不弹全局 Message。
  */
 export function searchGamesAPI(params) {
     return request({
@@ -392,14 +464,14 @@ export function searchGamesAPI(params) {
     });
 }
 
-/** 游戏检索的机种下拉候选项（按源文件顺序）。 */
+/** 游戏名录的机种下拉候选项（按源文件顺序）。 */
 export function listSearchConsolesAPI() {
     return request({ url: "/api/games/search/consoles", method: "get" });
 }
 
 /**
  * 游戏榜单的机种下拉候选项（只列榜单里出现过的机种）与默认机种。
- * 数据与检索同一个只读库，见后端 ranking_router.py。
+ * 数据与游戏名录同一个只读库，见后端 ranking_router.py。
  */
 export function listRankingConsolesAPI() {
     return request({
@@ -409,7 +481,7 @@ export function listRankingConsolesAPI() {
     });
 }
 
-/** 游戏榜单：取某个机种的整份榜单（不分页）。失败由页面内联提示，不弹全局 Message。 */
+/** 游戏榜单：服务端分页；失败由页面内联提示，不弹全局 Message。 */
 export function getGameRankingAPI(params) {
     return request({
         url: "/api/games/search/ranking",

@@ -9,7 +9,7 @@
 | 本文件 | 编码约定：语言、技术栈、目录、分层、风格、Git、测试原则 |
 | [`docs/architecture.md`](docs/architecture.md) | 设计取舍与宏观架构 |
 | [`docs/data_dict.md`](docs/data_dict.md) | SQLite 表结构与磁盘路径 |
-| [`docs/specs/`](docs/specs/README.md) | 各功能的实现规格 |
+| [`docs/`](docs/README.md) | 各功能的实现规格 |
 | [`CLAUDE.md`](CLAUDE.md) | 会话入口与硬规则索引 |
 
 ## 当前状态
@@ -50,10 +50,12 @@
 
 功能边界：
 
-- 游戏中心：Flash、HTML5、8/16/32-bit 主机 ROM。
+- 游戏中心：Flash、HTML5、8/16/32/64-bit 主机 ROM、PSP、DOS 与街机。
 - 游戏管理：上传 / 直链 / 搬运、卡带 ID 与元数据、攻略。
-- 游戏发现：外部名录的只读检索与按机种榜单。
-- 账号：开放注册，只隔离模拟器配置与存档。
+- 游戏发现：外部游戏名录的只读检索与按机种榜单。
+- 按键管理：按账号保存自定义快捷键。
+- 机型简史：静态展示各机种的介绍与代表机型。
+- 账号：开放注册，只隔离模拟器配置、存档、截图与统计。
 
 明确不做：
 
@@ -63,7 +65,7 @@
 - 对象存储（MinIO / S3）
 - JWT、把 token 写进 `localStorage`
 - 把整个文件读进内存再中转
-- 把密钥写进 git、前端源码或日志
+- 把新的密钥写进 git、前端源码或日志（既有的 `SECRET_KEY` 是个人自托管的例外）
 - 自动创建 `.mounted`
 - Windows 包自动升级、安装向导
 
@@ -83,7 +85,7 @@
 前端：
 
 - Vue 3 + Vite
-- vue-router 4
+- vue-router 5
 - Pinia
 - Element Plus
 - axios（唯一实例在 `frontend/src/utils/request.js`）
@@ -99,11 +101,11 @@ frontend/                    # Vue 3 SPA
   src/main.js                # 入口：Pinia、router、Element Plus、permission
   src/permission.js          # 路由守卫（登录态）
   src/router/index.js        # 唯一路由表；菜单由 meta 驱动
-  src/layout/                # 侧栏 + 顶栏 + 内容区
-  src/store/                 # Pinia：app / auth
+  src/layout/                # 侧栏 + 内容区
+  src/store/                 # Pinia：app / auth / gameTypes / shortcuts
   src/api/                   # 按业务域导出 xxxAPI
   src/utils/request.js       # axios 实例 + 拦截器
-  src/views/                 # login / games / shortcuts
+  src/views/                 # login / games / shortcuts / platforms
   src/components/common/     # 跨模块 UI 组件
   src/components/games/      # 游戏专用组件
   src/constants/             # 展示层镜像
@@ -115,29 +117,37 @@ backend/
   __init__.py                # create_app()
   asgi.py                    # 生产 ASGI 入口
   config.py                  # 配置（全部写死）
-  database.py                # 引擎、建表、补列
+  database.py                # 引擎、全新库建表、结构版本校验
+  system_config.py           # 通用系统配置表 + 当前结构版本常量
+  startup_guard.py           # 版本不匹配时永久阻塞启动
   backup.py                  # SQLite 滚动备份
   mount_guard.py             # 根目录哨兵检查
   static_site.py             # 可选：后端托管前端 dist
   request_limit.py           # 请求体上限
   entrypoint.sh              # api 容器入口
   auth/                      # 账号
-  games/                     # 游戏中心与管理
+  shortcuts/                 # 用户快捷键配置
+  games/                     # 游戏中心、库存与发现
     paths.py                 # 磁盘路径规则
     save_*                   # 云端存档
     screenshot_* / gallery_* # 截图 / 图集
     settings_* / stats_*     # 模拟器设置 / 游玩统计
-    search_* / ranking_*     # 检索 / 榜单
+    search_* / ranking_*     # 游戏名录 / 榜单
     importer.py / remote.py  # 搬运 / 网络上传
   tools/                     # 工具注册表
   storage/                   # 跨模块存储
     types.py / local.py      # 协议 / LocalStorage
     access.py                # 流式下载响应
-  search/csv/                # 检索名录 CSV
-  search/ranking/            # 榜单 CSV
+  search/catalog/            # 游戏名录 CSV
+  search/rankings/           # 榜单 CSV
 tests/                       # pytest
+upgrade/                     # app.db / game.db 结构升级（唯一允许兼容代码的地方）
+  versions/vN.py             # app.db：按版本隔离，自包含 sqlite3 与显式 SQL
+  game_versions/vN.py        # game.db：只补结构/映射，不读 CSV
+  runner.py                  # app.db 迁移运行器
+  game_db.py                 # game.db 迁移运行器
 packaging/windows/           # Windows 解压即用包
-docs/                        # architecture / data_dict / specs
+docs/                        # architecture / data_dict / modules / common / plans
 scripts/version.sh           # 版本号唯一出处
 certs/                       # 自签名证书
 ```
@@ -159,12 +169,26 @@ certs/                       # 自签名证书
 6. **导航由路由表驱动。** 侧栏菜单由子路由声明顺序 + `meta.title` 生成，不要在页面里写死链接。
 7. **配置写死。** 全部配置在 `backend/config.py`。
    - `.env` 只有 `STORAGE_HOST_DIR` / `RUNTIME_HOST_DIR` / `WEB_HTTPS_PORT` 三个键。
-   - `.env` **只给 docker compose 读**，后端不读这个文件。
+   - `.env` 由 docker compose 与 Makefile 读取，后端不读这个文件。
    - 两个 `*_HOST_DIR` 由 compose 作为环境变量传进容器，仅供哨兵前缀判断。
    - 根目录不存在会自动创建，storage 永远可用，没有「未配置」开关。
-8. **SQLite 路径。** 写死为 `<运行时根>/db/app.db`，没有 `DATABASE_URL` 可配；
-   备份写在数据根的 `db/` 里。
+8. **SQLite 路径。** `app.db` 写死为 `<运行时根>/db/app.db`，发现索引 `game.db` 同在
+   `<运行时根>/db/`；没有 `DATABASE_URL` 可配。备份写在数据根的 `db/` 里。
 9. **Gunicorn。** 必须 `--workers 1 --threads 8`；单进程避免 SQLite 写冲突。
+10. **数据库只维护最新结构。** `backend/` 的模型、建表与业务代码只描述当前结构，
+    禁止写补列、补索引、删旧表、重建表等兼容旧库的逻辑。
+    - `app.db` 的表 / 列 / 索引变化必须新增 `upgrade/versions/vN.py`，版本号连续递增，
+      并同步递增 `backend/system_config.py::LATEST_DB_VERSION`。
+    - `game.db` 榜单结构变化必须新增 `upgrade/game_versions/vN.py`，版本号连续递增，
+      并同步递增 `backend/games/search_index.py::RANKING_SCHEMA_VERSION`。
+      游戏名录结构（`SCHEMA_VERSION`）不做原地迁移：删 `game.db` 后重启建空结构，再 `make index`。
+    - 两条链的版本模块都只依赖标准库 `sqlite3` 与显式 SQL，不 import `backend` / SQLModel /
+      SQLAlchemy；事务分别由 `upgrade/runner.py`、`upgrade/game_db.py` 负责，
+      版本模块不得 commit / rollback。
+    - 升级只能手动执行：停服务后 Docker/仓库路线用 `make upgrade`，
+      Windows 包双击「升级数据库.cmd」。服务启动只校验 `system_config.db_version`，
+      不自动改表；不匹配就记录中文错误并永久阻塞。
+      `game.db` 启动只在缺失或空文件时建最新的空结构，已有表一律不碰。
 
 ## 代码风格
 
@@ -174,16 +198,57 @@ certs/                       # 自签名证书
 - 不留大段注释掉的代码；功能路径里不留「TODO: 以后再实现」。
 - 日志：请求/操作用 INFO；禁止记录密码、`SECRET_KEY`。
 - 注释只在需要解释「为什么」时使用，用中文。
+- 注释与文档只描述**当前状态与原因**，不写历史演变：
+  禁止「旧版」「曾经」「上次」「以前」「改成」「还原」这类表述，也不记录已删除的实现。
+  需要追溯历史时看 Git 提交记录，不写进代码或文档。
 - 前端 4 空格；api 函数命名 `xxxAPI`。
+
+## 脚本输出规范
+
+适用于所有会打印日志的脚本和构建入口：bash、Python、Makefile、Node 等，语言不限。
+本规范从写入之日起约束新的提交；存量脚本、Makefile 与文档不追溯整改，
+批量整改必须由用户手动触发。
+
+状态标签固定为全大写，并按固定颜色输出：
+
+| 标签 | 颜色 | ANSI |
+|---|---|---|
+| `[ OK ]` | 绿色 | 32 |
+| `[FAIL]` | 红色 | 31 |
+| `[WARN]` | 黄色 | 33 |
+| `[INFO]` | 青色 | 36 |
+
+终端输出必须带颜色；输出被管道或重定向时退回纯文本。
+禁止无状态标签的输出。
+
+### 示例
+
+```bash
+printf '\033[32m[ OK ]\033[0m build complete\n'
+printf '\033[31m[FAIL]\033[0m failed to bind port 8080\n'
+printf '\033[33m[WARN]\033[0m config missing, using defaults\n'
+printf '\033[36m[INFO]\033[0m loading config\n'
+```
+
+### 反例
+
+```bash
+echo "服务启动完成"             # ✗ 无状态标签、无颜色
+echo "[ OK ] done"             # ✗ 无颜色
+```
 
 ## 前端约定
 
 - 页面在 `views/`；api 在 `api/*`；唯一 axios 实例是 `utils/request.js`。
-- 按钮统一走 `AppButton`：`secondary` / `danger` 两种类型，`text` 是无框形态，size × tone。
-- 分段/标签统一走 `AppSegmented`；分页、空状态、复制等走 `components/common/`。
-- 样式 token 在 `styles/index.css`，页面里不手写原生 `<button>` 或按钮 CSS。
+- **通用组件统一。** 新功能先复用 `components/common/`，不另起一套视觉。
+- 按钮统一走 `AppButton`：只有 `secondary` / `danger` 两种类型；`text` / `pressed` 是形态，
+  size / tone 只取现有 token。普通行内操作不要用 `text` 代替标准按钮。
+- 分段/标签统一走 `AppSegmented`；下拉、分页、空状态、弹窗、复制等走 `components/common/`。
+- 样式 token 在 `styles/index.css`，页面里不手写原生 `<button>` 或按钮 CSS，不写死近似色。
+- 焦点策略见 [`docs/modules/frontend.md`](docs/modules/frontend.md)：按钮只变边框色，
+  其它控件用平台焦点 token，已有选中深色底的导航项不叠加焦点环，不留浏览器默认黑框。
 - 侧栏与播放页标题栏是浮层：常驻收起、鼠标靠近边缘滑出，不占位、不引起内容缩放。
-- 详细路由、组件与交互约定见 [`docs/specs/frontend.md`](docs/specs/frontend.md)。
+- 详细路由、组件与交互约定见 [`docs/modules/frontend.md`](docs/modules/frontend.md)。
 
 ## Git 分支与提交
 
@@ -203,8 +268,8 @@ certs/                       # 自签名证书
 ## 测试原则
 
 ```bash
-make test        # = python -m pytest + cd frontend && npm run lint
-python -m pytest # 只跑后端
+make test          # = python3 -m pytest + cd frontend && npm run lint
+python3 -m pytest  # 只跑后端
 ```
 
 - 用 `python -m pytest`，不要用裸 `pytest`（后者加不进仓库根目录）。
@@ -212,9 +277,12 @@ python -m pytest # 只跑后端
 - **只改文档（含本文件、`CLAUDE.md`、`docs/`、技能说明）不跑测试。**
 - 测试用临时 SQLite + 临时 `STORAGE_ROOT`，直接打真实文件系统，不 mock 存储层。
 - 最低覆盖范围：账号与锁定、存储读写与越界、游戏入库与卡带 ID、H5/攻略、
-  云端存档、截图与图集、模拟器设置、最近游玩、游玩统计、检索与榜单、
+  云端存档、截图与图集、模拟器设置、最近游玩、游玩统计、游戏名录与游戏榜单、
   静态站、请求上限、Windows 启动器。
-- 每个功能的详细测试要点见对应 `docs/specs/*.md` 的「测试要点」。
+- 数据库升级必须覆盖：`app.db` 逐版本执行、失败不推进版本、v1 升级后与全新库 schema 一致、
+  启动版本不匹配时阻塞；`game.db` 结构迁移、重复卡带 ID 回滚、缺失/旧结构拒绝、
+  启动只建空结构且不碰已有库。
+- 每个功能的详细测试要点见对应 `docs/modules/*.md` 的「测试要点」。
 
 ## 新增功能 / 工具
 
@@ -224,6 +292,8 @@ python -m pytest # 只跑后端
 4. 建 `frontend/src/api/<name>.js`、`views/<name>/` 与路由 `meta`。
 5. 工具专用组件放 `components/<name>/`；跨工具 UI 只改 `components/common/`。
 6. 补测试；除导航与注册表外，不要改其它工具。
+7. 前端先复用 `components/common/`；按钮、分段、弹窗不自造样式，视觉 token 与焦点规则见
+   [`docs/modules/frontend.md`](docs/modules/frontend.md)。
 
 若工具变重，保持同一套 service 接口，以便以后迁到微服务。
 
@@ -231,18 +301,20 @@ python -m pytest # 只跑后端
 
 | 功能域 | 规格 |
 |---|---|
-| 账号、登录、CSRF | [`auth.md`](docs/specs/auth.md) |
-| 存储、卡带 ID、封面类型、导入 | [`game-storage.md`](docs/specs/game-storage.md) |
-| 机种词表 | [`platforms.md`](docs/specs/platforms.md) |
-| 播放器、标题栏、机壳、NDS | [`game-center-playback.md`](docs/specs/game-center-playback.md) |
-| 截图、图集、封面美化 | [`game-assets.md`](docs/specs/game-assets.md) |
-| 存档、设置、最近、统计 | [`game-saves-stats.md`](docs/specs/game-saves-stats.md) |
-| H5 与攻略 | [`guide-and-h5.md`](docs/specs/guide-and-h5.md) |
-| 游戏发现 | [`game-discover.md`](docs/specs/game-discover.md) |
-| 前端框架与交互 | [`frontend.md`](docs/specs/frontend.md) |
-| HTTP 端点 | [`api.md`](docs/specs/api.md) |
-| Docker | [`delivery-docker.md`](docs/specs/delivery-docker.md) |
-| Windows 包 | [`delivery-windows.md`](docs/specs/delivery-windows.md) |
+| 账号、登录、CSRF | [`auth.md`](docs/modules/auth.md) |
+| 存储、卡带 ID、封面类型、导入 | [`game-storage.md`](docs/modules/game-storage.md) |
+| 机种词表 | [`platforms.md`](docs/common/platforms.md) |
+| 机型简史 | [`platform-chronicle.md`](docs/modules/platform-chronicle.md) |
+| 播放器、标题栏、机壳、NDS | [`game-center-playback.md`](docs/modules/game-center-playback.md) |
+| 截图、图集、封面美化 | [`game-assets.md`](docs/modules/game-assets.md) |
+| 存档、设置、最近、统计 | [`game-saves-stats.md`](docs/modules/game-saves-stats.md) |
+| H5 与攻略 | [`guide-and-h5.md`](docs/modules/guide-and-h5.md) |
+| 游戏发现 | [`game-discover.md`](docs/modules/game-discover.md) |
+| 前端框架与交互 | [`frontend.md`](docs/modules/frontend.md) |
+| 数据库结构版本与升级 | [`database-upgrade.md`](docs/modules/database-upgrade.md) |
+| HTTP 端点 | [`api.md`](docs/common/http-api.md) |
+| Docker | [`delivery-docker.md`](docs/modules/delivery-docker.md) |
+| Windows 包 | [`delivery-windows.md`](docs/modules/delivery-windows.md) |
 
 ## 用户意图
 

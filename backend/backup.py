@@ -1,7 +1,7 @@
 """SQLite 库的滚动备份。
 
 服务启动时备一次，之后每 `BACKUP_INTERVAL_SECONDS`（1 小时）再备一次。一个自然月只有一份，
-文件名 `<YYYY-MM>.db`，**每次备份都整份重写**（先写 `.tmp` 再 `os.replace`，读的人永远看到
+文件名 `app.db.<YYYY-MM>`，**每次备份都整份重写**（先写 `.tmp` 再 `os.replace`，读的人永远看到
 一个完整文件），所以快照最多落后一小时。
 
 备份**不跟库放同一个目录**：库在运行时根里（一直在被写，网盘/外部备份拷不动它），备份写在
@@ -28,8 +28,8 @@ BACKUP_INTERVAL_SECONDS = 3600
 
 
 def monthly_backup_path(backup_dir: Path, moment: datetime) -> Path:
-    """当月备份文件路径：`<备份目录>/YYYY-MM.db`。同一个月的多次备份写的是同一个文件。"""
-    return backup_dir / f"{moment:%Y-%m}.db"
+    """当月备份文件路径：`<备份目录>/app.db.YYYY-MM`。同一个月的多次备份写的是同一个文件。"""
+    return backup_dir / f"app.db.{moment:%Y-%m}"
 
 
 def backup_database(settings: Settings, *, now: datetime | None = None) -> Path | None:

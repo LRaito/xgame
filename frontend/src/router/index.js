@@ -42,7 +42,19 @@ const routes = [
                 meta: { title: "按键管理" },
             },
             {
-                // 旧路径（游戏检索）重定向到游戏发现，保留 ?tab=ranking 之类的查询参数。
+                path: "platforms",
+                name: "platforms",
+                component: () => import("@/views/platforms/index.vue"),
+                meta: { title: "机型简史" },
+            },
+            {
+                path: "platforms/:id",
+                name: "platform-detail",
+                component: () => import("@/views/platforms/detail.vue"),
+                meta: { title: "机型介绍", hiddenInMenu: true },
+            },
+            {
+                // 旧路径（游戏名录页）重定向到游戏发现，保留 ?tab=ranking 之类的查询参数。
                 // 不设 meta.title，否则会被 buildMenuFromRoutes() 收进侧栏。
                 path: "games/search",
                 redirect: (to) => ({ path: "/games/discover", query: to.query }),
@@ -51,19 +63,19 @@ const routes = [
                 path: "games/flash/:gameId",
                 name: "games-flash",
                 component: () => import("@/views/games/flash-player.vue"),
-                meta: { title: "Flash 游戏", hiddenInMenu: true },
+                meta: { title: "Flash 游戏", hiddenInMenu: true, playerRoute: true },
             },
             {
                 path: "games/h5/:gameId",
                 name: "games-h5",
                 component: () => import("@/views/games/h5-player.vue"),
-                meta: { title: "HTML5 游戏", hiddenInMenu: true },
+                meta: { title: "HTML5 游戏", hiddenInMenu: true, playerRoute: true },
             },
             {
                 path: "games/play/:gameId",
                 name: "games-play",
                 component: () => import("@/views/games/emulator-player.vue"),
-                meta: { title: "模拟器游戏", hiddenInMenu: true },
+                meta: { title: "模拟器游戏", hiddenInMenu: true, playerRoute: true },
             },
         ],
     },

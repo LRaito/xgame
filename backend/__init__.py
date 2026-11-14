@@ -2,26 +2,32 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from sqlmodel import Session
-from starlette.middleware.sessions import SessionMiddleware
 
 from backend.auth.router import router as auth_router
 from backend.backup import backup_database, start_backup_loop
 from backend.config import LOG_FORMAT, SECRET_KEY, settings_from_overrides
 from backend.csrf import CSRFMiddleware
 from backend.database import ensure_data_dir, init_db, make_engine
+from backend.errors import DatabaseVersionError
 from backend.games.gallery_router import router as game_gallery_router
 from backend.games.ranking_router import router as game_ranking_router
 from backend.games.router import router as games_router
 from backend.games.save_router import router as game_saves_router
 from backend.games.screenshot_router import router as game_screenshots_router
-from backend.games.search_index import ensure_game_index
+from backend.games.search_index import ensure_empty_game_db
 from backend.games.search_router import router as game_search_router
 from backend.games.settings_router import router as game_settings_router
 from backend.games.stats_router import router as game_stats_router
+from backend.games.upload_router import router as game_upload_router
+from backend.games.uploads import BodyUploadService
 from backend.http import json_err
 from backend.mount_guard import require_mounted
+from backend.session_middleware import ModifiedOnlySessionMiddleware
 from backend.request_limit import RequestBodyLimitMiddleware
+from backend.shortcuts.router import router as user_shortcuts_router
+from backend.startup_guard import block_forever
 from backend.storage.local import LocalStorage
 from backend.tools.router import router as tools_router
 
@@ -39,12 +45,23 @@ def create_app(test_config: dict | None = None) -> FastAPI:
 
     ensure_data_dir(settings)
     engine = make_engine(settings)
-    init_db(engine)
-    # 启动先备一次，之后由守护线程每小时再备一次（当月只有一份 <YYYY-MM>.db，每次都整份重写）
+    try:
+        init_db(engine)
+    except DatabaseVersionError as exc:
+        # 已有库的结构版本与代码不匹配：不自动改表，也不放行服务。
+        # 记一条中文错误后永久阻塞，进程不监听端口（见 backend/startup_guard.py）。
+        logger.error("%s 服务不会启动。", exc)
+        block_forever()
+    # game.db 不属于 app.db 的版本链：启动只在新项目（不存在/空文件）时建一份最新的空结构，
+    # 已有表的库一律不碰。结构升级走 make upgrade，数据与标记走 make index。
+    if not settings.TESTING:
+        try:
+            ensure_empty_game_db(settings.game_index_path)
+        except Exception as exc:  # noqa: BLE001 - 空结构初始化失败不能拦住库存/存档功能
+            logger.warning("初始化 game.db 空结构失败：%s", exc)
+    # 启动先备一次，之后由守护线程每小时再备一次（当月只有一份 app.db.<YYYY-MM>，每次都整份重写）
     backup_database(settings)
     start_backup_loop(settings)
-    # 启动时检查一次游戏检索索引：没有就自动补建（已有则跳过；建不出来只记 warning，不拦启动）
-    ensure_game_index(settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -62,9 +79,18 @@ def create_app(test_config: dict | None = None) -> FastAPI:
     # 因此刻意不做「同根就跳过」的分支（见 backend/games/runtime_assets.py）。
     app.state.runtime_storage = LocalStorage(settings.runtime_root)
 
+    # 分片上传的暂存区是可丢弃的：启动时清掉超过 24 小时的未完成会话。
+    try:
+        BodyUploadService.cleanup_stale(app.state.storage)
+    except Exception as exc:  # noqa: BLE001 - 清理失败不能拦住启动
+        logger.warning("清理过期上传会话失败：%s", exc)
+
     app.add_middleware(CSRFMiddleware, settings=settings)
+    # 会话中间件换成 ModifiedOnlySessionMiddleware：与 Starlette 原版同参数、同 cookie 格式，
+    # 只有一个差别——会话内容没变的响应不再重发 session cookie（backend/session_middleware.py 的
+    # docstring 讲了为什么：每个响应都重发会让登录瞬间被同批旧会话响应的 Set-Cookie 反咬掉）。
     app.add_middleware(
-        SessionMiddleware,
+        ModifiedOnlySessionMiddleware,
         secret_key=SECRET_KEY,
         https_only=settings.SESSION_COOKIE_SECURE and not settings.TESTING,
         same_site=settings.SESSION_COOKIE_SAMESITE,
@@ -78,21 +104,28 @@ def create_app(test_config: dict | None = None) -> FastAPI:
         message = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
         return json_err(message, exc.status_code)
 
+    @app.exception_handler(RequestValidationError)
+    async def handle_request_validation(_request, _exc: RequestValidationError):
+        # Pydantic 默认返回英文 422，会绕开统一错误信封；这里统一成中文 400。
+        return json_err("请求参数不合法。", 400)
+
     app.include_router(tools_router)
     app.include_router(auth_router)
     app.include_router(games_router)
+    app.include_router(game_upload_router)
     # 紧跟 games_router。注意 `/api/games/search`、`/api/games/search/consoles` 与
     # `/api/games/search/ranking…` 之所以不会被 games_router 的 `/{game_id}/…` 抢走，是因为那些
     # 路由的第二段字面量只有 cover/play/h5/guide/guide.pdf，且 `/api/games` 下没有单段 `/{game_id}`。
     # 以后若给 games_router 加一条单段动态路由，这里就会撞车。
     app.include_router(game_search_router)
-    # 榜单与检索共用同一个只读库（game.db），只是读另一张表，所以也挂在这条前缀下
+    # 榜单与游戏名录共用同一个只读库（game.db），只是读另一张表，所以也挂在这条前缀下
     app.include_router(game_ranking_router)
     app.include_router(game_saves_router)
     app.include_router(game_screenshots_router)
     app.include_router(game_gallery_router)
     app.include_router(game_settings_router)
     app.include_router(game_stats_router)
+    app.include_router(user_shortcuts_router)
 
     # 「解压即用」的 Windows 包专用，靠环境变量开关，Docker 路线默认关闭：
     # 静态站（没有 nginx 时由后端托管 dist）。它是 catch-all 路由，必须注册在所有 API 路由之后。

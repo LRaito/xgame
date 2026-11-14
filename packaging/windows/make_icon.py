@@ -17,6 +17,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from xgame_console import fail, info, ok, warn
+
 HERE = Path(__file__).resolve().parent
 SOURCE = HERE / "xgame.png"
 OUT = HERE / "xgame.ico"
@@ -35,27 +37,26 @@ def load_square(path: Path) -> Image.Image:
         side = min(width, height)
         left, top = (width - side) // 2, (height - side) // 2
         image = image.crop((left, top, left + side, top + side))
-        print(f"源图不是正方形（{width}×{height}），已居中裁成 {side}×{side}。")
+        info(f"源图不是正方形（{width}×{height}），已居中裁成 {side}×{side}。")
     return image
 
 
 def main() -> int:
     if not SOURCE.is_file():
-        raise SystemExit(
-            f"找不到源图：{SOURCE}\n放一张正方形 PNG 到那里（换图标就是替换它），再跑一次。"
-        )
+        fail(f"找不到源图：{SOURCE}\n放一张正方形 PNG 到那里（换图标就是替换它），再跑一次。")
+        raise SystemExit(1)
 
     image = load_square(SOURCE)
     if image.width < RECOMMENDED:
-        print(
-            f"提示：源图只有 {image.width}×{image.width}，日常够用，"
+        warn(
+            f"源图只有 {image.width}×{image.width}，日常够用，"
             f"但大图标（{RECOMMENDED}）会有点糊；有更大的图更好。"
         )
 
     # 自己先缩好再交给 Pillow，避免它用最近邻插值生成小尺寸（那样 16×16 会很难看）
     largest = image.resize((max(SIZES), max(SIZES)), Image.LANCZOS)
     largest.save(OUT, format="ICO", sizes=[(size, size) for size in SIZES])
-    print(f"已生成 {OUT}（{OUT.stat().st_size} 字节，含 {len(SIZES)} 种尺寸）")
+    ok(f"已生成 {OUT}（{OUT.stat().st_size} 字节，含 {len(SIZES)} 种尺寸）")
     return 0
 
 

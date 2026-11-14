@@ -25,10 +25,13 @@ export async function ensureCsrf() {
 /**
  * 统一的失败 Error。reported=true 表示拦截器已经弹过提示，
  * 页面的 catch 里别再弹一次（判断 `if (!err.reported)`）。
+ * status 是 HTTP 状态码（网络错误等没有响应时为 undefined），
+ * 路由守卫用它区分「真未登录(401)」与「网络抖动等临时故障」。
  */
-function fail(message, reported) {
+function fail(message, reported, status) {
     const error = new Error(message);
     error.reported = reported;
+    error.status = status;
     return error;
 }
 
@@ -56,7 +59,7 @@ request.interceptors.response.use(
             if (!silent) {
                 ElMessage.error({ message, appendTo: overlayAppendTarget() });
             }
-            return Promise.reject(fail(message, !silent));
+            return Promise.reject(fail(message, !silent, response.status));
         }
         return payload;
     },
@@ -81,14 +84,14 @@ request.interceptors.response.use(
             if (!silent401) {
                 ElMessage.error({ message, appendTo: overlayAppendTarget() });
             }
-            return Promise.reject(fail(message, !silent401));
+            return Promise.reject(fail(message, !silent401, 401));
         }
 
         const silent = Boolean(error.config?.notShowError);
         if (!silent) {
             ElMessage.error({ message, appendTo: overlayAppendTarget() });
         }
-        return Promise.reject(fail(message, !silent));
+        return Promise.reject(fail(message, !silent, status));
     }
 );
 

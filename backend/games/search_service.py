@@ -1,9 +1,9 @@
-"""游戏检索的只读查询。
+"""游戏名录的只读查询。
 
-数据是 `backend/games/search_index.py` 用 `make index` 或**服务启动时的自动补建**从 CSV 名录
-构建出来的独立 SQLite 库（`<根路径>/db/game.db`）。**这里只读**：每个请求开一条 `mode=ro` 的
-短连接，从不建文件、从不写。库不存在是正常状态（服务启动时没能补建成功，例如数据根没有写权限、
-或名录 CSV 被删了），返回「未构建」而不是报错。
+数据是 `backend/games/search_index.py` 在 `make index` 时从 CSV 名录构建出来的独立 SQLite 库
+（`<运行时根>/db/game.db`）。**这里只读**：每个请求开一条 `mode=ro` 的
+短连接，从不建文件、从不写。库不存在是正常状态（启动只建空结构，没能建成功时，
+例如运行时根没有写权限、或名录 CSV 被删了），返回「未构建」而不是报错。
 """
 
 import logging
@@ -116,7 +116,7 @@ class GameSearchService:
         page: int = 1,
         page_size: int = PAGE_SIZE_DEFAULT,
     ) -> SearchPage:
-        """检索一页。参数越界在这里收敛（别放到 Query(ge=,le=) 上，那会返回 422 绕开错误信封）。"""
+        """查询游戏名录一页。参数越界在这里收敛（别放到 Query(ge=,le=) 上，那会返回 422 绕开错误信封）。"""
         page = max(1, int(page or 1))
         page_size = max(1, min(int(page_size or PAGE_SIZE_DEFAULT), PAGE_SIZE_MAX))
         if not self.is_indexed():
@@ -169,8 +169,8 @@ class GameSearchService:
         try:
             conn = sqlite3.connect(f"{self._db_path.as_uri()}?mode=ro", uri=True)
         except sqlite3.Error as exc:
-            logger.warning("打开游戏检索索引失败：%s", exc)
-            raise IndexUnavailableError("游戏检索索引无法打开，请重新执行 make index 构建。") from exc
+            logger.warning("打开游戏名录索引失败：%s", exc)
+            raise IndexUnavailableError("游戏名录索引无法打开，请重新执行 make index 构建。") from exc
         try:
             conn.execute("PRAGMA query_only = 1")
             yield conn
@@ -179,8 +179,8 @@ class GameSearchService:
 
 
 def _broken(exc: sqlite3.Error) -> IndexUnavailableError:
-    logger.warning("读取游戏检索索引失败：%s", exc)
-    return IndexUnavailableError("游戏检索索引已损坏，请重新执行 make index 构建。")
+    logger.warning("读取游戏名录索引失败：%s", exc)
+    return IndexUnavailableError("游戏名录索引已损坏，请重新执行 make index 构建。")
 
 
 def _check_schema(conn: sqlite3.Connection) -> None:
@@ -190,4 +190,4 @@ def _check_schema(conn: sqlite3.Connection) -> None:
     except sqlite3.Error as exc:
         raise _broken(exc) from exc
     if row is None or row[0] != SCHEMA_VERSION:
-        raise IndexUnavailableError("游戏检索索引版本过旧，请重新执行 make index 构建。")
+        raise IndexUnavailableError("游戏名录索引版本过旧，请重新执行 make index 构建。")

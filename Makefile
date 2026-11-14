@@ -1,4 +1,4 @@
-.PHONY: all build up certs test index win win-image
+.PHONY: all build up certs test index win win-image upgrade
 
 COMPOSE ?= docker compose
 
@@ -26,9 +26,11 @@ export APP_VERSION
 certs:
 	bash scripts/gen-certs.sh $(ARGS)
 
-# 构建 api / web 镜像
+# 构建 api / web 镜像。
+# --pull=false：构建前不主动拉取更新的基础镜像（基础镜像已按 digest 固定，见两个 Dockerfile）。
+# 注意 Docker 在本地缺基础镜像时仍会联网拉取；要完全离线，先手动 docker pull 好再用。
 build:
-	$(COMPOSE) build
+	$(COMPOSE) build --pull=false
 
 # 后台启动（api + web）
 up:
@@ -37,7 +39,7 @@ up:
 	$(COMPOSE) restart web
 
 # 构建并后台启动
-all: build up
+all: build up upgrade
 
 # 跑一次测试（后端 pytest + 前端 eslint），都在本机执行、不动 Docker。
 # 用 `python -m pytest` 而不是裸 `pytest`：后者不把仓库根加进 sys.path，会 import 不到 backend。
@@ -59,16 +61,28 @@ win:
 win-image:
 	bash packaging/windows/build-in-docker.sh --image-only
 
-# 构建「游戏检索」与「游戏榜单」用的索引库（<数据根>/db/game.db）。可重复执行，直接覆盖旧文件。
-# 服务启动时若发现索引不存在，会自动补建一次；榜单 CSV 变化时启动也会就地补一次。
-# 这个 target 用于手动重建/更新（换了名录或榜单 CSV 之后）。
-# 数据根取自 .env 的 STORAGE_HOST_DIR，与容器挂的是同一个宿主目录，所以构建完 api 立刻能读到。
+# 全量构建「游戏名录」「游戏榜单」与卡带映射，并同步两个库的库存/榜单标记。
+# 必须先执行 make upgrade（app.db/game.db 结构就位）；执行前建议停止 api（会写 app.db）。
+# 服务启动只建空的 game.db 结构，不写数据；这个 target 是游戏名录/榜单数据的唯一入口。
+# 运行时根取自 .env 的 RUNTIME_HOST_DIR，缺失时退回 STORAGE_HOST_DIR；与容器挂的是同一个宿主目录。
 index:
-	@test -d "$${STORAGE_HOST_DIR:-./data/storage}" && ! test -w "$${STORAGE_HOST_DIR:-./data/storage}" \
+	@root="$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}}"; \
+	test -d "$$root" && ! test -w "$$root" \
 		&& { \
-			echo "数据根不可写：$${STORAGE_HOST_DIR:-./data/storage}"; \
-			echo "（多半是 Docker 容器以 root 建的目录）先执行一次："; \
-			echo "    sudo chown -R \"$$USER\" \"$${STORAGE_HOST_DIR:-./data/storage}\""; \
+			bash scripts/log.sh fail "运行时根不可写：$$root"; \
+			bash scripts/log.sh fail "（多半是 Docker 容器以 root 建的目录）先执行一次："; \
+			bash scripts/log.sh fail "    sudo chown -R \"$$USER\" \"$$root\""; \
 			exit 1; \
 		} || true
-	STORAGE_ROOT=$${STORAGE_HOST_DIR:-./data/storage} python3 -m backend.cli index
+	@RUNTIME_ROOT=$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}} \
+	STORAGE_ROOT=$${STORAGE_HOST_DIR:-./data/storage} \
+	python3 -m backend.cli index
+
+# 手动升级 app.db 的结构（<运行时根>/db/app.db）。执行前先停止服务：
+# SQLite 单写者，升级期间不能有 api 在写库。根取值与 compose 一致。
+# 升级代码在 upgrade/，按 system_config.db_version 逐版本执行；已是最新时只提示。
+upgrade:
+	@bash scripts/log.sh info "请先停止服务（docker compose down，或关闭 Windows 启动窗口）。"
+	STORAGE_ROOT=$${STORAGE_HOST_DIR:-./data/storage} \
+	RUNTIME_ROOT=$${RUNTIME_HOST_DIR:-$${STORAGE_HOST_DIR:-./data/storage}} \
+	python3 -m upgrade $(ARGS)

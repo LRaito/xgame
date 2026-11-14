@@ -1,43 +1,12 @@
-from pathlib import Path
-
 from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine
 
 from backend.config import Settings
+from backend.errors import DatabaseVersionError
+from backend.system_config import DB_VERSION_KEY, LATEST_DB_VERSION
 
 _engines: dict[str, Engine] = {}
-
-# create_all 只建缺失的表，不会给已存在的表补列；老库靠这张表补上（只加列，不改不删）。
-# DDL 是代码里的常量，不拼接任何外部输入。
-_ADDED_COLUMNS: dict[str, dict[str, str]] = {
-    # 封面类型可空：老库里的旧行没有值，加列时不能带 NOT NULL（也没必要给默认值）
-    "games": {
-        "cover_type": "VARCHAR(20)",
-        # 攻略形态（""/"zip"/"pdf"）。老库里的旧行一律是空串；不做磁盘回填。
-        "guide_kind": "VARCHAR(10) NOT NULL DEFAULT ''",
-    },
-    # 云端存档的父节点（NULL = 顶层）。老库里没有这一列，补成可空列即可。
-    # sort_order 是展示分数（同级排序用）。老行一律 0，按 (sort_order, id) 升序
-    # 正好等于创建先后；新快照从 1000 起算，所以不需要回填。
-    "game_cloud_snapshots": {
-        "parent_id": "INTEGER",
-        "sort_order": "REAL NOT NULL DEFAULT 0",
-    },
-}
-
-# create_all 只给新表建索引，不会给已存在的表补索引；老库靠这里补齐（幂等）。
-_ADDED_INDEXES: tuple[str, ...] = (
-    "CREATE INDEX IF NOT EXISTS ix_game_cloud_snapshots_parent_id "
-    "ON game_cloud_snapshots (parent_id)",
-    "CREATE INDEX IF NOT EXISTS ix_game_cloud_snapshots_user_game_order "
-    "ON game_cloud_snapshots (user_id, game_id, sort_order)",
-)
-
-# 已删除的表：create_all 只建不删，老库里可能还留着，启动时顺手清掉。没有迁移框架，
-# 破坏性动作只允许「删掉整张已经没有任何代码读写的表」这一种；表名是代码里的常量，
-# 不拼接任何外部输入。
-_DROPPED_TABLES: tuple[str, ...] = ("game_h5_files",)
 
 
 def make_engine(settings: Settings) -> Engine:
@@ -57,44 +26,90 @@ def ensure_data_dir(settings: Settings) -> None:
     settings.database_path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def init_db(engine: Engine) -> None:
-    # 导入模型以注册 metadata
+def _table_names(engine: Engine) -> set[str]:
+    return set(inspect(engine).get_table_names())
+
+
+def has_business_tables(engine: Engine) -> bool:
+    """库里是否已有业务表。
+
+    只有 ``system_config``（或什么都没有）视为全新库：首次启动可以按最新结构一次性建好。
+    任何其它表存在都说明是已有库，必须走版本校验。
+    """
+    return bool(_table_names(engine) - {"system_config"})
+
+
+def read_db_version(engine: Engine) -> int:
+    """读 ``system_config.db_version``；表或键不存在时返回 0（无版本号时代）。"""
+    if "system_config" not in _table_names(engine):
+        return 0
+    with engine.connect() as conn:
+        row = conn.exec_driver_sql(
+            'SELECT value FROM system_config WHERE "key" = ?', (DB_VERSION_KEY,)
+        ).first()
+    if row is None:
+        return 0
+    try:
+        version = int(row[0])
+    except (TypeError, ValueError) as exc:
+        raise DatabaseVersionError(
+            f'system_config 的 "{DB_VERSION_KEY}" 不是合法整数：{row[0]!r}；'
+            "请检查数据库或从备份恢复。"
+        ) from exc
+    if version < 0:
+        raise DatabaseVersionError(f"数据库结构版本不能为负数：{version}")
+    return version
+
+
+def _create_latest_schema(engine: Engine) -> None:
+    """全新库：按当前模型建全部表，并在同一事务里写入最新结构版本。"""
+    # 导入模型以注册 metadata（升级/兼容代码不在这里，结构变化请新增 upgrade 版本）
     from backend.auth import models as auth_models  # noqa: F401
     from backend.games import models as game_models  # noqa: F401
+    from backend.shortcuts import models as shortcut_models  # noqa: F401
+    from backend.system_config import SystemConfig  # noqa: F401
 
-    SQLModel.metadata.create_all(engine)
-    _ensure_columns(engine)
-    _ensure_indexes(engine)
-    _drop_tables(engine)
-
-
-def _ensure_columns(engine: Engine) -> None:
-    """给已存在的表补上后来新增的列（SQLite 的 ADD COLUMN 只加不重建）。"""
-    inspector = inspect(engine)
     with engine.begin() as conn:
-        for table, columns in _ADDED_COLUMNS.items():
-            if not inspector.has_table(table):
-                continue
-            existing = {column["name"] for column in inspector.get_columns(table)}
-            for name, ddl in columns.items():
-                if name not in existing:
-                    conn.exec_driver_sql(f"ALTER TABLE {table} ADD COLUMN {name} {ddl}")
+        SQLModel.metadata.create_all(conn)
+        conn.exec_driver_sql(
+            'INSERT INTO system_config ("key", value) VALUES (?, ?) '
+            'ON CONFLICT("key") DO UPDATE SET value = excluded.value',
+            (DB_VERSION_KEY, str(LATEST_DB_VERSION)),
+        )
 
 
-def _ensure_indexes(engine: Engine) -> None:
-    """给已存在的表补上后来新增的索引（DDL 是代码常量，`IF NOT EXISTS` 幂等）。"""
-    with engine.begin() as conn:
-        for ddl in _ADDED_INDEXES:
-            conn.exec_driver_sql(ddl)
+def _version_error(current: int) -> DatabaseVersionError:
+    if current > LATEST_DB_VERSION:
+        return DatabaseVersionError(
+            f"数据库结构版本 {current} 高于当前程序需要的 {LATEST_DB_VERSION}："
+            "请使用与数据库匹配的程序版本，不能降级运行。"
+        )
+    if current == 0:
+        return DatabaseVersionError(
+            f"数据库没有结构版本记录（视为 0），当前程序需要 {LATEST_DB_VERSION}："
+            "请先停止服务并执行 make upgrade 更新数据库"
+            "（Windows 解压即用包：关闭启动窗口后双击「升级数据库.cmd」）。"
+        )
+    return DatabaseVersionError(
+        f"数据库结构版本 {current} 低于当前程序需要的 {LATEST_DB_VERSION}："
+        "请先停止服务并执行 make upgrade 更新数据库"
+        "（Windows 解压即用包：关闭启动窗口后双击「升级数据库.cmd」）。"
+    )
 
 
-def _drop_tables(engine: Engine) -> None:
-    """删掉已经没有任何代码读写的表（见 `_DROPPED_TABLES`）。"""
-    inspector = inspect(engine)
-    with engine.begin() as conn:
-        for table in _DROPPED_TABLES:
-            if inspector.has_table(table):
-                conn.exec_driver_sql(f"DROP TABLE {table}")
+def init_db(engine: Engine) -> None:
+    """初始化全新库，或校验已有库的结构版本。
+
+    已有库**绝不**在这里改表：兼容升级只允许由 ``make upgrade`` 执行。
+    版本不匹配时抛 ``DatabaseVersionError``，由启动入口负责记录日志并阻塞。
+    """
+    if not has_business_tables(engine):
+        _create_latest_schema(engine)
+        return
+
+    version = read_db_version(engine)
+    if version != LATEST_DB_VERSION:
+        raise _version_error(version)
 
 
 def get_session(engine: Engine):

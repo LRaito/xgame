@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 > 给 Claude Code 的会话入口：只放结论与硬规则。
-> 实现细节在 `docs/specs/`，写代码前读 [`AGENTS.md`](AGENTS.md)。
+> 实现细节在 `docs/`，写代码前读 [`AGENTS.md`](AGENTS.md)。
 
 ## 一分钟了解本仓库
 
@@ -9,8 +9,8 @@
 - ORM 用 SQLModel + SQLite。
 - 两条交付路线：Docker（正式运行）与 Windows「解压即用」包。
 - 两条路数据格式一致，但**不能同时打开同一份数据目录**。
-- 三块功能：游戏中心、游戏管理、游戏发现。
-- 账号开放注册，只用于隔离各人的模拟器配置与存档。
+- 主要功能：游戏中心、游戏管理、游戏发现；另有按键管理与机型简史。
+- 账号开放注册，只用于隔离各人的模拟器配置、存档、截图与统计。
 
 ## 先读哪份文档
 
@@ -19,7 +19,7 @@
 | 写代码、改代码 | [`AGENTS.md`](AGENTS.md) |
 | 理解设计取舍 | [`docs/architecture.md`](docs/architecture.md) |
 | 查表结构、磁盘路径 | [`docs/data_dict.md`](docs/data_dict.md) |
-| 查某个功能的实现细节 | [`docs/specs/README.md`](docs/specs/README.md) |
+| 查某个功能的实现细节 | [`docs/README.md`](docs/README.md) |
 | 用户怎么操作 | [`README.md`](README.md) |
 | 开发、部署、排障 | [`DEVELOP.md`](DEVELOP.md) |
 
@@ -28,13 +28,15 @@
 - 界面文案、Markdown 文档、注释、提交说明、API 错误 `message` 一律中文。
 - 代码标识符、路由 path、环境变量名保持英文。
 - 不加 i18n / 多语言切换。
+- 注释与文档只写当前状态与原因，不写「旧版 / 曾经 / 上次 / 改成 / 还原」这类历史描述；
+  追溯历史看 Git，不写进代码与文档。详见 [`AGENTS.md`](AGENTS.md) 的「代码风格」。
 
 ## 常用命令
 
 后端（开发）：
 
 ```bash
-python -m backend.cli init-db
+python -m backend.cli init-db   # 只用于初始化全新库；已有库请用 make upgrade
 uvicorn backend.asgi:app --reload --port 8910
 ```
 
@@ -51,7 +53,8 @@ npm run dev
 ```bash
 make test        # pytest + 前端 lint
 make win         # Windows 解压即用包
-make index       # 重建游戏发现索引
+make index       # 构建游戏名录与游戏榜单
+make upgrade     # 升级 app.db 与 game.db 结构（先停服务）
 ```
 
 - 平时只跑改动涉及的用例，全量 `make test` 由用户定期执行。
@@ -63,8 +66,8 @@ make index       # 重建游戏发现索引
 - 一个功能一块：`router.py` 只管 HTTP，`service.py` 管领域逻辑。
 - 前端分层：`views/` → `api/*` → `utils/request.js` → FastAPI。
 - 响应信封：成功 `{ok:true,data}`；失败 `{ok:false,message:"中文"}`。
-- 配置写死在 `backend/config.py`；`.env` 只有三个键且只给 compose 读。
-- 数据分两个根：数据根放原始素材，运行时根放 SQLite 与解包产物。
+- 配置写死在 `backend/config.py`；`.env` 只有三个键，由 compose 与 Makefile 读取。
+- 数据分两个根：数据根放原始素材，运行时根放 app.db、game.db 与解包产物。
 - 全站需登录，唯一业务例外是 H5 资源接口。
 - 详细设计见 [`docs/architecture.md`](docs/architecture.md)。
 
@@ -80,8 +83,12 @@ make index       # 重建游戏发现索引
 6. **卡带 ID。** 手动新建与网络上传时必填、全局唯一、落库前转大写；
    搬运由服务端按 CRC32 自动生成；它同时是目录名，改名走显式迁移。
 7. **封面类型。** 可空，只有编辑弹框与「美化封面」两条写入路径。
-8. **机种词表。** `backend/games/platforms.py` 是唯一权威；
-   加机种只改这张表。
+8. **机种词表。** `backend/games/platforms.py` 是机种名、扩展名、后缀候选与 BIOS 规格的唯一权威；
+   前端从 `/status` 读取，不手写镜像。加机种改词表，另补 core 资产、`EMU_NATIVE`
+   与需要时的 `emulatorjs/bios/<id>.zip`。
+   同一后缀可跨机种重叠，创建时由用户从候选里选。
+   类型可改走显式迁移 `PUT /manage/{id}/game-type`，与改卡带 ID 同风格；
+   普通编辑不接受类型字段。
 9. **H5 / 攻略 ZIP 只校验不解压。** 播放或查看时才解到运行时根。
 10. **云端存档是整体快照。** 快照之间是同一 (用户, 游戏) 内的父子森林。
 11. **登录。** 除注册/登录/CSRF/健康检查与 H5 资源外，所有接口都要登录。
@@ -92,26 +99,42 @@ make index       # 重建游戏发现索引
 14. **Gunicorn 必须 `--workers 1`。** SQLite 单写者，多进程会冲突。
 15. **明确不做。** React、TypeScript、i18n、OAuth、对象存储、JWT、
     Redis/PostgreSQL/Celery；Windows 包不做自动升级。
+16. **通用组件统一。** 按钮、分段、下拉、分页、弹窗、空状态优先复用 `components/common/`；
+    页面不手写原生 `<button>` 或重复控件样式；颜色、尺寸、焦点只用 `styles/index.css` 的 token。
+17. **数据库只维护最新结构。** `backend/` 不写兼容旧库的补列、补索引、删表、重建逻辑。
+    `app.db` 结构变化必须新增 `upgrade/versions/vN.py` 并递增 `LATEST_DB_VERSION`；
+    `game.db` 榜单结构变化必须新增 `upgrade/game_versions/vN.py` 并递增
+    `RANKING_SCHEMA_VERSION`（游戏名录结构版本不做原地迁移，删库重启后再由 `make index` 重建）。
+    升级只由用户停止服务后手动执行：Docker/仓库用 `make upgrade`，Windows 包双击
+    「升级数据库.cmd」。
+    `app.db` 启动只校验 `system_config.db_version`；不匹配就日志报错并永久阻塞，不自动改表。
+    `game.db` 启动只在缺失或空文件时建最新的空结构，已有表一律不碰。
+18. **脚本输出规范。** 所有打印日志的脚本与构建入口必须使用固定状态标签
+    `[ OK ]` / `[FAIL]` / `[WARN]` / `[INFO]` 并按颜色输出，全文见
+    [`AGENTS.md`](AGENTS.md) 的「脚本输出规范」。
 
 细节链接：
 
-- 文件存储 / 卡带 ID / 封面类型 → [`game-storage.md`](docs/specs/game-storage.md)
-- 机种词表 → [`platforms.md`](docs/specs/platforms.md)
-- 播放器 / 机壳 / NDS → [`game-center-playback.md`](docs/specs/game-center-playback.md)
-- 截图 / 图集 / 封面美化 → [`game-assets.md`](docs/specs/game-assets.md)
-- 存档 / 设置 / 统计 → [`game-saves-stats.md`](docs/specs/game-saves-stats.md)
-- H5 / 攻略 → [`guide-and-h5.md`](docs/specs/guide-and-h5.md)
-- 游戏发现 → [`game-discover.md`](docs/specs/game-discover.md)
-- 账号与会话 → [`auth.md`](docs/specs/auth.md)
-- Docker → [`delivery-docker.md`](docs/specs/delivery-docker.md)
-- Windows 包 → [`delivery-windows.md`](docs/specs/delivery-windows.md)
+- 通用组件与视觉一致性 → [`frontend.md`](docs/modules/frontend.md)
+- 文件存储 / 卡带 ID / 封面类型 → [`game-storage.md`](docs/modules/game-storage.md)
+- 机种词表 → [`platforms.md`](docs/common/platforms.md)
+- 播放器 / 机壳 / NDS → [`game-center-playback.md`](docs/modules/game-center-playback.md)
+- 截图 / 图集 / 封面美化 → [`game-assets.md`](docs/modules/game-assets.md)
+- 存档 / 设置 / 统计 → [`game-saves-stats.md`](docs/modules/game-saves-stats.md)
+- H5 / 攻略 → [`guide-and-h5.md`](docs/modules/guide-and-h5.md)
+- 游戏发现 → [`game-discover.md`](docs/modules/game-discover.md)
+- 数据库结构版本与升级 → [`database-upgrade.md`](docs/modules/database-upgrade.md)
+- 账号与会话 → [`auth.md`](docs/modules/auth.md)
+- Docker → [`delivery-docker.md`](docs/modules/delivery-docker.md)
+- Windows 包 → [`delivery-windows.md`](docs/modules/delivery-windows.md)
 
 ## 目录速查
 
 ```
 frontend/        Vue 3 SPA
-backend/         FastAPI API（auth / games / tools / storage）
-docs/            architecture.md / data_dict.md / specs/
+backend/         FastAPI API（auth / shortcuts / games / search / tools / storage）
+upgrade/         app.db / game.db 结构升级（只由 make upgrade 执行）
+docs/            architecture.md / data_dict.md / modules / common / plans
 packaging/       windows/
 tests/           pytest
 ```
